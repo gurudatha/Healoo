@@ -156,7 +156,8 @@ Sign in to the **healoo-backend** trial server without Auth0, using its seeded t
   `healoo.devSignIn=true` (the default).
 - **iOS** (`project.yml`): `HealooUseFakeData: false`, `HealooAPIBaseURL: https://<LAN IP>:8443/`,
   `HealooDevSignIn: true`, then `xcodegen generate`.
-- Android debug builds bundle the backend's `healoo-local-ca.crt` automatically (from `../../healoo-backend/deploy/lan/`, `android/certs/`, or `healoo.trustedCaFile`); no device install needed. iOS: install it on the simulator/phone.
+####- Android debug builds bundle the backend's `healoo-local-ca.crt` automatically (from `../../healoo-backend/deploy/lan/`, `android/certs/`, or `healoo.trustedCaFile`); no device install needed. iOS: install it on the simulator/phone.
+- Install the backend's `healoo-local-ca.crt` on the emulator/simulator/phone once (backend README section 3).
 - The sign-in screen then shows **Developer sign-in**: the server's test accounts (from `GET /dev/users`)
   and a field for any Healoo ID. Tapping one calls `POST /dev/token` and continues as normal.
 - The Healoo ID is remembered. The app restores the session on launch, and when the 12-hour token
