@@ -1,4 +1,4 @@
-# Healoo backend (`care-api`) — v0.1
+# Healoo backend (`care-api`) — v0.2 (DataItem v2)
 
 Rust backend for design doc sections **4** (REST + WebSocket on Tokio), **5** (Auth0),
 **6** (Kafka) and **7** (Cassandra + files). One codebase runs in two network profiles:
@@ -41,13 +41,16 @@ default file-signing secret with public disk storage).
 ## 2. What's implemented
 
 **Section 4 — Communication.** axum on Tokio; WebSocket via axum's tokio-tungstenite support.
-All REST routes from doc 4.3 plus the ones the v0.2 apps call (`PATCH /v1/me`,
-`/v1/me/notification-prefs`, `GET /v1/grants?owner=me`, `DELETE /v1/devices/{token}`,
-`/v1/config`). Error shape `{"error":{code,message,request_id}}`. Limits from doc 4.5: 20 MB
+REST routes from doc 4.3 with the DataItem v2 item model (`Documentation/DataItem_Design.md`):
+items created from one primary part, and inside each item messages, attachments, recurring
+appointments (per-visit cancel/move/attended/missed), alerts, close with feedback and rating,
+reopen; plus `/v1/conversations` (Messages tab, replaces `/v1/threads`), `/v1/appointments`
+(calendar), `PATCH /v1/me`, `/v1/me/notification-prefs`, `GET /v1/grants?owner=me`,
+`DELETE /v1/devices/{token}` and `/v1/config`. Full reference: `Documentation/userapidocumentation.txt`. Error shape `{"error":{code,message,request_id}}`. Limits from doc 4.5: 20 MB
 bodies, 20 attachments, 10 MB images / 25 MB PDFs, 64 KB WS frames, 20 req/s per user,
 5 sockets per user. WebSocket at `/v1/ws` (apps) and `/ws` (doc): Bearer header, `?token=`, or
 first-frame auth; 25 s ping, 60 s silence drop, close 4001 on token expiry; idempotent
-`message.send` by `client_msg_id`; typing relay.
+`message.send {item_id, body, client_msg_id}`; typing relay to the item's participants.
 
 **Section 5 — Auth0.** JWKS cached 10 min, refreshed on unknown `kid`; checks `iss`, `aud`,
 `exp`; reads the namespaced `roles` / `uid` claims from the post-login Action; provisions a
@@ -59,7 +62,8 @@ envelope, idempotent producer (`acks=all`), at-least-once consumers that store o
 after the handler succeeds, 3 retries then `<topic>.dlq`, Cassandra outbox + relay so no event
 is lost between the write and the publish, `processed_events` dedupe. Consumers:
 `ws-fanout` (in care-api, pushes to sockets and emits `notify.requests` for offline users),
-`audit-writer` and `media` (in care-worker).
+`audit-writer`, `media` and the alert scheduler (in care-worker; fires due alerts every 20 s
+as push + WebSocket `alert` frames).
 
 **Section 7 — Cassandra + files.** `db/schema.cql` (doc 7.2 extended; changes marked `v0.2`).
 Query-shaped tables, logged batches for grant/revoke/status moves (doc 7.3), SAI name search.
@@ -157,11 +161,13 @@ then `xcodegen generate`.
 as before (the computer needs internet only for the login itself).
 
 Compatibility notes:
-- Realtime frames match the apps: `message.new {message}`, `item.updated {item_id, change}`,
-  `ping`. New items also arrive as `item.updated` with `change: "item_created"` so the landing
-  screens refresh without an app change.
-- `sent_at` and `last_message_at` are ISO-8601; the apps currently display them as-is, so
-  format them in the UI.
+- Realtime frames match the apps: `message.new {item_id, message}`, `item.updated {item_id,
+  change}` with `change` in `created | message | attachment | appointment | alert | closed |
+  reopened | shared | updated`, `alert`, `typing`, `ping`.
+- `sent_at`, `fires_at` and `last_message_at` are ISO-8601 with offset; the apps format them.
+- **Upgrading from v0.1:** the schema changed (DataItem v2). Recreate the trial database and
+  seed again: `docker compose down -v`, then `docker compose up -d --build` (the `care-seed` job
+  reloads the test data).
 - Thumbnails and PDF page counts appear a moment after upload (the media worker fills them
   in, then sends `item.updated`).
 

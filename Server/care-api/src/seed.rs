@@ -1,12 +1,19 @@
-//! Seed data for trials: the same people and records as the apps' demo mode, plus a hospital
-//! administrator and an assistant so acceptance tests 4, 6 and 7 (doc 10.4) can run.
+//! Seed data for trials: the same people as the apps' demo mode, a hospital administrator and an
+//! assistant (acceptance tests 4, 6, 7), and DataItem v2 cases showing every kind of part.
 //! Sample images and PDFs are generated, so no patient-like data is shipped.
 
 use crate::{
     files::{object_uri, ObjectStore},
     model::*,
-    store::{items::Item, users::NewUser, Db},
+    recurrence,
+    store::{
+        items::Item,
+        parts::{local_millis, today_in, AlertRow, AppointmentRow, AttachmentRow, DEFAULT_TZ},
+        users::NewUser,
+        Db,
+    },
 };
+use chrono::NaiveDate;
 use anyhow::Result;
 use std::io::Cursor;
 use uuid::Uuid;
@@ -65,26 +72,73 @@ fn grant(kind: GranteeType, id: Uuid, name: &str, by: Uuid) -> GrantUdt {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn item(owner: Uuid, by: Uuid, by_name: &str, date: &str, ty: CoreItemType, title: &str, subtitle: &str, keywords: &[&str], grants: Vec<GrantUdt>) -> Item {
+/// Builds a DataItem v2 header. `kinds` lists every part the seed adds to it.
+fn item(owner: Uuid, by: Uuid, by_name: &str, primary: PrimaryKind, kinds: &[&str], title: &str, keywords: &[&str], grants: Vec<GrantUdt>) -> Item {
+    let now = now_ts();
     Item {
         id: new_timeuuid(),
         owner_id: owner,
+        primary_kind: primary,
+        kinds: kinds.iter().map(|k| k.to_string()).collect(),
+        title: title.to_string(),
+        keywords: keywords.iter().map(|k| k.to_string()).collect(),
+        grants,
+        status: ItemStatus::Open,
+        closure: None,
+        has_report_files: kinds.contains(&part::REPORT),
+        links: vec![],
         created_by: by,
         created_by_name: by_name.to_string(),
-        date: date_to_ts(date).unwrap_or_else(now_ts),
-        item_type: ty,
-        title: title.to_string(),
-        subtitle: subtitle.to_string(),
-        keywords: keywords.iter().map(|k| k.to_string()).collect(),
-        attachments: vec![],
-        links: vec![],
-        grants,
-        pointer_to_message: None,
-        pointer_item_id: None,
-        rating: None,
-        status: ItemStatus::Open,
+        created_at: now,
+        updated_at: now,
     }
+}
+
+async fn message(db: &Db, it: &Item, from: Uuid, to: Uuid, body: &str) -> Result<()> {
+    let id = new_timeuuid();
+    let m = MessageDto { message_id: id, item_id: it.id, sender_id: from, body: body.into(), sent_at: String::new(), attachment_ids: vec![] };
+    db.insert_item_message(&m, &format!("seed-{id}")).await?;
+    let unread = db.conversation_unread(to, from, it.id).await? + 1;
+    db.touch_conversation(to, from, it.id, body, unread).await?;
+    db.touch_conversation(from, to, it.id, body, 0).await?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn appointment(db: &Db, it: &Item, doctor: Uuid, hospital: Option<Uuid>, date: NaiveDate, time: &str, rec: Option<(&str, Option<&str>)>, notes: &str) -> Result<()> {
+    let row = AppointmentRow {
+        appointment_id: Uuid::new_v4(),
+        patient_id: it.owner_id,
+        doctor_id: doctor,
+        hospital_id: hospital,
+        start_date: recurrence::fmt_date(date),
+        start_time: time.into(),
+        timezone: Some(DEFAULT_TZ.into()),
+        duration_min: Some(15),
+        notes: Some(notes.into()),
+        frequency: rec.map(|r| r.0.to_string()),
+        period: rec.and_then(|r| r.1).map(str::to_string),
+        exceptions: None,
+        status: Some("SCHEDULED".into()),
+        visit_status: None,
+    };
+    db.save_appointment(it.id, None, &row).await
+}
+
+async fn alert(db: &Db, it: &Item, for_user: Uuid, kind: &str, text: &str, date: NaiveDate, time: &str, rec: Option<(&str, Option<&str>)>) -> Result<()> {
+    let t = recurrence::parse_time(time).unwrap_or_default();
+    db.insert_alert(it.id, &AlertRow {
+        alert_id: Uuid::new_v4(),
+        kind: Some(kind.into()),
+        text: Some(text.into()),
+        for_user,
+        fires_at: scylla::frame::value::CqlTimestamp(local_millis(date, t, DEFAULT_TZ)),
+        timezone: Some(DEFAULT_TZ.into()),
+        frequency: rec.map(|r| r.0.to_string()),
+        period: rec.and_then(|r| r.1).map(str::to_string),
+        appointment_id: None,
+        active: Some(true),
+    }).await
 }
 
 /// A plain "scanned page" placeholder image.
@@ -129,21 +183,26 @@ fn sample_pdf(title: &str, pages: usize) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
-async fn upload(files: &dyn ObjectStore, owner: Uuid, name: &str, mime: &str, data: Vec<u8>, position: i32, pages: Option<i32>) -> Result<AttachmentUdt> {
-    let key = format!("uploads/{owner}/seed-{name}");
+async fn upload(files: &dyn ObjectStore, db: &Db, it: &Item, by: Uuid, name: &str, mime: &str, data: Vec<u8>, position: i32, pages: Option<i32>) -> Result<()> {
+    let key = format!("uploads/{by}/seed-{name}");
     let size = data.len() as i64;
     files.put(&key, data.into(), mime).await?;
-    Ok(AttachmentUdt {
+    db.insert_attachment(it.id, &AttachmentRow {
+        position,
+        attachment_id: Uuid::new_v4(),
         kind: Some(if mime == "application/pdf" { "PDF" } else { "IMAGE" }.to_string()),
         uri: Some(object_uri(&key)),
         mime: Some(mime.to_string()),
         size: Some(size),
-        sha256: None,
-        position: Some(position),
+        name: Some(name.to_string()),
         page_count: pages,
         thumb_uri: None,
-        name: Some(name.to_string()),
-    })
+        sha256: None,
+        added_by: Some(by),
+        added_at: Some(now_ts()),
+        message_id: None,
+        is_report: Some(true),
+    }).await
 }
 
 pub async fn run(db: &Db, files: &dyn ObjectStore) -> Result<bool> {
@@ -177,52 +236,69 @@ pub async fn run(db: &Db, files: &dyn ObjectStore) -> Result<bool> {
         db.connect_users(a, ra, na, b, rb, nb).await?;
     }
 
-    // CBC report uploaded by the lab: 2 images + 2 PDFs in the chosen order (test 13/14 shape).
-    let mut cbc = item(LAKSHMI, CITY_LAB, "City Diagnostics", "2026-09-20", CoreItemType::Report,
-        "CBC – Complete blood count", "City Diagnostics · Lab report", &["CBC", "Haemoglobin", "Routine check"],
+    let today = today_in(DEFAULT_TZ);
+    let days = |n: i64| today + chrono::Duration::days(n);
+    let rao = || grant(GranteeType::User, DR_RAO, "Dr. Anitha Rao", LAKSHMI);
+    let mut count = 0;
+
+    // 1. A lab report that grew into a full case: files, discussion, recurring follow-up, medication alert.
+    let cbc = item(LAKSHMI, CITY_LAB, "City Diagnostics", PrimaryKind::Report,
+        &[part::REPORT, part::ATTACHMENT, part::MESSAGE, part::APPOINTMENT, part::ALERT],
+        "CBC – Complete blood count", &["CBC", "Haemoglobin", "Routine check"],
         vec![
             grant(GranteeType::Hospital, HOSPITAL_A, "Test Hospital A", LAKSHMI),
-            grant(GranteeType::User, DR_RAO, "Dr. Anitha Rao", LAKSHMI),
+            rao(),
             grant(GranteeType::User, CITY_LAB, "City Diagnostics", CITY_LAB),
         ]);
-    cbc.attachments = vec![
-        upload(files, CITY_LAB, "cbc_scan_1.jpg", "image/jpeg", sample_jpeg(90)?, 0, None).await?,
-        upload(files, CITY_LAB, "cbc_scan_2.jpg", "image/jpeg", sample_jpeg(120)?, 1, None).await?,
-        upload(files, CITY_LAB, "CBC_20Sep2026.pdf", "application/pdf", sample_pdf("CBC report", 3)?, 2, Some(3)).await?,
-        upload(files, CITY_LAB, "Reference_ranges.pdf", "application/pdf", sample_pdf("Reference ranges", 2)?, 3, Some(2)).await?,
-    ];
-    let mut followup = item(LAKSHMI, DR_RAO, "Dr. Anitha Rao", "2026-09-24", CoreItemType::Booking,
-        "Follow-up consultation", "Test Hospital A · 24 Sep, 11:30", &["Follow-up"],
-        vec![grant(GranteeType::Hospital, HOSPITAL_A, "Test Hospital A", LAKSHMI)]);
-    followup.pointer_item_id = Some(cbc.id);
-    cbc.pointer_item_id = Some(followup.id);
+    db.insert_item(&cbc).await?;
+    upload(files, db, &cbc, CITY_LAB, "cbc_scan_1.jpg", "image/jpeg", sample_jpeg(90)?, 0, None).await?;
+    upload(files, db, &cbc, CITY_LAB, "cbc_scan_2.jpg", "image/jpeg", sample_jpeg(120)?, 1, None).await?;
+    upload(files, db, &cbc, CITY_LAB, "CBC_report.pdf", "application/pdf", sample_pdf("CBC report", 3)?, 2, Some(3)).await?;
+    upload(files, db, &cbc, CITY_LAB, "Reference_ranges.pdf", "application/pdf", sample_pdf("Reference ranges", 2)?, 3, Some(2)).await?;
+    message(db, &cbc, DR_RAO, LAKSHMI, "Haemoglobin is slightly low. Let's review every two weeks for a while.").await?;
+    message(db, &cbc, LAKSHMI, DR_RAO, "Thank you, doctor. I'll book the visits.").await?;
+    appointment(db, &cbc, DR_RAO, Some(HOSPITAL_A), days(7), "11:30", Some(("BIWEEKLY", Some("THREE_MONTHS"))), "Haemoglobin review").await?;
+    alert(db, &cbc, LAKSHMI, "MEDICATION", "Iron tablet after dinner", today, "20:30", Some(("DAILY", Some("ONE_MONTH")))).await?;
+    count += 1;
 
-    let rao = || grant(GranteeType::User, DR_RAO, "Dr. Anitha Rao", LAKSHMI);
-    let seeded = vec![
-        cbc,
-        followup,
-        item(LAKSHMI, DR_RAO, "Dr. Anitha Rao", "2026-09-22", CoreItemType::Message, "Dr. Anitha Rao", "Please share your latest BP readings", &[], vec![rao()]),
-        item(LAKSHMI, DR_RAO, "Dr. Anitha Rao", "2026-09-22", CoreItemType::Alert, "Medication reminder", "Evening dose · 8:00 PM", &["Medication"], vec![rao()]),
-        item(LAKSHMI, HOSPITAL_A, "Test Hospital A", "2026-09-18", CoreItemType::Payment, "Consultation fee", "₹600 · Payment pending", &[],
-            vec![grant(GranteeType::Hospital, HOSPITAL_A, "Test Hospital A", LAKSHMI)]),
-        item(LAKSHMI, DR_RAO, "Dr. Anitha Rao", "2026-09-10", CoreItemType::Feedback, "Visit feedback", "Rate your 10 Sep consultation", &[], vec![rao()]),
-        item(PRIYA, CITY_LAB, "City Diagnostics", "2026-09-19", CoreItemType::Report, "Lipid profile", "City Diagnostics · Lab report", &["Lipid"],
-            vec![grant(GranteeType::User, CITY_LAB, "City Diagnostics", CITY_LAB)]),
-    ];
-    for it in &seeded {
-        db.insert_item(it).await?;
-    }
+    // 2. A standalone discussion (primary kind MESSAGE).
+    let bp = item(LAKSHMI, DR_RAO, "Dr. Anitha Rao", PrimaryKind::Message, &[part::MESSAGE], "Latest BP readings", &["BP"], vec![rao()]);
+    db.insert_item(&bp).await?;
+    message(db, &bp, DR_RAO, LAKSHMI, "Please share your latest BP readings before Thursday.").await?;
+    message(db, &bp, LAKSHMI, DR_RAO, "Sure, I will upload them tonight.").await?;
+    count += 1;
 
-    // One conversation, as in the apps' demo.
-    let thread = db.create_thread(LAKSHMI, DR_RAO).await?;
-    for (from, body) in [(DR_RAO, "Please share your latest BP readings before Thursday."), (LAKSHMI, "Sure, I will upload them tonight.")] {
-        let id = new_timeuuid();
-        let m = MessageDto { message_id: id, thread_id: thread, sender_id: from, body: body.into(), sent_at: String::new(), linked_item_id: None };
-        db.insert_message(&m, &format!("seed-{id}")).await?;
-    }
-    db.touch_thread(LAKSHMI, DR_RAO, thread, "Sure, I will upload them tonight.", 1).await?;
-    db.touch_thread(DR_RAO, LAKSHMI, thread, "Sure, I will upload them tonight.", 1).await?;
+    // 3. A standalone appointment (single visit).
+    let follow = item(LAKSHMI, LAKSHMI, "Lakshmi K.", PrimaryKind::Appointment, &[part::APPOINTMENT],
+        "Appointment with Dr. Anitha Rao", &["Follow-up"],
+        vec![rao(), grant(GranteeType::Hospital, HOSPITAL_A, "Test Hospital A", LAKSHMI)]);
+    db.insert_item(&follow).await?;
+    appointment(db, &follow, DR_RAO, Some(HOSPITAL_A), days(3), "10:00", None, "General follow-up").await?;
+    count += 1;
 
-    tracing::info!("seeded {} users, {} items and 1 conversation", people().len(), seeded.len());
+    // 4. A standalone alert.
+    let bp_alert = item(LAKSHMI, LAKSHMI, "Lakshmi K.", PrimaryKind::Alert, &[part::ALERT], "Check blood pressure", &["BP"], vec![rao()]);
+    db.insert_item(&bp_alert).await?;
+    alert(db, &bp_alert, LAKSHMI, "CUSTOM", "Check blood pressure", today, "08:00", Some(("WEEKLY", Some("THREE_MONTHS")))).await?;
+    count += 1;
+
+    // 5. A closed item with feedback and the patient's rating.
+    let closed = item(LAKSHMI, DR_RAO, "Dr. Anitha Rao", PrimaryKind::Message, &[part::MESSAGE], "Consultation on 10 Sep", &[], vec![rao()]);
+    db.insert_item(&closed).await?;
+    message(db, &closed, DR_RAO, LAKSHMI, "Continue the same dose for two more weeks.").await?;
+    db.set_status(&closed, ItemStatus::Closed, Some(ClosureUdt {
+        closed_at: Some(now_ts()), closed_by: Some(LAKSHMI),
+        feedback: Some("Explained everything clearly.".into()), rating: Some(5),
+    })).await?;
+    count += 1;
+
+    // 6. Priya's report, uploaded by the lab, not shared yet.
+    let lipid = item(PRIYA, CITY_LAB, "City Diagnostics", PrimaryKind::Report, &[part::REPORT, part::ATTACHMENT], "Lipid profile", &["Lipid"],
+        vec![grant(GranteeType::User, CITY_LAB, "City Diagnostics", CITY_LAB)]);
+    db.insert_item(&lipid).await?;
+    upload(files, db, &lipid, CITY_LAB, "Lipid_profile.pdf", "application/pdf", sample_pdf("Lipid profile", 2)?, 0, Some(2)).await?;
+    count += 1;
+
+    tracing::info!("seeded {} users and {} items", people().len(), count);
     Ok(true)
 }

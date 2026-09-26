@@ -36,27 +36,31 @@ import com.healoo.app.ui.components.*
 import com.healoo.app.ui.theme.*
 import kotlinx.coroutines.launch
 import java.io.File
-import java.time.LocalDate
 
-class UploadViewModel(private val targetUserId: String?) : ViewModel() {
+/** What the New item screen creates (DataItem v2: one primary part), or adding files to an item. */
+enum class NewItemMode(val label: String) { REPORT("Report"), APPOINTMENT("Appointment"), ALERT("Alert"), ADD_FILES("Files") }
+
+class UploadViewModel(private val targetUserId: String?, private val addToItemId: String?) : ViewModel() {
     private val repo = ServiceLocator.repository
     var me by mutableStateOf<UserProfile?>(null); private set
     var owner by mutableStateOf<UserProfile?>(null)
-    /** Patients a doctor/assistant/lab can upload for (connected patients). */
+    /** Patients a doctor/assistant/lab can create items for (connected patients). */
     var patients by mutableStateOf<List<UserProfile>>(emptyList()); private set
     var contacts by mutableStateOf<List<UserProfile>>(emptyList()); private set
+    var doctors by mutableStateOf<List<UserProfile>>(emptyList()); private set
+    /** The item files are added to (ADD_FILES mode). */
+    var target by mutableStateOf<DataItem?>(null); private set
     val uploadingForSomeoneElse get() = owner != null && owner?.id != me?.id
-    var threads by mutableStateOf<List<ThreadSummary>>(emptyList()); private set
 
-    var type by mutableStateOf(CoreItemType.REPORT)
+    var mode by mutableStateOf(if (addToItemId != null) NewItemMode.ADD_FILES else NewItemMode.REPORT)
     var title by mutableStateOf("")
-    var date by mutableStateOf(LocalDate.now().toString())
-    var status by mutableStateOf(ItemStatus.OPEN)
     var keywords by mutableStateOf("")
+    var filesAreReport by mutableStateOf(true)
     val links = mutableStateListOf<String>()
     val files = mutableStateListOf<PendingAttachment>()
     val shareWith = mutableStateListOf<String>()
-    var linkTo by mutableStateOf<ThreadSummary?>(null)
+    val appointment = com.healoo.app.ui.item.AppointmentFormState(null)
+    val alert = com.healoo.app.ui.item.AlertFormState()
 
     var message by mutableStateOf<String?>(null)
     var busy by mutableStateOf(false); private set
@@ -74,8 +78,39 @@ class UploadViewModel(private val targetUserId: String?) : ViewModel() {
                     else -> self
                 }
                 contacts = all.filter { it.primaryRole == Role.DOCTOR || it.primaryRole == Role.HOSPITAL }
-                threads = repo.threads()
+                doctors = (all + self).filter { it.primaryRole == Role.DOCTOR }.distinctBy { it.id }
+                if (self.primaryRole == Role.DOCTOR) appointment.doctorId = self.id
+                else if (doctors.size == 1) appointment.doctorId = doctors.first().id
+                addToItemId?.let { target = repo.item(it); filesAreReport = target?.primaryKind == PrimaryKind.REPORT }
             }
+        }
+    }
+
+    private fun keywordList() = keywords.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+    /** Only the owner decides sharing (doc 2.3); an uploader keeps access automatically. */
+    private fun shares() = if (uploadingForSomeoneElse) emptyList() else shareWith.toList()
+
+    fun submit(onDone: (DataItem) -> Unit) {
+        val o = owner ?: if (mode == NewItemMode.ADD_FILES) me else null
+        if (o == null && mode != NewItemMode.ALERT) { message = "Choose the patient this is for."; return }
+        when (mode) {
+            NewItemMode.REPORT, NewItemMode.ADD_FILES -> if (files.isEmpty() && (links.isEmpty() || mode == NewItemMode.ADD_FILES)) {
+                message = if (mode == NewItemMode.ADD_FILES) "Add at least one image or PDF." else "Add at least one image, PDF or link."; return
+            }
+            NewItemMode.APPOINTMENT -> appointment.problem()?.let { message = it; return }
+            NewItemMode.ALERT -> alert.problem()?.let { message = it; return }
+        }
+        busy = true
+        viewModelScope.launch {
+            runCatching {
+                when (mode) {
+                    NewItemMode.REPORT -> repo.createReport(ReportDraft(o!!.id, title.trim(), keywordList(), links.toList(), shares()), files.toList())
+                    NewItemMode.ADD_FILES -> repo.addAttachments(addToItemId!!, files.toList(), filesAreReport)
+                    NewItemMode.APPOINTMENT -> repo.createAppointment(o!!.id, appointment.build(o.id), shares())
+                    NewItemMode.ALERT -> repo.createAlert(title.trim(), alert.build(), shares())
+                }
+            }.onSuccess(onDone).onFailure { message = "That didn't finish: ${it.message}. Nothing was lost — try again." }
+            busy = false
         }
     }
 
@@ -103,33 +138,12 @@ class UploadViewModel(private val targetUserId: String?) : ViewModel() {
         if (to in files.indices) files.add(to, files.removeAt(index))
     }
 
-    fun upload(onDone: (DataItem) -> Unit) {
-        val o = owner ?: run { message = "Choose the patient this record is for."; return }
-        if (files.isEmpty() && links.isEmpty()) { message = "Add at least one image, PDF or link."; return }
-        busy = true
-        viewModelScope.launch {
-            runCatching {
-                repo.upload(
-                    UploadDraft(
-                        ownerId = o.id, type = type, title = title.trim(), date = date,
-                        keywords = keywords.split(',').map { it.trim() }.filter { it.isNotEmpty() },
-                        links = links.toList(), status = status,
-                        // Only the owner decides sharing (doc 2.3); an uploader keeps access automatically.
-                        shareWith = if (uploadingForSomeoneElse) emptyList() else shareWith.toList(),
-                        pointerToMessage = linkTo?.id,
-                    ),
-                    files.toList(),
-                )
-            }.onSuccess(onDone).onFailure { message = "Upload didn't finish: ${it.message}. Your files are still here — try again." }
-            busy = false
-        }
-    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun UploadScreen(targetUserId: String?, onClose: () -> Unit, onUploaded: (String) -> Unit) {
-    val vm: UploadViewModel = viewModel(key = "upload-$targetUserId") { UploadViewModel(targetUserId) }
+fun UploadScreen(targetUserId: String?, addToItemId: String?, onClose: () -> Unit, onUploaded: (String) -> Unit) {
+    val vm: UploadViewModel = viewModel(key = "upload-$targetUserId-$addToItemId") { UploadViewModel(targetUserId, addToItemId) }
     val context = LocalContext.current
     var cameraUri by remember { mutableStateOf<Uri?>(null) }
     var showLinkDialog by remember { mutableStateOf(false) }
@@ -151,17 +165,24 @@ fun UploadScreen(targetUserId: String?, onClose: () -> Unit, onUploaded: (String
         containerColor = Sage.Background,
         topBar = {
             PinnedHeader(
-                title = "New upload",
-                subtitle = "For ${vm.owner?.displayName ?: "…"} · ${vm.type.label}",
-                onBack = onClose, backIcon = Icons.Outlined.Close, backLabel = "Cancel upload",
+                title = if (vm.mode == NewItemMode.ADD_FILES) "Add files" else "New item",
+                subtitle = if (vm.mode == NewItemMode.ADD_FILES) "To ${vm.target?.title ?: "…"}"
+                           else "For ${vm.owner?.displayName ?: "…"} · ${vm.mode.label}",
+                onBack = onClose, backIcon = Icons.Outlined.Close, backLabel = "Cancel",
                 trailing = { vm.owner?.let { Avatar(it.initials, 36.dp) } },
             )
         },
         bottomBar = {
             BottomActionBar {
                 PrimaryButton(
-                    if (vm.busy) "Uploading…" else "Upload ${vm.type.label.lowercase()}",
-                    { vm.upload { onUploaded(it.id) } }, Modifier.weight(1f), enabled = !vm.busy,
+                    when {
+                        vm.busy -> "Saving…"
+                        vm.mode == NewItemMode.ADD_FILES -> "Add ${vm.files.size} file${if (vm.files.size == 1) "" else "s"}"
+                        vm.mode == NewItemMode.APPOINTMENT -> "Book appointment"
+                        vm.mode == NewItemMode.ALERT -> "Create alert"
+                        else -> "Upload report"
+                    },
+                    { vm.submit { onUploaded(it.id) } }, Modifier.weight(1f), enabled = !vm.busy,
                 )
             }
         },
@@ -170,19 +191,36 @@ fun UploadScreen(targetUserId: String?, onClose: () -> Unit, onUploaded: (String
             Modifier.fillMaxSize().padding(padding),
             contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            if (vm.me?.isClinical == true) item { PatientPicker(vm.patients, vm.owner, lockedTo = targetUserId) { vm.owner = it } }
-            item {
+            val adding = vm.mode == NewItemMode.ADD_FILES
+            if (vm.me?.isClinical == true && !adding && vm.mode != NewItemMode.ALERT)
+                item { PatientPicker(vm.patients, vm.owner, lockedTo = targetUserId) { vm.owner = it } }
+            if (!adding) item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FieldLabel("Item type")
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), maxItemsInEachRow = 3) {
-                        CoreItemType.entries.forEach { t ->
-                            SageChip(t.label, vm.type == t, { vm.type = t }, Modifier.weight(1f))
+                    FieldLabel("Start with")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(NewItemMode.REPORT, NewItemMode.APPOINTMENT, NewItemMode.ALERT).forEach { m ->
+                            SageChip(m.label, vm.mode == m, { vm.mode = m; vm.message = null }, Modifier.weight(1f))
                         }
                     }
+                    Text("You can add messages, files, appointments and alerts to the item later. Discussions start from a person's page.",
+                        style = HType.small, color = Sage.Muted)
+                }
+            }
+            if (vm.mode == NewItemMode.APPOINTMENT) item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    com.healoo.app.ui.item.AppointmentForm(vm.appointment, vm.doctors)
+                    vm.message?.let { Text(it, style = HType.small, color = Sage.Clay) }
+                }
+            }
+            if (vm.mode == NewItemMode.ALERT) item {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    SageTextField("Title (optional)", vm.title, { vm.title = it }, placeholder = "e.g. Evening medicine")
+                    com.healoo.app.ui.item.AlertForm(vm.alert)
+                    vm.message?.let { Text(it, style = HType.small, color = Sage.Clay) }
                 }
             }
 
-            item {
+            if (vm.mode == NewItemMode.REPORT || adding) item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     FieldLabel("Attach · ${vm.files.size} of ${Limits.MAX_ATTACHMENTS}")
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -195,13 +233,24 @@ fun UploadScreen(targetUserId: String?, onClose: () -> Unit, onUploaded: (String
                             pickImages.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                         }
                         AttachButton("PDFs", Icons.Outlined.PictureAsPdf, Modifier.weight(1f)) { pickPdfs.launch(arrayOf("application/pdf")) }
-                        AttachButton("Link", Icons.Outlined.Link, Modifier.weight(1f)) { showLinkDialog = true }
+                        if (!adding) AttachButton("Link", Icons.Outlined.Link, Modifier.weight(1f)) { showLinkDialog = true }
                     }
                     vm.message?.let { Text(it, style = HType.small, color = Sage.Clay) }
                 }
             }
 
-            if (vm.files.isNotEmpty() || vm.links.isNotEmpty()) item {
+            if (adding) item {
+                Row(Modifier.fillMaxWidth().clickable(role = SemRole.Checkbox) { vm.filesAreReport = !vm.filesAreReport },
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(vm.filesAreReport, null, colors = CheckboxDefaults.colors(checkedColor = Sage.Primary))
+                    Column {
+                        Text("These are report files", style = HType.body, color = Sage.Ink)
+                        Text("Report files open only for doctors the item is shared with.", style = HType.small, color = Sage.Muted)
+                    }
+                }
+            }
+
+            if ((vm.mode == NewItemMode.REPORT || adding) && (vm.files.isNotEmpty() || vm.links.isNotEmpty())) item {
                 GroupCard {
                     vm.files.forEachIndexed { i, f ->
                         if (i > 0) RowDivider()
@@ -219,23 +268,15 @@ fun UploadScreen(targetUserId: String?, onClose: () -> Unit, onUploaded: (String
                 }
             }
 
-            item { SageTextField("Title", vm.title, { vm.title = it }, placeholder = "e.g. Home BP readings, September") }
-
-            item {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Box(Modifier.weight(1f)) { SageTextField("Date", vm.date, { vm.date = it }, placeholder = "YYYY-MM-DD") }
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        FieldLabel("Status")
-                        Segmented(listOf("Open", "Closed"), if (vm.status == ItemStatus.OPEN) 0 else 1,
-                            { vm.status = if (it == 0) ItemStatus.OPEN else ItemStatus.CLOSED }, Modifier.fillMaxWidth())
-                    }
-                }
+            if (vm.mode == NewItemMode.REPORT) {
+                item { SageTextField("Title", vm.title, { vm.title = it }, placeholder = "e.g. Home BP readings, September") }
+                item { SageTextField("Keywords", vm.keywords, { vm.keywords = it }, placeholder = "Separate with commas, e.g. BP, home readings") }
             }
 
-            item { SageTextField("Keywords", vm.keywords, { vm.keywords = it }, placeholder = "Separate with commas, e.g. BP, home readings") }
-
-            if (vm.uploadingForSomeoneElse) item {
-                Text("${vm.owner?.displayName} will own this record and decide who else sees it. You keep access because you uploaded it.",
+            // Sharing: the owner chooses; someone creating for a patient keeps access automatically.
+            if (adding) Unit
+            else if (vm.uploadingForSomeoneElse) item {
+                Text("${vm.owner?.displayName} will own this item and decide who else sees it. You keep access because you created it.",
                     style = HType.caption, color = Sage.SandInk,
                     modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Sage.SandTint).padding(12.dp))
             } else item {
@@ -262,7 +303,6 @@ fun UploadScreen(targetUserId: String?, onClose: () -> Unit, onUploaded: (String
                 }
             }
 
-            item { LinkToPicker(vm.threads, vm.linkTo) { vm.linkTo = it } }
         }
     }
 
@@ -337,28 +377,6 @@ fun SageTextField(label: String, value: String, onChange: (String) -> Unit, plac
                 focusedBorderColor = Sage.Primary, unfocusedBorderColor = Sage.Border, cursorColor = Sage.Primary,
             ),
         )
-    }
-}
-
-@Composable
-private fun LinkToPicker(threads: List<ThreadSummary>, selected: ThreadSummary?, onSelect: (ThreadSummary?) -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        FieldLabel("Link to message")
-        Box {
-            OutlinedButton(
-                onClick = { open = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), shape = RoundedCornerShape(12.dp),
-                border = BorderStroke(1.dp, Sage.Border), colors = ButtonDefaults.outlinedButtonColors(containerColor = Sage.Surface),
-            ) {
-                Text(selected?.let { "${it.other.displayName} · “${it.lastMessage}”" } ?: "None", style = HType.body, color = Sage.Ink,
-                    modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Icon(Icons.Outlined.ArrowDropDown, null, tint = Sage.Muted)
-            }
-            DropdownMenu(open, { open = false }) {
-                DropdownMenuItem({ Text("None") }, { onSelect(null); open = false })
-                threads.forEach { t -> DropdownMenuItem({ Text("${t.other.displayName} · “${t.lastMessage}”", maxLines = 1) }, { onSelect(t); open = false }) }
-            }
-        }
     }
 }
 

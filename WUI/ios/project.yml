@@ -7,8 +7,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.10"
-    MARKETING_VERSION: "0.3"
-    CURRENT_PROJECT_VERSION: "3"
+    MARKETING_VERSION: "0.4"
+    CURRENT_PROJECT_VERSION: "4"
 packages:
   Auth0:
     url: https://github.com/auth0/Auth0.swift

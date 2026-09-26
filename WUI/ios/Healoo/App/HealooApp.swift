@@ -32,6 +32,7 @@ enum AppTab: Hashable { case home, search, upload, messages, settings }
 
 enum Route: Hashable {
     case item(String)
+    case discussion(String)             // an item's messages
     case user(String, messages: Bool)
     case search(query: String, role: Role?)
     case editProfile
@@ -72,6 +73,17 @@ final class Router {
 
     func openTab(_ t: AppTab) { tab = t }
 
+    /// Push onto the navigation stack of the tab that is showing.
+    func push(_ route: Route) {
+        switch tab {
+        case .home: home.append(route)
+        case .search: search.append(route)
+        case .messages: messages.append(route)
+        case .settings: settings.append(route)
+        case .upload: tab = .home; home.append(route)
+        }
+    }
+
     /// "Upload for <patient>" from a user page.
     func upload(for patientId: String) { uploadTarget = patientId; tab = .upload }
 
@@ -80,6 +92,7 @@ final class Router {
         tab = .home
         switch link {
         case .item(let id): home.append(Route.item(id))
+        case .discussion(let id): home.append(Route.discussion(id))
         case .conversation(let uid): home.append(Route.user(uid, messages: true))
         }
     }
@@ -101,13 +114,14 @@ struct RootView: View {
             .tabItem { Label("Search", systemImage: "magnifyingglass") }.tag(AppTab.search)
 
             NavigationStack {
-                UploadView(targetUserId: router.uploadTarget).id(router.uploadTarget ?? "self")
+                UploadView(targetUserId: router.uploadTarget, addToItemId: nil) { id in router.tab = .home; router.home.append(Route.item(id)) }
+                    .id(router.uploadTarget ?? "self")
                     .navigationDestination(for: Route.self) { $0.destination.toolbar(.hidden, for: .navigationBar) }
             }
             .tabItem { Label("Upload", systemImage: "square.and.arrow.up") }.tag(AppTab.upload)
 
             NavigationStack(path: $router.messages) {
-                ThreadsView().withRoutes()
+                ConversationsView().withRoutes()
             }
             .tabItem { Label("Messages", systemImage: "bubble.left") }.tag(AppTab.messages)
 
@@ -127,6 +141,7 @@ extension Route {
     @ViewBuilder var destination: some View {
         switch self {
         case .item(let id): DataItemView(itemId: id)
+        case .discussion(let id): DiscussionView(itemId: id)
         case .user(let id, let messages): UserPageView(userId: id, startOnMessages: messages)
         case .search(let q, let role): SearchView(initialQuery: q, initialRole: role)
         case .editProfile: EditProfileView()

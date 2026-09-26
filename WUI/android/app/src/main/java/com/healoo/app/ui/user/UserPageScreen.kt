@@ -28,6 +28,8 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.healoo.app.data.*
 import com.healoo.app.ui.components.*
+import com.healoo.app.ui.discussion.Composer
+import com.healoo.app.ui.discussion.ConversationRow
 import com.healoo.app.ui.theme.*
 import kotlinx.coroutines.launch
 
@@ -36,20 +38,17 @@ class UserPageViewModel(private val userId: String, startOnMessages: Boolean) : 
     var me by mutableStateOf<UserProfile?>(null); private set
     var user by mutableStateOf<UserProfile?>(null); private set
     var shared by mutableStateOf<List<DataItem>>(emptyList()); private set
-    var messages by mutableStateOf<List<Message>>(emptyList()); private set
+    /** Items with a discussion between the caller and this person (DataItem v2). */
+    var conversations by mutableStateOf<List<Conversation>>(emptyList()); private set
     var tab by mutableIntStateOf(if (startOnMessages) 1 else 0)
     var draft by mutableStateOf("")
+    var sending by mutableStateOf(false); private set
     var error by mutableStateOf<String?>(null); private set
 
     init {
         load()
-        // Live messages from the WebSocket (design doc 4.4).
         viewModelScope.launch {
-            repo.events.collect { e ->
-                if (e is RealtimeEvent.NewMessage && e.message.senderId == userId && messages.none { it.id == e.message.id }) {
-                    messages = messages + e.message
-                }
-            }
+            repo.events.collect { e -> if (e is RealtimeEvent.NewMessage) refreshConversations() }
         }
     }
 
@@ -60,20 +59,26 @@ class UserPageViewModel(private val userId: String, startOnMessages: Boolean) : 
             user = repo.user(userId)
             if (user!!.connected) {
                 shared = repo.sharedItems(userId)
-                messages = repo.messages(userId)
+                conversations = repo.conversations(userId)
             }
         }.onFailure { error = "Couldn't load this profile. Try again." }
     }
 
+    private fun refreshConversations() = viewModelScope.launch {
+        runCatching { repo.conversations(userId) }.onSuccess { conversations = it }
+    }
+
     fun connect() = viewModelScope.launch { runCatching { repo.connect(userId) }.onSuccess { load() } }
 
-    fun send() {
+    /** Starts a new MESSAGE item with this person; returns its id for navigation. */
+    fun startConversation(onStarted: (String) -> Unit) {
         val body = draft.trim().ifEmpty { return }
-        draft = ""
+        sending = true
         viewModelScope.launch {
-            runCatching { repo.sendMessage(userId, body) }
-                .onSuccess { m -> if (messages.none { it.id == m.id }) messages = messages + m }
-                .onFailure { draft = body; error = null }
+            runCatching { repo.startConversation(userId, body) }
+                .onSuccess { draft = ""; onStarted(it.id); refreshConversations() }
+                .onFailure { error = null }
+            sending = false
         }
     }
 }
@@ -84,6 +89,7 @@ fun UserPageScreen(
     startOnMessages: Boolean,
     onBack: () -> Unit,
     onOpenItem: (String) -> Unit,
+    onOpenDiscussion: (String) -> Unit,
     onUploadFor: (String) -> Unit,
     onTab: (Tab) -> Unit,
 ) {
@@ -108,11 +114,11 @@ fun UserPageScreen(
                                 Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 16.dp))
                         }
                         Segmented(
-                            listOf("Shared items · ${vm.shared.size}", "Messages"), vm.tab, { vm.tab = it },
+                            listOf("Shared items · ${vm.shared.size}", "Messages · ${vm.conversations.size}"), vm.tab, { vm.tab = it },
                             Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 8.dp),
                         )
                         if (vm.tab == 0) SharedItems(vm.shared, onOpenItem)
-                        else Conversation(vm.messages, vm.me?.id, vm.draft, { vm.draft = it }, vm::send)
+                        else Conversations(vm.conversations, onOpenDiscussion, vm.draft, { vm.draft = it }) { vm.startConversation(onOpenDiscussion) }
                     }
                 }
             }
@@ -197,46 +203,22 @@ private fun SharedItems(items: List<DataItem>, onOpenItem: (String) -> Unit) {
     }
 }
 
+/** Discussions with this person, newest first, plus a composer that starts a new one. */
 @Composable
-private fun ColumnScope.Conversation(messages: List<Message>, myId: String?, draft: String, onDraft: (String) -> Unit, onSend: () -> Unit) {
-    val listState = rememberLazyListState()
-    LaunchedEffect(messages.size) { if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex) }
+private fun ColumnScope.Conversations(
+    list: List<Conversation>, onOpen: (String) -> Unit,
+    draft: String, onDraft: (String) -> Unit, onStart: () -> Unit,
+) {
     LazyColumn(
-        state = listState, modifier = Modifier.weight(1f),
+        modifier = Modifier.weight(1f),
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        items(messages, key = { it.id }) { m ->
-            val mine = m.senderId == myId
-            Box(Modifier.fillMaxWidth(), contentAlignment = if (mine) Alignment.CenterEnd else Alignment.CenterStart) {
-                Column(
-                    Modifier.widthIn(max = 280.dp)
-                        .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomStart = if (mine) 16.dp else 4.dp, bottomEnd = if (mine) 4.dp else 16.dp))
-                        .background(if (mine) Sage.Primary else Sage.Surface).padding(horizontal = 14.dp, vertical = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Text(m.body, style = HType.body.copy(fontSize = 14.sp),
-                        color = if (mine) Color.White else Sage.Ink)
-                    Text(if (mine) "You · ${m.sentAt}" else m.sentAt, style = HType.tiny.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Normal),
-                        color = if (mine) Sage.OnPrimaryLine else Sage.Muted)
-                }
-            }
+        if (list.isEmpty()) item {
+            Text("No discussions yet. Write below to start one — it becomes an item you can both add to.",
+                style = HType.body, color = Sage.Muted, modifier = Modifier.padding(vertical = 12.dp))
         }
+        items(list, key = { it.itemId }) { c -> ConversationRow(c, onClick = { onOpen(c.itemId) }, showPerson = false) }
     }
-    Row(
-        Modifier.fillMaxWidth().background(Sage.Surface).padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        OutlinedTextField(
-            value = draft, onValueChange = onDraft, modifier = Modifier.weight(1f),
-            placeholder = { Text("Write a message", style = HType.body, color = Sage.Placeholder) },
-            textStyle = HType.body, shape = RoundedCornerShape(22.dp), maxLines = 4,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send), keyboardActions = KeyboardActions(onSend = { onSend() }),
-            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Sage.Primary, unfocusedBorderColor = Sage.Border, cursorColor = Sage.Primary),
-        )
-        FilledIconButton(onClick = onSend, enabled = draft.isNotBlank(), modifier = Modifier.size(48.dp),
-            colors = IconButtonDefaults.filledIconButtonColors(containerColor = Sage.Primary)) {
-            Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = "Send message", tint = Color.White)
-        }
-    }
+    Composer(draft, onDraft, onStart, placeholder = "Start a new discussion")
 }

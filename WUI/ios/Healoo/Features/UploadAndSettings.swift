@@ -6,24 +6,42 @@ import UniformTypeIdentifiers
 
 struct UploadView: View {
     let targetUserId: String?
+    /// When set, the screen only adds files to this existing item.
+    let addToItemId: String?
+    /// Called with the created (or changed) item's id.
+    let onDone: (String) -> Void
     @Environment(AppEnvironment.self) private var env
     @Environment(Router.self) private var router
+    @Environment(\.dismiss) private var dismiss
 
     @State private var me: UserProfile?
     @State private var owner: UserProfile?
     @State private var patients: [UserProfile] = []      // doctor/lab flow: connected patients
     @State private var contacts: [UserProfile] = []
-    @State private var threads: [ThreadSummary] = []
 
-    @State private var type: CoreItemType = .report
+    /// New item: the primary part it starts from (messages start from a person's page).
+    @State private var kind: PrimaryKind = .report
     @State private var title = ""
-    @State private var date = Date()
-    @State private var statusIndex = 0
     @State private var keywords = ""
     @State private var links: [String] = []
     @State private var files: [PendingAttachment] = []
     @State private var shareWith: Set<String> = []
-    @State private var linkTo: ThreadSummary?
+    @State private var isReport = true                   // add-files mode: are these report files?
+
+    // Appointment
+    @State private var doctorId: String?
+    @State private var apptDate = Calendar.current.date(byAdding: .day, value: 1, to: Date())!
+    @State private var apptTime = Calendar.current.date(bySettingHour: 10, minute: 0, second: 0, of: Date())!
+    @State private var apptFrequency: Frequency?
+    @State private var apptPeriod: Period?
+    @State private var apptNotes = ""
+    // Alert
+    @State private var alertType = "MEDICATION"
+    @State private var alertText = ""
+    @State private var alertDate = Date()
+    @State private var alertTime = Calendar.current.date(bySettingHour: 20, minute: 0, second: 0, of: Date())!
+    @State private var alertFrequency: Frequency? = .daily
+    @State private var alertPeriod: Period? = .oneMonth
 
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var showPhotos = false
@@ -33,77 +51,73 @@ struct UploadView: View {
     @State private var newLink = "https://"
     @State private var message: String?
     @State private var busy = false
-    @State private var uploadedItem: String?
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 3)
+    private var addingFiles: Bool { addToItemId != nil }
+    private var doctors: [UserProfile] { contacts.filter { $0.primaryRole == .doctor } + (me?.primaryRole == .doctor ? [me!] : []) }
 
     var body: some View {
         VStack(spacing: 0) {
-            PinnedHeader(title: "New upload", subtitle: "For \(owner?.displayName ?? "…") · \(type.label)",
-                         backSymbol: "xmark", backLabel: "Cancel upload", onBack: { router.uploadTarget = nil; router.openTab(.home) }) {
-                if let owner { Avatar(initials: owner.initials, size: 36) }
+            PinnedHeader(title: addingFiles ? "Add files" : "New item",
+                         subtitle: addingFiles ? "To this item" : "For \(owner?.displayName ?? "…") · \(kind.label)",
+                         backSymbol: "xmark", backLabel: "Cancel", onBack: cancel) {
+                if let owner, !addingFiles { Avatar(initials: owner.initials, size: 36) }
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    if me?.isClinical == true { patientPicker }
-                    VStack(alignment: .leading, spacing: 8) {
-                        FieldLabel("Item type")
-                        LazyVGrid(columns: columns, spacing: 8) {
-                            ForEach(CoreItemType.allCases) { t in
-                                SageChip(label: t.label, selected: type == t) { type = t }.frame(maxWidth: .infinity)
+                    if addingFiles {
+                        attachSection
+                        if !files.isEmpty { pendingList }
+                        Toggle(isOn: $isReport) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("These are report files").font(HFont.body).foregroundStyle(Sage.ink)
+                                Text("Report files open only for doctors the item is shared with.").font(HFont.small).foregroundStyle(Sage.muted)
                             }
                         }
-                    }
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        FieldLabel("Attach · \(files.count) of \(Limits.maxAttachments)")
-                        HStack(spacing: 8) {
-                            attachButton("Camera", "camera") {
-                                if UIImagePickerController.isSourceTypeAvailable(.camera) { showCamera = true }
-                                else { message = "This device has no camera. Use Images instead." }
-                            }
-                            attachButton("Images", "photo.on.rectangle") { showPhotos = true }
-                            attachButton("PDFs", "doc.richtext") { showPDFs = true }
-                            attachButton("Link", "link") { newLink = "https://"; showLink = true }
-                        }
-                        if let message { Text(message).font(HFont.small).foregroundStyle(Sage.clay) }
-                    }
-
-                    if !files.isEmpty || !links.isEmpty { pendingList }
-
-                    textField("Title", text: $title, placeholder: "e.g. Home BP readings, September")
-
-                    HStack(alignment: .top, spacing: 10) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            FieldLabel("Date")
-                            DatePicker("Date", selection: $date, displayedComponents: .date).labelsHidden().tint(Sage.primary)
-                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                        }
-                        VStack(alignment: .leading, spacing: 6) {
-                            FieldLabel("Status")
-                            Segmented(options: ["Open", "Closed"], selection: $statusIndex)
-                        }
-                    }
-
-                    textField("Keywords", text: $keywords, placeholder: "Separate with commas, e.g. BP, home readings")
-
-                    if uploadingForSomeoneElse {
-                        Text("\(owner?.displayName ?? "The patient") will own this record and decide who else sees it. You keep access because you uploaded it.")
-                            .font(HFont.caption).foregroundStyle(Sage.sandInk).padding(12)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Sage.sandTint, in: RoundedRectangle(cornerRadius: 12))
+                        .tint(Sage.primary)
                     } else {
-                        shareSection
+                        if me?.isClinical == true && kind != .alert { patientPicker }
+                        VStack(alignment: .leading, spacing: 8) {
+                            FieldLabel("Start with")
+                            HStack(spacing: 8) {
+                                ForEach([PrimaryKind.report, .appointment, .alert]) { k in
+                                    SageChip(label: k.label, selected: kind == k) { kind = k; message = nil }.frame(maxWidth: .infinity)
+                                }
+                            }
+                            Text("You can add files, messages, appointments and alerts to the item later.").font(HFont.small).foregroundStyle(Sage.muted)
+                        }
+                        switch kind {
+                        case .report:
+                            attachSection
+                            if !files.isEmpty || !links.isEmpty { pendingList }
+                            textField("Title", text: $title, placeholder: "e.g. Home BP readings, September")
+                        case .appointment:
+                            AppointmentFields(doctors: doctors, doctorId: $doctorId, date: $apptDate, time: $apptTime,
+                                              frequency: $apptFrequency, period: $apptPeriod, notes: $apptNotes)
+                        case .alert:
+                            textField("Title (optional)", text: $title, placeholder: "e.g. Evening medicine")
+                            AlertFields(type: $alertType, text: $alertText, date: $alertDate, time: $alertTime,
+                                        frequency: $alertFrequency, period: $alertPeriod)
+                        case .message:
+                            EmptyView()
+                        }
+                        textField("Keywords", text: $keywords, placeholder: "Separate with commas, e.g. BP, home readings")
+                        if uploadingForSomeoneElse && kind != .alert {
+                            Text("\(owner?.displayName ?? "The patient") will own this item and decide who else sees it. You keep access because you created it.")
+                                .font(HFont.caption).foregroundStyle(Sage.sandInk).padding(12)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Sage.sandTint, in: RoundedRectangle(cornerRadius: 12))
+                        } else {
+                            shareSection
+                        }
                     }
-                    linkToSection
+                    if let message { Text(message).font(HFont.small).foregroundStyle(Sage.clay) }
                 }
                 .padding(20)
             }
         }
         .background(Sage.background)
         .bottomActionBar {
-            Button(busy ? "Uploading…" : "Upload \(type.label.lowercased())", action: upload)
-                .buttonStyle(PrimaryButtonStyle()).disabled(busy)
+            Button(busy ? "Saving…" : actionLabel, action: submit).buttonStyle(PrimaryButtonStyle()).disabled(busy)
         }
         .photosPicker(isPresented: $showPhotos, selection: $photoItems, maxSelectionCount: Limits.maxAttachments, matching: .images)
         .onChange(of: photoItems) { Task { await importPhotos() } }
@@ -117,9 +131,37 @@ struct UploadView: View {
             Button("Add link") { if newLink.hasPrefix("https://"), newLink.count > 10 { links.append(newLink) } }
             Button("Cancel", role: .cancel) {}
         }
-        .navigationDestination(item: $uploadedItem) { DataItemView(itemId: $0).toolbar(.hidden, for: .navigationBar) }
         .toolbar(.hidden, for: .navigationBar)
         .task { await loadContext() }
+    }
+
+    private var actionLabel: String {
+        if addingFiles { return files.isEmpty ? "Add files" : "Add \(files.count) file\(files.count == 1 ? "" : "s")" }
+        switch kind {
+        case .report: return "Upload report"
+        case .appointment: return "Book appointment"
+        case .alert: return "Set alert"
+        case .message: return "Send"
+        }
+    }
+
+    private func cancel() {
+        if addingFiles { dismiss() } else { router.uploadTarget = nil; router.openTab(.home) }
+    }
+
+    private var attachSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            FieldLabel("Attach · \(files.count) of \(Limits.maxAttachments)")
+            HStack(spacing: 8) {
+                attachButton("Camera", "camera") {
+                    if UIImagePickerController.isSourceTypeAvailable(.camera) { showCamera = true }
+                    else { message = "This device has no camera. Use Images instead." }
+                }
+                attachButton("Images", "photo.on.rectangle") { showPhotos = true }
+                attachButton("PDFs", "doc.richtext") { showPDFs = true }
+                if !addingFiles { attachButton("Link", "link") { newLink = "https://"; showLink = true } }
+            }
+        }
     }
 
     // MARK: pieces
@@ -241,26 +283,6 @@ struct UploadView: View {
         }
     }
 
-    private var linkToSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            FieldLabel("Link to message")
-            Menu {
-                Button("None") { linkTo = nil }
-                ForEach(threads) { t in Button("\(t.otherUser.displayName) · “\(t.lastMessage)”") { linkTo = t } }
-            } label: {
-                HStack {
-                    Text(linkTo.map { "\($0.otherUser.displayName) · “\($0.lastMessage)”" } ?? "None")
-                        .font(HFont.body).foregroundStyle(Sage.ink).lineLimit(1)
-                    Spacer()
-                    Image(systemName: "chevron.up.chevron.down").foregroundStyle(Sage.muted)
-                }
-                .padding(.horizontal, 14).frame(minHeight: 48)
-                .background(Sage.surface, in: RoundedRectangle(cornerRadius: 12))
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Sage.border))
-            }
-        }
-    }
-
     // MARK: file intake (limits from design doc 4.5)
 
     private func importPhotos() async {
@@ -305,8 +327,8 @@ struct UploadView: View {
     }
 
     private func resetForm() {
-        title = ""; keywords = ""; links = []; files = []; shareWith = []; linkTo = nil
-        statusIndex = 0; date = Date(); type = .report; message = nil
+        title = ""; keywords = ""; links = []; files = []; shareWith = []; message = nil
+        kind = .report; alertText = ""; apptNotes = ""; apptFrequency = nil; apptPeriod = nil
     }
 
     private func loadContext() async {
@@ -318,30 +340,56 @@ struct UploadView: View {
             if let targetUserId { owner = try await env.repo.user(targetUserId) }
             else if !self_.isClinical { owner = self_ }          // clinicians must pick a patient first
             contacts = all.filter { $0.primaryRole == .doctor || $0.primaryRole == .hospital }
-            threads = try await env.repo.threads()
-        } catch { message = "Couldn't load your contacts. You can still upload." }
+            if doctorId == nil { doctorId = self_.primaryRole == .doctor ? self_.id : (doctors.count == 1 ? doctors[0].id : nil) }
+        } catch { message = "Couldn't load your contacts. You can still continue." }
     }
 
-    private func upload() {
-        guard let owner else { message = "Choose the patient this record is for."; return }
-        guard !files.isEmpty || !links.isEmpty else { message = "Add at least one image, PDF or link."; return }
-        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; f.locale = Locale(identifier: "en_US_POSIX")
-        let draft = UploadDraft(
-            ownerId: owner.id, type: type, title: title.trimmingCharacters(in: .whitespaces), date: f.string(from: date),
-            keywords: keywords.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty },
-            links: links, status: statusIndex == 0 ? .open : .closed,
-            // Only the owner decides sharing (doc 2.3); an uploader keeps access automatically.
-            shareWith: uploadingForSomeoneElse ? [] : Array(shareWith), pointerToMessage: linkTo?.id)
-        busy = true
+    private var keywordList: [String] {
+        keywords.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+
+    private func submit() {
+        // Only the owner decides sharing (doc 2.3); a creator acting for a patient keeps access automatically.
+        let share = uploadingForSomeoneElse ? [] : Array(shareWith)
+        let work: () async throws -> DataItem
+        if let addToItemId {
+            guard !files.isEmpty else { message = "Add at least one image or PDF."; return }
+            let (f, r) = (files, isReport)
+            work = { try await env.repo.addAttachments(addToItemId, files: f, isReport: r) }
+        } else {
+            switch kind {
+            case .report:
+                guard let owner else { message = "Choose the patient this report is for."; return }
+                guard !files.isEmpty || !links.isEmpty else { message = "Add at least one image, PDF or link."; return }
+                let draft = ReportDraft(ownerId: owner.id, title: title.trimmingCharacters(in: .whitespaces), keywords: keywordList,
+                                        links: links, shareWith: share)
+                let f = files
+                work = { try await env.repo.createReport(draft, files: f) }
+            case .appointment:
+                guard let owner else { message = "Choose the patient this appointment is for."; return }
+                if let p = AppointmentFields.problem(doctorId: doctorId, date: apptDate, frequency: apptFrequency, period: apptPeriod) { message = p; return }
+                let a = AppointmentFields.build(patientId: owner.id, doctorId: doctorId!, date: apptDate, time: apptTime,
+                                                frequency: apptFrequency, period: apptPeriod, notes: apptNotes)
+                work = { try await env.repo.createAppointment(ownerId: owner.id, a, shareWith: share) }
+            case .alert:
+                if let p = AlertFields.problem(text: alertText, date: alertDate, frequency: alertFrequency, period: alertPeriod) { message = p; return }
+                let a = AlertFields.build(type: alertType, text: alertText, date: alertDate, time: alertTime, frequency: alertFrequency, period: alertPeriod)
+                let t = title.trimmingCharacters(in: .whitespaces), shareAlert = Array(shareWith)
+                work = { try await env.repo.createAlert(title: t, a, shareWith: shareAlert) }
+            case .message:
+                return
+            }
+        }
+        busy = true; message = nil
         Task {
             do {
-                let item = try await env.repo.upload(draft, files: files)
+                let item = try await work()
                 busy = false
-                uploadedItem = item.id      // opens the new item
-                resetForm()                 // the Upload tab is empty again when the user comes back
+                resetForm()                 // the tab is empty again when the user comes back
+                onDone(item.id)
             } catch {
                 busy = false
-                message = "Upload didn't finish: \(error.localizedDescription). Your files are still here — try again."
+                message = "That didn't finish: \(error.localizedDescription). Nothing was lost — try again."
             }
         }
     }

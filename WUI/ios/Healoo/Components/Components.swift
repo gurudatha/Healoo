@@ -2,21 +2,19 @@ import SwiftUI
 
 struct TypeStyle { let tint: Color; let fg: Color; let symbol: String }
 
-extension CoreItemType {
+extension PrimaryKind {
     var style: TypeStyle {
         switch self {
         case .report: TypeStyle(tint: Sage.sageTint, fg: Sage.primary, symbol: "doc.text")
         case .message: TypeStyle(tint: Sage.sageTint, fg: Sage.primary, symbol: "bubble.left")
-        case .booking: TypeStyle(tint: Sage.sandTint, fg: Sage.sand, symbol: "calendar")
-        case .feedback: TypeStyle(tint: Sage.sandTint, fg: Sage.sand, symbol: "star.bubble")
-        case .payment: TypeStyle(tint: Sage.sandTint, fg: Sage.sand, symbol: "creditcard")
+        case .appointment: TypeStyle(tint: Sage.sandTint, fg: Sage.sand, symbol: "calendar")
         case .alert: TypeStyle(tint: Sage.clayTint, fg: Sage.clay, symbol: "bell")
         }
     }
 }
 
 struct TypeBadge: View {
-    let type: CoreItemType
+    let type: PrimaryKind
     var body: some View {
         Text(type.label).font(HFont.tiny).foregroundStyle(type.style.fg)
             .padding(.horizontal, 8).padding(.vertical, 2)
@@ -25,7 +23,7 @@ struct TypeBadge: View {
 }
 
 struct TypeTile: View {
-    let type: CoreItemType
+    let type: PrimaryKind
     var size: CGFloat = 40
     var body: some View {
         Image(systemName: type.style.symbol).font(.system(size: size * 0.45, weight: .regular))
@@ -40,7 +38,7 @@ struct DataItemRow: View {
     let item: DataItem
     var body: some View {
         HStack(spacing: 12) {
-            TypeTile(type: item.type)
+            TypeTile(type: item.primaryKind)
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title).font(HFont.bodyStrong).foregroundStyle(Sage.ink).lineLimit(1)
                 Text(item.subtitle).font(HFont.caption).foregroundStyle(Sage.muted).lineLimit(1)
@@ -48,7 +46,7 @@ struct DataItemRow: View {
             Spacer(minLength: 8)
             VStack(alignment: .trailing, spacing: 4) {
                 Text(DateText.short(item.date)).font(HFont.small).foregroundStyle(Sage.muted)
-                TypeBadge(type: item.type)
+                TypeBadge(type: item.primaryKind)
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 10)

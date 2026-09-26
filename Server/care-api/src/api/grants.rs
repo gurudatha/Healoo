@@ -1,6 +1,6 @@
 //! /v1/grants, /v1/affiliations/{doctor}/end, /v1/delegations, /v1/check/access
 
-use super::{items::audience_of, principal::Principal, users::load_user, ApiError, ApiResult, AppState};
+use super::{principal::Principal, users::load_user, ApiError, ApiResult, AppState};
 use crate::{
     events::{topics, Envelope},
     model::*,
@@ -43,7 +43,7 @@ pub async fn create(State(st): State<AppState>, p: Principal, Json(b): Json<Gran
         };
         st.db.add_grant(&item, g).await?;
         let updated = st.db.item(*id).await?.unwrap_or(item);
-        let ev = Envelope::new("grant.added", p.id(), id, audience_of(&updated), json!({ "item_id": id, "grantee": grantee_key(kind, grantee.user_id) }));
+        let ev = Envelope::new("grant.added", p.id(), id, updated.audience(), json!({ "item_id": id, "grantee": grantee_key(kind, grantee.user_id) }));
         st.events.emit(topics::ACCESS_CHANGES, &p.id().to_string(), ev).await?;
     }
     Ok(StatusCode::NO_CONTENT)
@@ -62,7 +62,7 @@ pub async fn revoke(State(st): State<AppState>, p: Principal, Path(grant_id): Pa
     let (item_id, owner) = st.db.grant_lookup(grant_id).await?.ok_or_else(|| ApiError::not_found("no such grant"))?;
     if owner != p.id() { return Err(ApiError::forbidden("only the owner can revoke")); }
     let item = st.db.item(item_id).await?.ok_or_else(|| ApiError::not_found("no such item"))?;
-    let audience = audience_of(&item); // before removal, so the revoked party is told too
+    let audience = item.audience(); // before removal, so the revoked party is told too
     let udt = item.grants.iter().find(|g| g.grant_id == Some(grant_id)).cloned()
         .ok_or_else(|| ApiError::not_found("grant already removed"))?;
     st.db.remove_grant(&item, &udt).await?;

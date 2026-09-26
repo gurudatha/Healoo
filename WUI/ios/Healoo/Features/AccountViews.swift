@@ -305,7 +305,7 @@ struct ActiveSharingView: View {
                     HStack(spacing: 12) {
                         NavigationLink(value: Route.item(grant.itemId)) {
                             HStack(spacing: 12) {
-                                TypeTile(type: grant.coreItemType, size: 32)
+                                TypeTile(type: grant.primaryKind, size: 32)
                                 Text(grant.itemTitle).font(HFont.body).foregroundStyle(Sage.ink).lineLimit(1)
                                 Spacer(minLength: 0)
                             }

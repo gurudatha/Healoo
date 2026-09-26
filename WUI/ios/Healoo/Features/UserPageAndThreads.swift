@@ -17,7 +17,8 @@ struct UserPageView: View {
     @State private var me: UserProfile?
     @State private var user: UserProfile?
     @State private var shared: [DataItem] = []
-    @State private var messages: [Message] = []
+    @State private var conversations: [Conversation] = []
+    @State private var starting = false
     @State private var tab = 0
     @State private var draft = ""
     @State private var error: String?
@@ -51,10 +52,10 @@ struct UserPageView: View {
         .background(Sage.background)
         .safeAreaInset(edge: .bottom, spacing: 0) { if tab == 1 && user?.connected == true { composer } }
         .task { if user == nil { await load() } }
-        // Live messages from the WebSocket (doc 4.4).
+        // Live messages from the WebSocket (doc 4.4): refresh the conversation list.
         .onReceive(env.repo.events) { event in
-            if case .newMessage(let m) = event, m.senderId == userId, !messages.contains(where: { $0.id == m.id }) {
-                messages.append(m)
+            if case .newMessage = event, user?.connected == true {
+                Task { conversations = (try? await env.repo.conversations(with: userId)) ?? conversations }
             }
         }
     }
@@ -76,61 +77,42 @@ struct UserPageView: View {
                     }
                     .buttonStyle(PrimaryButtonStyle()).padding(.top, 16)
                 }
-                Segmented(options: ["Shared items · \(shared.count)", "Messages"], selection: $tab).padding(.top, 16)
+                Segmented(options: ["Shared items · \(shared.count)", "Messages · \(conversations.count)"], selection: $tab).padding(.top, 16)
                 if tab == 0 {
                     if shared.isEmpty { Text("Nothing shared between you yet.").font(HFont.body).foregroundStyle(Sage.muted) }
                     ForEach(shared) { item in
                         NavigationLink(value: Route.item(item.id)) { DataItemRow(item: item) }.buttonStyle(.plain)
                     }
                 } else {
-                    ForEach(messages) { bubble($0).id($0.id) }
-                        .onChange(of: messages.count) { if let last = messages.last { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } } }
+                    // Every message belongs to an item (design D5): one row per discussion with this person.
+                    if conversations.isEmpty {
+                        Text("No discussions with \(user.displayName) yet. Write below to start one, or use Start discussion on any shared item.")
+                            .font(HFont.body).foregroundStyle(Sage.muted)
+                    }
+                    ForEach(conversations) { c in
+                        NavigationLink(value: Route.discussion(c.itemId)) { ConversationRow(conversation: c, showPerson: false) }.buttonStyle(.plain)
+                    }
                 }
             }
         } else { LoadingView().padding(.top, 40) }
     }
 
-    private func bubble(_ m: Message) -> some View {
-        let mine = m.senderId == me?.id
-        return HStack {
-            if mine { Spacer(minLength: 60) }
-            VStack(alignment: .leading, spacing: 4) {
-                Text(m.body).font(.custom(FontName.figtreeRegular, size: 14)).foregroundStyle(mine ? .white : Sage.ink)
-                Text(mine ? "You · \(m.sentAt)" : m.sentAt).font(.custom(FontName.figtreeRegular, size: 11))
-                    .foregroundStyle(mine ? Sage.onPrimaryLine : Sage.muted)
-            }
-            .padding(.horizontal, 14).padding(.vertical, 10)
-            .background(mine ? Sage.primary : Sage.surface,
-                        in: UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: mine ? 16 : 4, bottomTrailingRadius: mine ? 4 : 16, topTrailingRadius: 16))
-            if !mine { Spacer(minLength: 60) }
-        }
-    }
-
     private var composer: some View {
-        HStack(spacing: 8) {
-            TextField("Write a message", text: $draft, axis: .vertical).lineLimit(1...4)
-                .font(HFont.body).padding(.horizontal, 14).padding(.vertical, 10)
-                .overlay(RoundedRectangle(cornerRadius: 22).stroke(Sage.border))
-                .submitLabel(.send).onSubmit(send)
-            Button(action: send) {
-                Image(systemName: "paperplane.fill").foregroundStyle(.white).frame(width: 48, height: 48)
-                    .background(draft.trimmingCharacters(in: .whitespaces).isEmpty ? Sage.muted : Sage.primary, in: Circle())
-            }
-            .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
-            .accessibilityLabel("Send message")
-        }
-        .padding(.horizontal, 12).padding(.vertical, 8)
-        .background(Sage.surface.ignoresSafeArea(edges: .bottom))
+        Composer(draft: $draft, placeholder: "Start a new discussion", busy: starting, send: start)
     }
 
-    private func send() {
+    /// Creates a MESSAGE item with this person and opens its discussion.
+    private func start() {
         let body = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else { return }
-        draft = ""
+        starting = true
         Task {
-            if let m = try? await env.repo.send(to: userId, body: body) {
-                if !messages.contains(where: { $0.id == m.id }) { messages.append(m) }
-            } else { draft = body }        // keep the text so it can be resent
+            if let item = try? await env.repo.startConversation(with: userId, body: body) {
+                draft = ""
+                conversations = (try? await env.repo.conversations(with: userId)) ?? conversations
+                router.push(.discussion(item.id))
+            }
+            starting = false
         }
     }
 
@@ -142,7 +124,7 @@ struct UserPageView: View {
             user = u
             if u.connected {
                 shared = try await env.repo.sharedItems(with: userId)
-                messages = try await env.repo.messages(with: userId)
+                conversations = try await env.repo.conversations(with: userId)
                 if startOnMessages { tab = 1 }
             }
         } catch { self.error = "Couldn't load this profile. Try again." }
@@ -206,9 +188,10 @@ private struct ProfileHeader: View {
 
 // MARK: - Messages tab
 
-struct ThreadsView: View {
+/// Every item with a discussion, per person (replaces the v0.1 chat threads).
+struct ConversationsView: View {
     @Environment(AppEnvironment.self) private var env
-    @State private var threads: [ThreadSummary]?
+    @State private var list: [Conversation]?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -218,42 +201,205 @@ struct ThreadsView: View {
                 .sageHeaderBackground()
             ScrollView {
                 LazyVStack(spacing: 8) {
-                    if let threads {
-                        if threads.isEmpty {
-                            Text("No conversations yet. Open a doctor's profile from Search to send the first message.")
+                    if let list {
+                        if list.isEmpty {
+                            Text("No conversations yet. Open a person's profile from Search to start one, or use Start discussion on any item.")
                                 .font(HFont.body).foregroundStyle(Sage.muted)
                         }
-                        ForEach(threads) { t in
-                            NavigationLink(value: Route.user(t.otherUser.id, messages: true)) {
-                                HStack(spacing: 12) {
-                                    Avatar(initials: t.otherUser.initials)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(t.otherUser.displayName).font(HFont.bodyStrong).foregroundStyle(Sage.ink)
-                                        Text(t.lastMessage).font(HFont.caption).foregroundStyle(Sage.muted).lineLimit(1)
-                                    }
-                                    Spacer(minLength: 0)
-                                    VStack(alignment: .trailing, spacing: 4) {
-                                        Text(t.lastMessageAt).font(HFont.small).foregroundStyle(Sage.muted)
-                                        if t.unread > 0 {
-                                            Text("\(t.unread)").font(HFont.tiny).foregroundStyle(.white)
-                                                .frame(width: 20, height: 20).background(Sage.primary, in: Circle())
-                                        }
-                                    }
-                                }
-                                .padding(12)
-                                .background(Sage.surface, in: RoundedRectangle(cornerRadius: Radius.card))
-                            }
-                            .buttonStyle(.plain)
+                        ForEach(list) { c in
+                            NavigationLink(value: Route.discussion(c.itemId)) { ConversationRow(conversation: c, showPerson: true) }.buttonStyle(.plain)
                         }
                     } else { LoadingView() }
                 }
                 .padding(20)
             }
+            .refreshable { await load() }
         }
         .background(Sage.background)
-        .task { threads = (try? await env.repo.threads()) ?? [] }
+        .task { await load() }
         .onReceive(env.repo.events) { event in
-            if case .newMessage = event { Task { threads = (try? await env.repo.threads()) ?? threads } }
+            if case .newMessage = event { Task { await load() } }
         }
+    }
+
+    private func load() async { list = (try? await env.repo.conversations()) ?? list ?? [] }
+}
+
+struct ConversationRow: View {
+    let conversation: Conversation
+    let showPerson: Bool
+
+    var body: some View {
+        let c = conversation
+        HStack(spacing: 12) {
+            if showPerson { Avatar(initials: c.otherUser.initials) } else { TypeTile(type: c.primaryKind) }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(showPerson ? c.otherUser.displayName : c.itemTitle).font(HFont.bodyStrong).foregroundStyle(Sage.ink).lineLimit(1)
+                if showPerson { Text(c.itemTitle).font(HFont.smallStrong).foregroundStyle(Sage.primary).lineLimit(1) }
+                Text(c.lastMessage).font(HFont.caption).foregroundStyle(Sage.muted).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(MessageTime.short(c.lastMessageAt)).font(HFont.small).foregroundStyle(Sage.muted)
+                if c.unread > 0 {
+                    Text("\(c.unread)").font(HFont.tiny).foregroundStyle(.white)
+                        .frame(width: 20, height: 20).background(Sage.primary, in: Circle())
+                        .accessibilityLabel("\(c.unread) unread")
+                }
+            }
+        }
+        .padding(12)
+        .background(Sage.surface, in: RoundedRectangle(cornerRadius: Radius.card))
+        .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: - Discussion (an item's messages)
+
+struct DiscussionView: View {
+    let itemId: String
+    @Environment(AppEnvironment.self) private var env
+    @Environment(Router.self) private var router
+    @Environment(\.dismiss) private var dismiss
+    @State private var item: DataItem?
+    @State private var me: UserProfile?
+    @State private var messages: [Message] = []
+    @State private var draft = ""
+    @State private var sending = false
+    @State private var error: String?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            PinnedHeader(title: item?.title ?? "Discussion", subtitle: item.map { "\($0.primaryKind.label) · everyone this item is shared with" } ?? "",
+                         onBack: { dismiss() }) {
+                if item != nil {
+                    Button("Details") { router.push(.item(itemId)) }.font(HFont.captionStrong).foregroundStyle(.white).frame(minHeight: 44)
+                }
+            }
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        if let error { ErrorView(message: error) { Task { await load() } } }
+                        else if item == nil { LoadingView() }
+                        else if messages.isEmpty {
+                            Text("No messages yet. Write the first one below.").font(HFont.body).foregroundStyle(Sage.muted)
+                        }
+                        ForEach(messages) { m in
+                            MessageBubble(message: m, mine: m.senderId == me?.id, name: name(m.senderId)).id(m.id)
+                        }
+                    }
+                    .padding(20)
+                }
+                .onChange(of: messages.count) { if let last = messages.last { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } } }
+            }
+        }
+        .background(Sage.background)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if let item {
+                if item.can("message") { Composer(draft: $draft, placeholder: "Write a message", busy: sending, send: send) }
+                else {
+                    Text(item.status == .closed ? "This item is closed. Reopen it to continue the discussion." : "You can read this discussion but not reply.")
+                        .font(HFont.small).foregroundStyle(Sage.muted).frame(maxWidth: .infinity).padding(14)
+                        .background(Sage.surface.ignoresSafeArea(edges: .bottom))
+                }
+            }
+        }
+        .task { if item == nil { await load() } }
+        .onReceive(env.repo.events) { event in
+            if case .newMessage(let m) = event, m.itemId == itemId, !messages.contains(where: { $0.id == m.id }) { messages.append(m) }
+        }
+    }
+
+    private func name(_ senderId: String) -> String {
+        guard let item else { return "" }
+        if senderId == me?.id { return "You" }
+        if let g = item.accessList.first(where: { $0.granteeId == senderId }) { return g.granteeName }
+        if let a = item.appointments.first(where: { $0.doctorId == senderId }), !a.doctorName.isEmpty { return a.doctorName }
+        if senderId == item.ownerId { return "Patient" }
+        return item.createdByName
+    }
+
+    private func send() {
+        let body = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else { return }
+        draft = ""; sending = true
+        Task {
+            do {
+                let m = try await env.repo.sendItemMessage(itemId, body: body)
+                if !messages.contains(where: { $0.id == m.id }) { messages.append(m) }
+            } catch { draft = body }           // keep the text so it can be resent
+            sending = false
+        }
+    }
+
+    private func load() async {
+        error = nil
+        do {
+            me = try await env.repo.me()
+            item = try await env.repo.item(itemId)
+            messages = try await env.repo.itemMessages(itemId)
+        } catch { self.error = "Couldn't open this discussion. You may no longer have access to it." }
+    }
+}
+
+struct MessageBubble: View {
+    let message: Message
+    let mine: Bool
+    let name: String
+
+    var body: some View {
+        HStack {
+            if mine { Spacer(minLength: 60) }
+            VStack(alignment: .leading, spacing: 4) {
+                if !mine { Text(name).font(HFont.smallStrong).foregroundStyle(Sage.primary) }
+                Text(message.body).font(.custom(FontName.figtreeRegular, size: 14)).foregroundStyle(mine ? .white : Sage.ink)
+                Text(MessageTime.short(message.sentAt)).font(.custom(FontName.figtreeRegular, size: 11))
+                    .foregroundStyle(mine ? Sage.onPrimaryLine : Sage.muted)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .background(mine ? Sage.primary : Sage.surface,
+                        in: UnevenRoundedRectangle(topLeadingRadius: 16, bottomLeadingRadius: mine ? 16 : 4, bottomTrailingRadius: mine ? 4 : 16, topTrailingRadius: 16))
+            if !mine { Spacer(minLength: 60) }
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+struct Composer: View {
+    @Binding var draft: String
+    var placeholder = "Write a message"
+    var busy = false
+    let send: () -> Void
+
+    var body: some View {
+        let empty = draft.trimmingCharacters(in: .whitespaces).isEmpty
+        HStack(spacing: 8) {
+            TextField(placeholder, text: $draft, axis: .vertical).lineLimit(1...4)
+                .font(HFont.body).padding(.horizontal, 14).padding(.vertical, 10)
+                .overlay(RoundedRectangle(cornerRadius: 22).stroke(Sage.border))
+                .submitLabel(.send).onSubmit(send)
+            Button(action: send) {
+                Group { if busy { ProgressView().tint(.white) } else { Image(systemName: "paperplane.fill").foregroundStyle(.white) } }
+                    .frame(width: 48, height: 48)
+                    .background(empty ? Sage.muted : Sage.primary, in: Circle())
+            }
+            .disabled(empty || busy)
+            .accessibilityLabel("Send message")
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(Sage.surface.ignoresSafeArea(edges: .bottom))
+    }
+}
+
+/// Message times: "10:42" today, otherwise "21 Sep".
+enum MessageTime {
+    private static let parser: ISO8601DateFormatter = { let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime]; return f }()
+    private static let parserFrac: ISO8601DateFormatter = { let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f }()
+    private static let clock: DateFormatter = { let f = DateFormatter(); f.dateFormat = "HH:mm"; return f }()
+    private static let day: DateFormatter = { let f = DateFormatter(); f.dateFormat = "d MMM"; return f }()
+
+    static func short(_ iso: String) -> String {
+        guard let d = parser.date(from: iso) ?? parserFrac.date(from: iso) else { return iso }
+        return Calendar.current.isDateInToday(d) ? clock.string(from: d) : day.string(from: d)
     }
 }

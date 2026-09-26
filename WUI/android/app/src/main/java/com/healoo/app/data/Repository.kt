@@ -8,25 +8,51 @@ import com.healoo.app.BuildConfig
 interface HealooRepository {
     suspend fun me(): UserProfile
     suspend fun dashboard(): Dashboard
-    suspend fun openItems(limit: Int = 20): List<DataItem>
+    suspend fun items(status: ItemStatus = ItemStatus.OPEN, limit: Int = 20): List<DataItem>
+    suspend fun openItems(limit: Int = 20): List<DataItem> = items(ItemStatus.OPEN, limit)
+    /** Full item with its messages, attachments, appointments and alerts. */
     suspend fun item(id: String): DataItem
     suspend fun user(id: String): UserProfile
     /** Items shared between the caller and [userId]. Empty unless connected (doc 2.3 rule 8). */
     suspend fun sharedItems(userId: String): List<DataItem>
-    suspend fun messages(userId: String): List<Message>
-    suspend fun sendMessage(userId: String, body: String): Message
-    suspend fun threads(): List<ThreadSummary>
     /** Global search by Healoo ID or name. Returns profiles only, never data. */
     suspend fun search(query: String, role: Role?): List<UserProfile>
     suspend fun connections(): List<UserProfile>
     suspend fun connect(userId: String): UserProfile
-    suspend fun setStatus(itemId: String, status: ItemStatus): DataItem
     suspend fun revokeGrant(itemId: String, grantId: String): DataItem
     /** Patient shares an item with a user or hospital (POST /v1/grants). */
     suspend fun share(itemId: String, granteeId: String): DataItem
-    suspend fun upload(draft: UploadDraft, files: List<PendingAttachment>): DataItem
 
-    // ---- added in 0.2 ----
+    // ---- DataItem v2: creating items from one primary part ----
+    /** New REPORT item from picked files (presign, upload, create). */
+    suspend fun createReport(draft: ReportDraft, files: List<PendingAttachment>): DataItem
+    /** New APPOINTMENT item. */
+    suspend fun createAppointment(ownerId: String?, appointment: NewAppointment, shareWith: List<String> = emptyList()): DataItem
+    /** New ALERT item. */
+    suspend fun createAlert(title: String, alert: NewAlert, shareWith: List<String> = emptyList()): DataItem
+    /** New MESSAGE item: starts a discussion with [userId] (the patient in the pair owns it). */
+    suspend fun startConversation(userId: String, body: String): DataItem
+
+    // ---- DataItem v2: adding to an existing item ----
+    suspend fun itemMessages(itemId: String): List<Message>
+    suspend fun sendItemMessage(itemId: String, body: String): Message
+    suspend fun addAttachments(itemId: String, files: List<PendingAttachment>, isReport: Boolean): DataItem
+    suspend fun bookAppointment(itemId: String, appointment: NewAppointment): DataItem
+    /** One visit: CANCELLED, MOVED (newDate/newTime), COMPLETED or NO_SHOW. */
+    suspend fun visitAction(itemId: String, appointmentId: String, visitDate: String, action: String, newDate: String? = null, newTime: String? = null): DataItem
+    suspend fun cancelAppointment(itemId: String, appointmentId: String): DataItem
+    suspend fun addAlert(itemId: String, alert: NewAlert): DataItem
+    suspend fun deleteAlert(itemId: String, alertId: String): DataItem
+    /** Close with optional feedback; rating (1–5) only when the patient closes. */
+    suspend fun closeItem(itemId: String, feedback: String?, rating: Int?): DataItem
+    suspend fun reopenItem(itemId: String): DataItem
+
+    /** Messages tab: items with a discussion, per person (optionally only with [withUser]). */
+    suspend fun conversations(withUser: String? = null): List<Conversation>
+    /** Upcoming visits across items (YYYY-MM-DD, up to 62 days). */
+    suspend fun calendar(from: String, to: String): List<CalendarVisit>
+
+    // ---- account ----
     suspend fun updateProfile(update: ProfileUpdate): UserProfile
     /** Everything the caller has shared, grouped by who it is shared with. */
     suspend fun activeShares(): List<ShareGroup>
@@ -42,16 +68,13 @@ interface HealooRepository {
     fun stopRealtime()
 }
 
-data class UploadDraft(
+/** Upload screen: a new report, or files added to an existing item ([addToItemId]). */
+data class ReportDraft(
     val ownerId: String,
-    val type: CoreItemType,
     val title: String,
-    val date: String,
     val keywords: List<String>,
     val links: List<String>,
-    val status: ItemStatus,
     val shareWith: List<String>,
-    val pointerToMessage: String?,
 )
 
 object Limits {

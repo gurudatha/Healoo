@@ -25,22 +25,28 @@ import retrofit2.http.POST
 import retrofit2.http.Path
 import retrofit2.http.Query
 
-/** Endpoints from design doc 4.3. */
+/** Endpoints from design doc 4.3 and DataItem_Design.md section 4. */
 interface HealooApi {
     @GET("v1/me") suspend fun me(): UserProfile
     @GET("v1/dashboard") suspend fun dashboard(): Dashboard
     @GET("v1/items") suspend fun items(@Query("status") status: String, @Query("limit") limit: Int): PageResult<DataItem>
     @GET("v1/items/{id}") suspend fun item(@Path("id") id: String): DataItem
-    @GET("v1/items/{id}/attachments") suspend fun attachments(@Path("id") id: String): PageResult<Attachment>
-    @PATCH("v1/items/{id}") suspend fun patchItem(@Path("id") id: String, @Body body: StatusPatch): DataItem
     @POST("v1/items") suspend fun createItem(@Body body: NewItemRequest): DataItem
+    @POST("v1/items/{id}/close") suspend fun close(@Path("id") id: String, @Body body: CloseRequest): DataItem
+    @POST("v1/items/{id}/reopen") suspend fun reopen(@Path("id") id: String): DataItem
+    @GET("v1/items/{id}/messages") suspend fun messages(@Path("id") id: String): PageResult<Message>
+    @POST("v1/items/{id}/messages") suspend fun send(@Path("id") id: String, @Body body: NewMessage): Message
+    @POST("v1/items/{id}/attachments") suspend fun addAttachments(@Path("id") id: String, @Body body: AddAttachmentsRequest): PageResult<Attachment>
+    @POST("v1/items/{id}/appointments") suspend fun book(@Path("id") id: String, @Body body: NewAppointment): Appointment
+    @PATCH("v1/items/{id}/appointments/{aid}") suspend fun cancelAppointment(@Path("id") id: String, @Path("aid") aid: String, @Body body: AppointmentCancel): Appointment
+    @POST("v1/items/{id}/appointments/{aid}/visits/{date}") suspend fun visit(@Path("id") id: String, @Path("aid") aid: String, @Path("date") date: String, @Body body: VisitActionRequest): Appointment
+    @POST("v1/items/{id}/alerts") suspend fun addAlert(@Path("id") id: String, @Body body: NewAlert): Alert
+    @DELETE("v1/items/{id}/alerts/{alertId}") suspend fun deleteAlert(@Path("id") id: String, @Path("alertId") alertId: String)
+    @GET("v1/conversations") suspend fun conversations(@Query("with") with: String?): PageResult<Conversation>
+    @GET("v1/appointments") suspend fun calendar(@Query("from") from: String, @Query("to") to: String): PageResult<CalendarVisit>
     @POST("v1/uploads/presign") suspend fun presign(@Body body: PresignRequest): PresignResponse
     @GET("v1/users/{id}") suspend fun user(@Path("id") id: String): UserProfile
-    @GET("v1/users/{id}/shared-items") suspend fun shared(@Path("id") id: String, @Query("status") status: String = "OPEN"): PageResult<DataItem>
-    @GET("v1/threads") suspend fun threads(): PageResult<ThreadSummary>
-    @GET("v1/threads") suspend fun threadWith(@Query("with") userId: String): PageResult<ThreadSummary>
-    @GET("v1/threads/{id}/messages") suspend fun messages(@Path("id") threadId: String): PageResult<Message>
-    @POST("v1/threads/{id}/messages") suspend fun send(@Path("id") threadId: String, @Body body: SendMessage): Message
+    @GET("v1/users/{id}/shared-items") suspend fun shared(@Path("id") id: String): PageResult<DataItem>
     @GET("v1/search") suspend fun search(@Query("q") q: String, @Query("type") type: String?): PageResult<UserProfile>
     @GET("v1/connections") suspend fun connections(): PageResult<UserProfile>
     @POST("v1/connections") suspend fun connect(@Body body: ConnectRequest): UserProfile
@@ -54,9 +60,7 @@ interface HealooApi {
     @DELETE("v1/devices/{token}") suspend fun unregisterDevice(@Path("token") token: String)
 }
 
-@Serializable data class StatusPatch(val status: ItemStatus)
 @Serializable data class GrantRequest(@kotlinx.serialization.SerialName("item_ids") val itemIds: List<String>, @kotlinx.serialization.SerialName("grantee_id") val granteeId: String)
-@Serializable data class SendMessage(val body: String, @kotlinx.serialization.SerialName("client_msg_id") val clientMsgId: String)
 
 class RemoteRepository(
     private val context: Context,
@@ -96,41 +100,62 @@ class RemoteRepository(
 
     override suspend fun me() = api.me()
     override suspend fun dashboard() = api.dashboard()
-    override suspend fun openItems(limit: Int) = api.items("OPEN", limit).data
-    override suspend fun item(id: String): DataItem {
-        val item = api.item(id)
-        // Attachment view URLs are short-lived and fetched separately (doc 3.6 / 4.3).
-        val files = runCatching { api.attachments(id).data }.getOrDefault(item.attachments)
-        return item.copy(attachments = files.sortedBy { it.position })
-    }
+    override suspend fun items(status: ItemStatus, limit: Int) = api.items(status.name, limit).data
+    override suspend fun item(id: String) = api.item(id).let { it.copy(attachments = it.attachments.sortedBy { a -> a.position }) }
     override suspend fun user(id: String) = api.user(id)
     override suspend fun sharedItems(userId: String) = api.shared(userId).data
-
-    override suspend fun messages(userId: String): List<Message> {
-        val thread = api.threadWith(userId).data.firstOrNull() ?: return emptyList()
-        return api.messages(thread.id).data
-    }
-
-    override suspend fun sendMessage(userId: String, body: String): Message {
-        val thread = api.threadWith(userId).data.first()
-        return api.send(thread.id, SendMessage(body, java.util.UUID.randomUUID().toString()))
-    }
-
-    override suspend fun threads() = api.threads().data
     override suspend fun search(query: String, role: Role?) = api.search(query, role?.name).data
     override suspend fun connections() = api.connections().data
     override suspend fun connect(userId: String) = api.connect(ConnectRequest(userId))
-    override suspend fun setStatus(itemId: String, status: ItemStatus) = api.patchItem(itemId, StatusPatch(status))
 
-    override suspend fun revokeGrant(itemId: String, grantId: String): DataItem {
-        api.revoke(grantId)
-        return item(itemId)
+    override suspend fun revokeGrant(itemId: String, grantId: String): DataItem { api.revoke(grantId); return item(itemId) }
+    override suspend fun share(itemId: String, granteeId: String): DataItem { api.grant(GrantRequest(listOf(itemId), granteeId)); return item(itemId) }
+
+    // ---- create ----
+
+    override suspend fun createReport(draft: ReportDraft, files: List<PendingAttachment>): DataItem =
+        api.createItem(NewItemRequest(
+            ownerId = draft.ownerId, keywords = draft.keywords, shareWith = draft.shareWith,
+            report = NewReport(draft.title, uploadFiles(files), draft.links),
+        ))
+
+    override suspend fun createAppointment(ownerId: String?, appointment: NewAppointment, shareWith: List<String>) =
+        api.createItem(NewItemRequest(ownerId = ownerId, shareWith = shareWith, appointment = appointment))
+
+    override suspend fun createAlert(title: String, alert: NewAlert, shareWith: List<String>) =
+        api.createItem(NewItemRequest(title = title, shareWith = shareWith, alert = alert))
+
+    override suspend fun startConversation(userId: String, body: String): DataItem {
+        val me = api.me()
+        val other = api.user(userId)
+        // The patient in the pair owns the discussion; a clinician starts it on the patient's behalf.
+        val (owner, share) = if (other.primaryRole == Role.PATIENT && me.isClinical) other.id to emptyList() else me.id to listOf(userId)
+        return api.createItem(NewItemRequest(ownerId = owner, shareWith = share, message = NewMessage(body, clientId())))
     }
 
-    override suspend fun share(itemId: String, granteeId: String): DataItem {
-        api.grant(GrantRequest(listOf(itemId), granteeId))
-        return item(itemId)
+    // ---- add to an item ----
+
+    override suspend fun itemMessages(itemId: String) = api.messages(itemId).data
+    override suspend fun sendItemMessage(itemId: String, body: String) = api.send(itemId, NewMessage(body, clientId()))
+    override suspend fun addAttachments(itemId: String, files: List<PendingAttachment>, isReport: Boolean): DataItem {
+        api.addAttachments(itemId, AddAttachmentsRequest(uploadFiles(files), isReport)); return item(itemId)
     }
+    override suspend fun bookAppointment(itemId: String, appointment: NewAppointment): DataItem { api.book(itemId, appointment); return item(itemId) }
+    override suspend fun visitAction(itemId: String, appointmentId: String, visitDate: String, action: String, newDate: String?, newTime: String?): DataItem {
+        api.visit(itemId, appointmentId, visitDate, VisitActionRequest(action, newDate, newTime)); return item(itemId)
+    }
+    override suspend fun cancelAppointment(itemId: String, appointmentId: String): DataItem {
+        api.cancelAppointment(itemId, appointmentId, AppointmentCancel()); return item(itemId)
+    }
+    override suspend fun addAlert(itemId: String, alert: NewAlert): DataItem { api.addAlert(itemId, alert); return item(itemId) }
+    override suspend fun deleteAlert(itemId: String, alertId: String): DataItem { api.deleteAlert(itemId, alertId); return item(itemId) }
+    override suspend fun closeItem(itemId: String, feedback: String?, rating: Int?) = api.close(itemId, CloseRequest(feedback, rating))
+    override suspend fun reopenItem(itemId: String) = api.reopen(itemId)
+
+    override suspend fun conversations(withUser: String?) = api.conversations(withUser).data
+    override suspend fun calendar(from: String, to: String) = api.calendar(from, to).data
+
+    // ---- account ----
 
     override suspend fun updateProfile(update: ProfileUpdate) = api.updateMe(update)
 
@@ -144,8 +169,11 @@ class RemoteRepository(
     override suspend fun registerDevice(token: String) = api.registerDevice(DeviceRegistration("android", token))
     override suspend fun unregisterDevice(token: String) = api.unregisterDevice(token)
 
-    /** Presign all files in one call, PUT each to storage, then create the DataItem. */
-    override suspend fun upload(draft: UploadDraft, files: List<PendingAttachment>): DataItem {
+    private fun clientId() = java.util.UUID.randomUUID().toString()
+
+    /** Presign all files in one call and PUT each to storage; returns them ready to attach. */
+    private suspend fun uploadFiles(files: List<PendingAttachment>): List<NewAttachment> {
+        if (files.isEmpty()) return emptyList()
         val presigned = api.presign(PresignRequest(files.map { PresignFile(it.name, it.mime, it.size) })).uploads
         withContext(Dispatchers.IO) {
             files.zip(presigned).forEach { (file, target) ->
@@ -161,12 +189,6 @@ class RemoteRepository(
                 }
             }
         }
-        val attachments = files.zip(presigned).mapIndexed { i, (f, p) ->
-            Attachment(f.kind, p.uri, f.mime, f.size, position = i, name = f.name)
-        }
-        return api.createItem(
-            NewItemRequest(draft.ownerId, draft.type, draft.title, draft.date, draft.keywords, attachments,
-                draft.links, draft.status, draft.shareWith, draft.pointerToMessage)
-        )
+        return files.zip(presigned).map { (f, p) -> NewAttachment(f.kind, p.uri, f.mime, f.size, f.name) }
     }
 }

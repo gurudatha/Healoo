@@ -6,6 +6,7 @@ import FirebaseMessaging
 /// Where to go when the app is opened from a notification.
 enum DeepLink: Equatable {
     case item(String)
+    case discussion(String)             // item id; opened from a message notification
     case conversation(String)
 }
 
@@ -71,7 +72,8 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate, MessagingDe
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let info = response.notification.request.content.userInfo
-        let link: DeepLink? = if let id = info["item_id"] as? String { .item(id) }
+        // A message notification opens the item's discussion; anything else opens the item.
+        let link: DeepLink? = if let id = info["item_id"] as? String { (info["type"] as? String) == "message" ? .discussion(id) : .item(id) }
                               else if let uid = info["user_id"] as? String { .conversation(uid) }
                               else { nil }
         await MainActor.run { pendingLink = link }

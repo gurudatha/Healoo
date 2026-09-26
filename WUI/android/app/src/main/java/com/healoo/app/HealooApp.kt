@@ -54,7 +54,8 @@ import com.healoo.app.ui.landing.LandingScreen
 import com.healoo.app.ui.search.SearchScreen
 import com.healoo.app.ui.settings.SettingsScreen
 import com.healoo.app.ui.theme.HealooTheme
-import com.healoo.app.ui.threads.ThreadsScreen
+import com.healoo.app.ui.conversations.ConversationsScreen
+import com.healoo.app.ui.discussion.DiscussionScreen
 import com.healoo.app.ui.upload.UploadScreen
 import com.healoo.app.ui.user.UserPageScreen
 import com.healoo.app.ui.viewer.AttachmentViewer
@@ -132,17 +133,21 @@ fun HealooRoot() {
 object Routes {
     const val HOME = "home"
     const val SEARCH = "search?q={q}&role={role}"
-    const val UPLOAD = "upload?target={target}"
+    const val UPLOAD = "upload?target={target}&item={item}"
     const val MESSAGES = "messages"
     const val SETTINGS = "settings"
     const val USER = "user/{id}?messages={messages}"
     const val ITEM = "item/{id}"
+    const val DISCUSSION = "discussion/{itemId}"
     const val VIEWER = "viewer/{id}/{index}"
     const val EDIT_PROFILE = "profile/edit"
     const val SHARING = "sharing"
 
     fun search(q: String = "", role: Role? = null) = "search?q=${AUri.encode(q)}&role=${role?.name ?: ""}"
-    fun upload(target: String? = null) = "upload?target=${target ?: ""}"
+    fun upload(target: String? = null) = "upload?target=${target ?: ""}&item="
+    /** Add files to an existing item (UploadScreen in add-files mode). */
+    fun addFiles(itemId: String) = "upload?target=&item=$itemId"
+    fun discussion(itemId: String) = "discussion/$itemId"
     fun user(id: String, messages: Boolean = false) = "user/$id?messages=$messages"
     fun item(id: String) = "item/$id"
     fun viewer(id: String, index: Int) = "viewer/$id/$index"
@@ -181,6 +186,7 @@ fun HealooNavHost(onSignOut: () -> Unit) {
         DeepLinks.links.collect { link ->
             when (link) {
                 is DeepLink.Item -> nav.navigate(Routes.item(link.id))
+                is DeepLink.Discussion -> nav.navigate(Routes.discussion(link.itemId))
                 is DeepLink.Conversation -> nav.navigate(Routes.user(link.userId, messages = true))
             }
             DeepLinks.consumed()
@@ -211,17 +217,26 @@ fun HealooNavHost(onSignOut: () -> Unit) {
                 onTab = nav::openTab,
             )
         }
-        composable(Routes.UPLOAD, arguments = listOf(navArgument("target") { type = NavType.StringType; defaultValue = "" })) { entry ->
+        composable(
+            Routes.UPLOAD,
+            arguments = listOf(
+                navArgument("target") { type = NavType.StringType; defaultValue = "" },
+                navArgument("item") { type = NavType.StringType; defaultValue = "" },
+            ),
+        ) { entry ->
+            val addTo = entry.arguments?.getString("item")?.takeIf { it.isNotBlank() }
             UploadScreen(
                 targetUserId = entry.arguments?.getString("target")?.takeIf { it.isNotBlank() },
+                addToItemId = addTo,
                 onClose = { if (!nav.popBackStack()) nav.openTab(Tab.HOME) },
                 onUploaded = { id ->
-                    nav.navigate(Routes.item(id)) { popUpTo(Routes.HOME) }
+                    // Adding files returns to the item already on the stack; a new item opens fresh.
+                    if (addTo != null) nav.popBackStack() else nav.navigate(Routes.item(id)) { popUpTo(Routes.HOME) }
                 },
             )
         }
         composable(Routes.MESSAGES) {
-            ThreadsScreen(onOpenThread = { nav.navigate(Routes.user(it, messages = true)) }, onTab = nav::openTab)
+            ConversationsScreen(onOpenDiscussion = { nav.navigate(Routes.discussion(it)) }, onTab = nav::openTab)
         }
         composable(Routes.SETTINGS) {
             SettingsScreen(
@@ -248,6 +263,7 @@ fun HealooNavHost(onSignOut: () -> Unit) {
                 startOnMessages = entry.arguments!!.getBoolean("messages"),
                 onBack = { nav.popBackStack() },
                 onOpenItem = { nav.navigate(Routes.item(it)) },
+                onOpenDiscussion = { nav.navigate(Routes.discussion(it)) },
                 onUploadFor = { nav.navigate(Routes.upload(it)) },
                 onTab = nav::openTab,
             )
@@ -257,8 +273,16 @@ fun HealooNavHost(onSignOut: () -> Unit) {
                 itemId = entry.arguments!!.getString("id")!!,
                 onBack = { nav.popBackStack() },
                 onOpenAttachment = { id, index -> nav.navigate(Routes.viewer(id, index)) },
-                onOpenItem = { nav.navigate(Routes.item(it)) },
-                onMessage = { doctorId -> if (doctorId != null) nav.navigate(Routes.user(doctorId, messages = true)) else nav.openTab(Tab.MESSAGES) },
+                onOpenDiscussion = { nav.navigate(Routes.discussion(it)) },
+                onAddFiles = { nav.navigate(Routes.addFiles(it)) },
+            )
+        }
+        composable(Routes.DISCUSSION, arguments = listOf(navArgument("itemId") { type = NavType.StringType })) { entry ->
+            val itemId = entry.arguments!!.getString("itemId")!!
+            DiscussionScreen(
+                itemId = itemId,
+                onBack = { nav.popBackStack() },
+                onOpenItem = { nav.navigate(Routes.item(it)) { launchSingleTop = true } },
             )
         }
         composable(

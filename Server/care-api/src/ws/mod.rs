@@ -3,13 +3,14 @@
 //! * Auth: `Authorization: Bearer` on the upgrade (apps), `?token=` (doc), or a first frame
 //!   `{"type":"auth","token":"…"}` within 10 s. Closed with 4001 when the token expires.
 //! * Frames in:  subscribe, message.send, typing, ack, ping, pong.
-//! * Frames out: message.new, item.updated (with `change`), alert, typing, message.sent, error, ping.
+//! * Frames out: message.new {item_id, message}, item.updated {item_id, change}, alert,
+//!   typing {item_id}, message.sent, error, ping. (DataItem v2: messages belong to items.)
 //! * Server pings every 25 s and drops the socket after 60 s of silence; max 5 sockets per user.
 //! * [`Fanout`] consumes Kafka and pushes to connected sessions; offline users get a
 //!   `notify.requests` event for the push notifier (doc 6.4 / 8).
 
 use crate::{
-    api::{principal::{bearer, Principal}, threads::send_message, AppState},
+    api::{parts::send_message_to, principal::{bearer, Principal}, AppState},
     events::{topics, Envelope, EventHandler, Publisher},
     store::Db,
 };
@@ -93,10 +94,9 @@ struct Inbound {
     #[serde(rename = "type")]
     kind: String,
     token: Option<String>,
-    thread_id: Option<Uuid>,
+    item_id: Option<Uuid>,
     body: Option<String>,
     client_msg_id: Option<String>,
-    linked_item_id: Option<Uuid>,
 }
 
 async fn close(mut socket: WebSocket, code: u16, reason: &'static str) {
@@ -178,21 +178,23 @@ async fn handle_frame(st: &AppState, p: &Principal, text: &str) -> Option<String
         "pong" | "ack" => None,
         "subscribe" => Some(json!({ "type": "subscribed" }).to_string()), // user channel is implicit
         "message.send" => {
-            let (Some(thread), Some(body)) = (f.thread_id, f.body) else {
-                return Some(error_frame("BAD_FRAME", "message.send needs thread_id and body"));
+            let (Some(item), Some(body)) = (f.item_id, f.body) else {
+                return Some(error_frame("BAD_FRAME", "message.send needs item_id and body"));
             };
             let client_id = f.client_msg_id.unwrap_or_else(|| ulid::Ulid::new().to_string());
-            match send_message(st, p, thread, &body, &client_id, f.linked_item_id).await {
+            match send_message_to(st, p, item, &body, &client_id).await {
                 Ok(m) => Some(json!({ "type": "message.sent", "client_msg_id": client_id, "message": m }).to_string()),
                 Err(e) => Some(error_frame(e.code, &e.message)),
             }
         }
         "typing" => {
-            let thread = f.thread_id?;
-            // Typing is ephemeral: relay directly, no Kafka.
-            if let Ok(Some((a, b))) = st.db.thread_members(thread).await {
-                let other = if a == p.id() { b } else if b == p.id() { a } else { return None };
-                st.ws.send(&other, &json!({ "type": "typing", "thread_id": thread, "user_id": p.id() }).to_string());
+            let item_id = f.item_id?;
+            // Typing is ephemeral: relay directly to the item's participants, no Kafka.
+            if let Ok(Some(item)) = st.db.item(item_id).await {
+                if item.participants().contains(&p.id()) {
+                    let frame = json!({ "type": "typing", "item_id": item_id, "user_id": p.id() }).to_string();
+                    for u in item.participants().into_iter().filter(|u| *u != p.id()) { st.ws.send(&u, &frame); }
+                }
             }
             None
         }
@@ -232,12 +234,20 @@ impl Fanout {
         match (topic, ev.event_type.as_str()) {
             (topics::CHAT, "message.created") => {
                 let msg = ev.payload.get("message").cloned().unwrap_or(Value::Null);
-                Some((json!({ "type": "message.new", "message": msg }).to_string(), "message"))
+                Some((json!({ "type": "message.new", "item_id": ev.subject_id, "message": msg }).to_string(), "message"))
             }
-            (topics::ALERTS, _) => Some((json!({ "type": "alert", "item_id": ev.subject_id }).to_string(), "alert")),
-            // The apps refresh on `item.updated`; `change` says what happened (doc 4.4 names).
+            (topics::ALERTS, _) => Some((json!({
+                "type": "alert", "item_id": ev.subject_id,
+                "alert_id": ev.payload.get("alert_id"), "text": ev.payload.get("text"),
+            }).to_string(), "alert")),
+            // The apps refresh on `item.updated`; `change` says what happened.
+            (topics::ITEMS, "item.attachments_added") => None, // media worker only; item.attachment follows
             (topics::ITEMS, t) | (topics::ACCESS_CHANGES, t) if t.starts_with("item.") || t.starts_with("grant.") => {
-                let change = t.replace('.', "_");
+                let change = match t {
+                    "item.created" => "created".to_string(),
+                    "grant.added" | "grant.revoked" => "shared".to_string(),
+                    other => other.trim_start_matches("item.").to_string(),
+                };
                 let kind = if t == "item.created" { "report" } else if t == "grant.added" { "item" } else { "" };
                 Some((json!({ "type": "item.updated", "item_id": ev.subject_id, "change": change }).to_string(), kind))
             }
@@ -256,8 +266,8 @@ impl EventHandler for Fanout {
             if !delivered && user != ev.actor_id && !push_kind.is_empty() && !self.registry.is_online(&user) {
                 let req = Envelope::new("notify.requested", ev.actor_id, &ev.subject_id, vec![user.to_string()], json!({
                     "user_id": user, "type": push_kind, "source_event": ev.event_id, "event_type": ev.event_type,
-                    "item_id": if topic == topics::CHAT { Value::Null } else { Value::from(ev.subject_id.clone()) },
-                    "thread_id": if topic == topics::CHAT { Value::from(ev.subject_id.clone()) } else { Value::Null },
+                    "item_id": Value::from(ev.subject_id.clone()),
+                    "thread_id": Value::Null,
                     "user_to_open": ev.actor_id,
                 }));
                 self.publisher.emit_fast(topics::NOTIFY, &user.to_string(), req).await;

@@ -20,7 +20,7 @@ async fn main() -> anyhow::Result<()> {
     let stop = CancellationToken::new();
     tokio::spawn(publisher.clone().run_relay(stop.clone()));
     let tasks = worker::spawn(bus, db, store, publisher, stop.clone());
-    tracing::info!("care-worker running: audit-writer, media");
+    tracing::info!("care-worker running: audit-writer, media, alert scheduler");
     care_api::shutdown_signal().await;
     stop.cancel();
     for t in tasks { let _ = t.await; }

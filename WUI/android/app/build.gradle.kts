@@ -92,8 +92,8 @@ android {
         applicationId = "com.healoo.app"
         minSdk = 29
         targetSdk = 35         // runtime behaviour unchanged (Android 15)
-        versionCode = 3
-        versionName = "0.3-trial"
+        versionCode = 4
+        versionName = "0.4-trial"
 
         buildConfigField("String", "API_BASE_URL", "\"${prop("healoo.apiBaseUrl", "https://10.0.2.2/")}\"")
         buildConfigField("boolean", "USE_FAKE_DATA", prop("healoo.useFakeData", "true"))

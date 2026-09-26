@@ -54,12 +54,13 @@ The camera needs a real device. On the simulator the Camera button explains this
 |---|---|---|---|
 | Landing: fixed 20% header, counters, search, open items | `ui/landing` | `LandingAndSearch.swift` | 3.2 |
 | Search: by ID or name, profiles only, Add to contacts | `ui/search` | `LandingAndSearch.swift` | 2.3 #8, 3.4 |
-| User page: header collapses from 25% to a pinned 10%; shared items and messages | `ui/user`, `CollapsingHeader.kt` | `UserPageAndThreads.swift` | 3.3 |
-| Data view: pinned 10% header, attachments, keywords, links, access list with revoke, linked item, share | `ui/item` | `DataItemAndViewer.swift` | 3.5 |
+| User page: header collapses from 25% to a pinned 10%; shared items and that person's discussions (start a new one from the composer) | `ui/user`, `CollapsingHeader.kt` | `UserPageAndThreads.swift` | 3.3 |
+| Data view (DataItem v2): pinned 10% header, status and closure, attachments (+ add files), discussion preview, appointments with per-visit move/cancel/attended/missed, alerts, links, keywords, access list with revoke, share, close with feedback and patient-only stars, reopen | `ui/item` (`DataViewScreen.kt`, `ItemSheets.kt`) | `DataItemAndViewer.swift`, `ItemSheets.swift` | 3.5, DataItem_Design 8 |
+| Discussion: an item's messages, live | `ui/discussion` | `UserPageAndThreads.swift` (`DiscussionView`) | DataItem_Design D5 |
 | Attachment viewer: swipe across all files, PDF pages scroll vertically, pinch/double-tap zoom, "2 / 5", thumbnail strip | `ui/viewer` | `DataItemAndViewer.swift` | 3.6 |
-| Upload: several images and PDFs together, camera, links, reorder/remove, 20 files / 10 MB image / 25 MB PDF limits, share, link to message | `ui/upload` | `UploadAndSettings.swift` | 3.5, 4.5 |
+| New item: start from Report (several images/PDFs, camera, links, reorder/remove, limits), Appointment (doctor, date, time, repeat and period with visit count) or Alert; share. Also "Add files" to an existing item | `ui/upload` | `UploadAndSettings.swift` | 3.5, 4.5, DataItem_Design 8 |
 | Settings | `ui/settings` | `UploadAndSettings.swift` | 3.x |
-| Messages list | `ui/threads` | `UserPageAndThreads.swift` | 4.x |
+| Messages: conversations per item and person (`GET /v1/conversations`) | `ui/conversations` | `UserPageAndThreads.swift` (`ConversationsView`) | DataItem_Design 8 |
 
 **Behaviour notes**
 - Header sizes are fractions of the screen height (`HeaderRatio`), with the status bar added on top, so buttons are never clipped.
@@ -67,7 +68,7 @@ The camera needs a real device. On the simulator the Camera button explains this
 - **Upload:** files are presigned in one batch, uploaded with PUT directly to storage, and then the item is created. After a successful upload, the new item opens.
 
 **API fields the clients expect.** These are display fields in addition to the doc's DataItem, used for list rows:
-- DataItem: `title`, `subtitle`, `created_by_name`
+- DataItem v2 fields as in `Documentation/DataItem_Design.md`; the apps compute the list-row date and subtitle from `primary_kind`, the child lists and `counts`.
 - Profile: `headline`
 - Search and connection rows: `connected`
 
@@ -100,7 +101,7 @@ To switch accounts, go to Settings → Log out. The demo data is kept while the 
 - **Android:** put `google-services.json` in `android/app/`. The Google Services plugin is applied only when that file exists, so builds without it still work, just without push.
 - **iOS:** add `GoogleService-Info.plist` to `ios/Healoo/` and upload your APNs key (.p8) to Firebase. The Push Notifications capability comes from `project.yml`. Push needs a real device.
 - After sign-in, the app asks for notification permission, gets the FCM token and registers it with `POST /v1/devices`. On log out it calls `DELETE /v1/devices/{token}`.
-- Payload the backend should send (data message): `type` (`message` | `report` | `alert` | `booking`), `title`, `body`, and optionally `item_id` or `user_id`. Tapping the notification opens that item or conversation.
+- Payload the backend should send (data message): `type` (`message` | `report` | `alert` | `booking`), `title`, `body`, and optionally `item_id` or `user_id`. Tapping a `message` notification opens that item's discussion; other types open the item (or the person's page for `user_id`).
 - Android uses two channels: *Messages & alerts* (high importance) and *New reports & bookings*.
 
 ### Live messages (WebSocket, doc 4.4)
@@ -141,7 +142,7 @@ Please add these to design doc section 4.3:
 |---|---|
 | `PATCH /v1/me` | `{display_name, location}` → profile |
 | `GET / PUT /v1/me/notification-prefs` | `{push_messages, push_reports, quiet_hours, quiet_start, quiet_end}` |
-| `GET /v1/grants?owner=me` | page of `{grant_id, grantee_type, grantee_id, grantee_name, item_id, item_title, core_item_type}` |
+| `GET /v1/grants?owner=me` | page of `{grant_id, grantee_type, grantee_id, grantee_name, item_id, item_title, primary_kind}` |
 | `POST /v1/devices` | `{platform: "android" \| "ios", token}` |
 | `DELETE /v1/devices/{token}` | — |
 | `GET wss://…/v1/ws` | frames listed above |

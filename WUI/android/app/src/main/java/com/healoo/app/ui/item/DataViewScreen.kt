@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -37,36 +38,52 @@ import kotlinx.coroutines.launch
 class DataViewModel(private val itemId: String) : ViewModel() {
     private val repo = ServiceLocator.repository
     var item by mutableStateOf<DataItem?>(null); private set
-    var linked by mutableStateOf<DataItem?>(null); private set
     var me by mutableStateOf<UserProfile?>(null); private set
     var contacts by mutableStateOf<List<UserProfile>>(emptyList()); private set
     var error by mutableStateOf<String?>(null); private set
+    /** One-line result of the last action (errors from the server included). */
+    var notice by mutableStateOf<String?>(null)
 
-    init { load() }
+    init {
+        load()
+        // Refresh when someone else changes this item (design doc 4.4, item.updated / message.new).
+        viewModelScope.launch {
+            repo.events.collect { e ->
+                val mine = (e is RealtimeEvent.ItemChanged && e.itemId == itemId) || (e is RealtimeEvent.NewMessage && e.message.itemId == itemId)
+                if (mine) runCatching { repo.item(itemId) }.onSuccess { item = it }
+            }
+        }
+    }
 
     fun load() = viewModelScope.launch {
         error = null
         runCatching {
             me = repo.me()
             item = repo.item(itemId)
-            linked = item!!.pointerItemId?.let { runCatching { repo.item(it) }.getOrNull() }
-            contacts = repo.connections().filter { it.primaryRole == Role.DOCTOR || it.primaryRole == Role.HOSPITAL }
+            contacts = repo.connections()
         }.onFailure { error = "Couldn't open this item. You may no longer have access to it." }
     }
 
-    fun toggleStatus() = viewModelScope.launch {
-        val current = item ?: return@launch
-        val next = if (current.status == ItemStatus.OPEN) ItemStatus.CLOSED else ItemStatus.OPEN
-        runCatching { repo.setStatus(itemId, next) }.onSuccess { item = it }
+    val doctors: List<UserProfile> get() = (contacts + listOfNotNull(me)).filter { it.primaryRole == Role.DOCTOR }.distinctBy { it.id }
+
+    private fun act(done: String? = null, block: suspend () -> DataItem) = viewModelScope.launch {
+        runCatching { block() }
+            .onSuccess { item = it; notice = done }
+            .onFailure { notice = it.message ?: "That didn't work. Try again." }
     }
 
-    fun share(granteeId: String) = viewModelScope.launch {
-        runCatching { repo.share(itemId, granteeId) }.onSuccess { item = it }
-    }
-
-    fun revoke(grant: Grant) = viewModelScope.launch {
-        runCatching { repo.revokeGrant(itemId, grant.grantId) }.onSuccess { item = it }
-    }
+    fun share(granteeId: String) = act("Shared") { repo.share(itemId, granteeId) }
+    fun revoke(grant: Grant) = act("Stopped sharing with ${grant.granteeName}") { repo.revokeGrant(itemId, grant.grantId) }
+    fun close(feedback: String?, rating: Int?) = act("Item closed") { repo.closeItem(itemId, feedback, rating) }
+    fun reopen() = act("Item reopened") { repo.reopenItem(itemId) }
+    fun book(a: NewAppointment) = act("Appointment booked") { repo.bookAppointment(itemId, a) }
+    fun visit(a: Appointment, v: Visit, action: String, newDate: String? = null, newTime: String? = null) =
+        act(when (action) { "CANCELLED" -> "Visit cancelled"; "MOVED" -> "Visit moved"; "COMPLETED" -> "Marked completed"; else -> "Marked as missed" }) {
+            repo.visitAction(itemId, a.id, v.originalDate, action, newDate, newTime)
+        }
+    fun cancelSeries(a: Appointment) = act("Appointment cancelled") { repo.cancelAppointment(itemId, a.id) }
+    fun addAlert(a: NewAlert) = act("Alert added") { repo.addAlert(itemId, a) }
+    fun deleteAlert(a: Alert) = act("Alert removed") { repo.deleteAlert(itemId, a.id) }
 }
 
 @Composable
@@ -74,69 +91,80 @@ fun DataViewScreen(
     itemId: String,
     onBack: () -> Unit,
     onOpenAttachment: (itemId: String, index: Int) -> Unit,
-    onOpenItem: (String) -> Unit,
-    onMessage: (doctorUserId: String?) -> Unit,
+    onOpenDiscussion: (itemId: String) -> Unit,
+    onAddFiles: (itemId: String) -> Unit,
 ) {
     val vm: DataViewModel = viewModel(key = "item-$itemId") { DataViewModel(itemId) }
     val item = vm.item
+    val me = vm.me
     var confirmRevoke by remember { mutableStateOf<Grant?>(null) }
     var showShare by remember { mutableStateOf(false) }
+    var showClose by remember { mutableStateOf(false) }
+    var showBook by remember { mutableStateOf(false) }
+    var showAlert by remember { mutableStateOf(false) }
+    var moving by remember { mutableStateOf<Pair<Appointment, Visit>?>(null) }
+    val snackbar = remember { SnackbarHostState() }
+    LaunchedEffect(vm.notice) { vm.notice?.let { snackbar.showSnackbar(it); vm.notice = null } }
 
     Scaffold(
         containerColor = Sage.Background,
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             PinnedHeader(
                 title = item?.title ?: "",
-                subtitle = item?.let { "${vm.me?.displayName ?: ""} · added by ${it.createdByName}" } ?: "",
+                subtitle = item?.let { "${it.primaryKind.label} · added by ${it.createdByName.ifEmpty { "—" }}" } ?: "",
                 onBack = onBack,
-                trailing = { vm.me?.let { Avatar(it.initials, 36.dp) } },
+                trailing = { me?.let { Avatar(it.initials, 36.dp) } },
             )
         },
         bottomBar = {
             if (item != null) BottomActionBar {
-                val isOwner = item.ownerId == vm.me?.id
-                if (isOwner) {
-                    val doctor = item.accessList.firstOrNull { it.granteeType == GranteeType.USER }
-                    SecondaryButton("Message doctor", { onMessage(doctor?.granteeId) }, Modifier.weight(1f))
-                } else {
-                    // Doctor or lab viewing a patient's record: talk to the owner.
-                    SecondaryButton("Message patient", { onMessage(item.ownerId) }, Modifier.weight(1f))
+                when {
+                    item.can("message") || item.messages.isNotEmpty() ->
+                        SecondaryButton(if (item.messages.isEmpty()) "Start discussion" else "Discussion", { onOpenDiscussion(item.id) }, Modifier.weight(1f))
                 }
-                if (item.ownerId == vm.me?.id) PrimaryButton("Share with…", { showShare = true }, Modifier.weight(1f))
+                if (item.can("share")) PrimaryButton("Share with…", { showShare = true }, Modifier.weight(1f))
+                else if (item.can("reopen")) PrimaryButton("Reopen", vm::reopen, Modifier.weight(1f))
             }
         },
     ) { padding ->
         when {
             vm.error != null -> Box(Modifier.padding(padding)) { ErrorBox(vm.error!!, vm::load) }
-            item == null -> LoadingBox(Modifier.padding(padding))
+            item == null || me == null -> LoadingBox(Modifier.padding(padding))
             else -> LazyColumn(
                 Modifier.fillMaxSize().padding(padding),
                 contentPadding = PaddingValues(20.dp),
                 verticalArrangement = Arrangement.spacedBy(18.dp),
             ) {
-                item { MetaRow(item, canChange = "status" in item.allowedActions || item.ownerId == vm.me?.id, onToggle = vm::toggleStatus) }
-                if (item.attachments.isNotEmpty()) item {
-                    AttachmentsSection(item.attachments) { index -> onOpenAttachment(item.id, index) }
+                item { MetaRow(item, onClose = { showClose = true }, onReopen = vm::reopen) }
+                item.closure?.let { c -> item { ClosureCard(c) } }
+                if (item.can("meta")) item {
+                    Text("This item contains report files, which open only for doctors. You can see its appointments.",
+                        style = HType.body, color = Sage.InkSoft)
+                }
+                if (item.attachments.isNotEmpty() || item.can("attach")) item {
+                    AttachmentsSection(item.attachments, canAdd = item.can("attach"), onAdd = { onAddFiles(item.id) }) { index -> onOpenAttachment(item.id, index) }
+                }
+                if (item.messages.isNotEmpty()) item { DiscussionPreview(item, me.id) { onOpenDiscussion(item.id) } }
+                if (item.appointments.isNotEmpty() || item.can("book")) item {
+                    AppointmentsSection(item, me, canBook = item.can("book"), onBook = { showBook = true },
+                        onVisit = { a, v, action -> if (action == "MOVED") moving = a to v else vm.visit(a, v, action) },
+                        onCancelSeries = vm::cancelSeries)
+                }
+                if (item.alerts.isNotEmpty() || item.can("alert")) item {
+                    AlertsSection(item.alerts, canAdd = item.can("alert"), myId = me.id, isOwner = item.ownerId == me.id,
+                        onAdd = { showAlert = true }, onDelete = vm::deleteAlert)
                 }
                 if (item.links.isNotEmpty()) item { LinksSection(item.links) }
                 if (item.keywords.isNotEmpty()) item { KeywordsSection(item.keywords) }
-                item {
-                    AccessSection(item, isOwner = item.ownerId == vm.me?.id, onRevoke = { confirmRevoke = it })
-                }
-                vm.linked?.let { linked ->
-                    item {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FieldLabel("Linked items")
-                            DataItemRow(linked, onClick = { onOpenItem(linked.id) })
-                        }
-                    }
-                }
+                if (item.ownerId == me.id) item { AccessSection(item, isOwner = true, onRevoke = { confirmRevoke = it }) }
             }
         }
     }
 
     if (showShare && item != null) {
-        val available = vm.contacts.filter { c -> item.accessList.none { it.granteeId == c.id } }
+        val available = vm.contacts.filter { c -> (c.primaryRole == Role.DOCTOR || c.primaryRole == Role.HOSPITAL || c.primaryRole == Role.PATIENT) &&
+            item.accessList.none { it.granteeId == c.id } }
         AlertDialog(
             onDismissRequest = { showShare = false }, containerColor = Sage.Surface,
             title = { Text("Share this item", style = HType.section) },
@@ -169,18 +197,29 @@ fun DataViewScreen(
             containerColor = Sage.Surface,
         )
     }
+
+    if (showClose && item != null) CloseItemDialog(canRate = item.can("rate"), onDismiss = { showClose = false }) { f, r ->
+        showClose = false; vm.close(f, r)
+    }
+    if (showBook && item != null) BookAppointmentDialog(item.ownerId, vm.doctors,
+        defaultDoctor = me?.id?.takeIf { me.primaryRole == Role.DOCTOR }, onDismiss = { showBook = false }) { a -> showBook = false; vm.book(a) }
+    if (showAlert) AddAlertDialog(onDismiss = { showAlert = false }) { a -> showAlert = false; vm.addAlert(a) }
+    moving?.let { (a, v) -> MoveVisitDialog(v, onDismiss = { moving = null }) { d, t -> moving = null; vm.visit(a, v, "MOVED", d, t) } }
 }
 
 @Composable
-private fun MetaRow(item: DataItem, canChange: Boolean, onToggle: () -> Unit) {
+private fun MetaRow(item: DataItem, onClose: () -> Unit, onReopen: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        val s = styleFor(item.type)
-        Pill(item.type.label, s.tint, s.fg)
-        Pill(longDate(item.date), Sage.SandTint, Sage.Sand)
+        val s = styleFor(item.primaryKind)
+        Pill(item.primaryKind.label, s.tint, s.fg)
+        item.kinds.filter { it != item.primaryKind.name && it != PartKind.ATTACHMENT }.take(2).forEach {
+            Pill("+ " + it.lowercase().replaceFirstChar { c -> c.uppercase() }, Sage.SandTint, Sage.Sand)
+        }
         Spacer(Modifier.weight(1f))
         val open = item.status == ItemStatus.OPEN
+        val canChange = if (open) item.can("close") else item.can("reopen")
         OutlinedButton(
-            onClick = onToggle, enabled = canChange, shape = RoundedCornerShape(16.dp),
+            onClick = { if (open) onClose() else onReopen() }, enabled = canChange, shape = RoundedCornerShape(16.dp),
             border = BorderStroke(1.dp, if (open) Sage.Primary else Sage.Border),
             contentPadding = PaddingValues(horizontal = 12.dp), modifier = Modifier.height(36.dp)
                 .semantics { contentDescription = if (open) "Status open. Tap to close" else "Status closed. Tap to reopen" },
@@ -193,17 +232,152 @@ private fun MetaRow(item: DataItem, canChange: Boolean, onToggle: () -> Unit) {
 }
 
 @Composable
+private fun ClosureCard(c: Closure) {
+    GroupCard {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Closed ${longDate(c.closedAt.take(10))}", style = HType.bodyStrong, color = Sage.Ink)
+            c.rating?.let { r ->
+                Row { (1..5).forEach { n -> Icon(if (n <= r) Icons.Filled.Star else Icons.Outlined.StarOutline, null, tint = Sage.Sand, modifier = Modifier.size(18.dp)) } }
+            }
+            c.feedback?.let { Text(it, style = HType.body, color = Sage.InkSoft) }
+        }
+    }
+}
+
+@Composable
+private fun DiscussionPreview(item: DataItem, myId: String, onOpen: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        FieldLabel("Discussion · ${item.messages.size}" + if (item.counts.unreadMessages > 0) " · ${item.counts.unreadMessages} new" else "")
+        GroupCard {
+            item.messages.takeLast(3).forEachIndexed { i, m ->
+                if (i > 0) RowDivider()
+                Column(Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(horizontal = 14.dp, vertical = 10.dp)) {
+                    Text(senderName(item, m.senderId, myId),
+                        style = HType.small.copy(fontWeight = FontWeight.SemiBold), color = Sage.Muted)
+                    Text(m.body, style = HType.body, color = Sage.Ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            RowDivider()
+            Row(Modifier.fillMaxWidth().clickable(onClick = onOpen).heightIn(min = 48.dp).padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Text("Open discussion", style = HType.bodyStrong, color = Sage.Primary, modifier = Modifier.weight(1f))
+                Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null, tint = Sage.Primary)
+            }
+        }
+    }
+}
+
+/** "You", a name from the access list, or the owner. */
+fun senderName(item: DataItem, senderId: String, myId: String): String = when (senderId) {
+    myId -> "You"
+    item.ownerId -> "Patient"
+    else -> item.accessList.firstOrNull { it.granteeId == senderId }?.granteeName
+        ?: item.appointments.firstOrNull { it.doctorId == senderId }?.doctorName?.ifEmpty { null }
+        ?: "Care team"
+}
+
+private fun visitLabel(v: Visit): String = "${longDate(v.date)} · ${v.time}" + when (v.status) {
+    "CANCELLED" -> " · cancelled"; "COMPLETED" -> " · completed"; "NO_SHOW" -> " · missed"; else -> ""
+}
+
+@Composable
+private fun AppointmentsSection(
+    item: DataItem, me: UserProfile, canBook: Boolean, onBook: () -> Unit,
+    onVisit: (Appointment, Visit, String) -> Unit, onCancelSeries: (Appointment) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            FieldLabel("Appointments · ${item.appointments.size}", Modifier.weight(1f))
+            if (canBook) TextButton(onBook) { Text("Book", style = HType.bodyStrong, color = Sage.Primary) }
+        }
+        item.appointments.forEach { a ->
+            val manage = item.can("book") && a.status != "CANCELLED"
+            val isDoctorSide = me.id == a.doctorId || me.primaryRole == Role.ASSISTANT
+            GroupCard {
+                Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(a.doctorName.ifEmpty { "Doctor" }, style = HType.bodyStrong, color = Sage.Ink)
+                    Text((a.recurrence?.label ?: "Single visit") + (a.visitCount?.let { if (a.recurrence != null) " · $it visits" else "" } ?: "") +
+                        if (a.status == "CANCELLED") " · cancelled" else "", style = HType.small, color = Sage.Muted)
+                    a.notes?.let { Text(it, style = HType.small, color = Sage.InkSoft) }
+                }
+                a.visits.take(5).forEach { v ->
+                    RowDivider()
+                    VisitRow(v, enabled = manage && v.status == "SCHEDULED", doctorSide = isDoctorSide) { action -> onVisit(a, v, action) }
+                }
+                if (a.visits.isEmpty()) { RowDivider(); Text("No upcoming visits.", style = HType.small, color = Sage.Muted, modifier = Modifier.padding(14.dp)) }
+                if (manage) {
+                    RowDivider()
+                    TextButton({ onCancelSeries(a) }, Modifier.padding(horizontal = 4.dp)) {
+                        Text(if (a.recurrence != null) "Cancel all future visits" else "Cancel appointment", style = HType.caption.copy(fontWeight = FontWeight.SemiBold), color = Sage.Clay)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun VisitRow(v: Visit, enabled: Boolean, doctorSide: Boolean, onAction: (String) -> Unit) {
+    var menu by remember { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = 14.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(Icons.Outlined.Event, null, tint = if (v.status == "SCHEDULED") Sage.Sand else Sage.Muted, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(10.dp))
+        Text(visitLabel(v), style = HType.caption, color = if (v.status == "SCHEDULED") Sage.Ink else Sage.Muted, modifier = Modifier.weight(1f))
+        if (enabled) Box {
+            IconButton({ menu = true }) { Icon(Icons.Outlined.MoreVert, "Change this visit", tint = Sage.Muted) }
+            DropdownMenu(menu, { menu = false }) {
+                DropdownMenuItem({ Text("Move this visit") }, { menu = false; onAction("MOVED") })
+                DropdownMenuItem({ Text("Cancel this visit") }, { menu = false; onAction("CANCELLED") })
+                if (doctorSide) {
+                    DropdownMenuItem({ Text("Mark completed") }, { menu = false; onAction("COMPLETED") })
+                    DropdownMenuItem({ Text("Mark missed") }, { menu = false; onAction("NO_SHOW") })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AlertsSection(alerts: List<Alert>, canAdd: Boolean, myId: String, isOwner: Boolean, onAdd: () -> Unit, onDelete: (Alert) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            FieldLabel("Alerts · ${alerts.size}", Modifier.weight(1f))
+            if (canAdd) TextButton(onAdd) { Text("Add", style = HType.bodyStrong, color = Sage.Primary) }
+        }
+        if (alerts.isNotEmpty()) GroupCard {
+            alerts.forEachIndexed { i, a ->
+                if (i > 0) RowDivider()
+                Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(start = 14.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.NotificationsNone, null, tint = if (a.active) Sage.Clay else Sage.Muted, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(a.text, style = HType.bodyStrong, color = if (a.active) Sage.Ink else Sage.Muted)
+                        Text("${a.firesAt.drop(11).take(5)} · ${a.recurrence?.label ?: "once on ${longDate(a.firesAt.take(10))}"}" + if (!a.active) " · stopped" else "",
+                            style = HType.small, color = Sage.Muted)
+                    }
+                    if (canAdd && (isOwner || a.forUser == myId) && a.type != "APPOINTMENT_REMINDER")
+                        IconButton({ onDelete(a) }) { Icon(Icons.Outlined.DeleteOutline, "Remove alert", tint = Sage.Muted) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun Pill(text: String, bg: androidx.compose.ui.graphics.Color, fg: androidx.compose.ui.graphics.Color) =
     Text(text, style = HType.small.copy(fontWeight = FontWeight.SemiBold), color = fg,
         modifier = Modifier.clip(RoundedCornerShape(14.dp)).background(bg).padding(horizontal = 12.dp, vertical = 6.dp))
 
 /** Thumbnails of every image/PDF; tapping one opens the swipeable viewer at that position (doc 3.6). */
 @Composable
-private fun AttachmentsSection(attachments: List<Attachment>, onOpen: (Int) -> Unit) {
+private fun AttachmentsSection(attachments: List<Attachment>, canAdd: Boolean, onAdd: () -> Unit, onOpen: (Int) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        FieldLabel("Attachments · ${attachments.size}")
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            itemsIndexed(attachments, key = { _, a -> a.uri }) { index, a ->
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            FieldLabel("Attachments · ${attachments.size}", Modifier.weight(1f))
+            if (canAdd) TextButton(onAdd) { Text("Add files", style = HType.bodyStrong, color = Sage.Primary) }
+        }
+        if (attachments.isNotEmpty()) LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            itemsIndexed(attachments, key = { _, a -> a.id.ifEmpty { a.uri } }) { index, a ->
                 Column(
                     Modifier.width(132.dp).clip(RoundedCornerShape(Radius.card)).background(Sage.Surface)
                         .clickable { onOpen(index) }
@@ -275,7 +449,7 @@ private fun AccessSection(item: DataItem, isOwner: Boolean, onRevoke: (Grant) ->
                 )
             }
         }
-        if (item.type == CoreItemType.REPORT)
+        if (item.attachments.any { it.isReport })
             Text("Report files open only for doctors you share with.", style = HType.small, color = Sage.Muted)
     }
 }

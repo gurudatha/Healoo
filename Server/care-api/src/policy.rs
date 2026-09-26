@@ -2,7 +2,7 @@
 //! active affiliations, delegations) and this module decides. Every decision carries a reason
 //! that ends up in `GET /v1/check/access` and the `access.audit` topic.
 
-use crate::model::{CoreItemType, GranteeType, Role};
+use crate::model::{GranteeType, Role};
 use std::collections::HashSet;
 use uuid::Uuid;
 
@@ -31,7 +31,8 @@ impl Decision {
 pub struct ItemFacts {
     pub owner_id: Uuid,
     pub created_by: Uuid,
-    pub item_type: CoreItemType,
+    /// True when the item contains report files (access rule 2 applies to the whole item).
+    pub has_report_files: bool,
     pub grants: Vec<(GranteeType, Uuid)>,
 }
 
@@ -69,8 +70,8 @@ pub fn decide(item: &ItemFacts, who: &Subject, assistant: Option<&AssistantConte
         && item.grants.iter().any(|(t, id)| *t == GranteeType::Hospital && who.active_hospitals.contains(id));
 
     if direct || via_hospital {
-        // Rule 2: REPORT content only for doctors (and the owner, handled above).
-        if item.item_type == CoreItemType::Report && !is_doctor {
+        // Rule 2: items with report files are readable by doctors only (and the owner, above).
+        if item.has_report_files && !is_doctor {
             return Decision::meta("report content is readable by doctors only");
         }
         return Decision::full(if direct { "direct grant" } else { "hospital grant with active affiliation" });
@@ -108,7 +109,7 @@ mod tests {
     }
 
     fn report(owner: Uuid, created_by: Uuid, grants: Vec<(GranteeType, Uuid)>) -> ItemFacts {
-        ItemFacts { owner_id: owner, created_by, item_type: CoreItemType::Report, grants }
+        ItemFacts { owner_id: owner, created_by, has_report_files: true, grants }
     }
 
     #[test]
@@ -162,6 +163,14 @@ mod tests {
         let with = AssistantContext { doctor: Some(doctor), delegated_for_owner: true };
         assert_eq!(decide(&item, &assistant, Some(&without)).access, Access::MetadataOnly);
         assert_eq!(decide(&item, &assistant, Some(&with)).access, Access::Full);
+    }
+
+    #[test]
+    fn item_without_report_files_is_fully_shared_with_non_doctor() {
+        let owner = Uuid::new_v4();
+        let family = subject(&[Role::Patient], &[]);
+        let item = ItemFacts { owner_id: owner, created_by: owner, has_report_files: false, grants: vec![(GranteeType::User, family.user_id)] };
+        assert_eq!(decide(&item, &family, None).access, Access::Full);
     }
 
     #[test]

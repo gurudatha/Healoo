@@ -5,8 +5,8 @@ pub mod files;
 pub mod grants;
 pub mod items;
 pub mod meta;
+pub mod parts;
 pub mod principal;
-pub mod threads;
 pub mod users;
 
 use crate::{
@@ -22,7 +22,7 @@ use axum::{
     extract::DefaultBodyLimit,
     http::{HeaderName, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post},
     Json, Router,
 };
 use dashmap::DashMap;
@@ -127,12 +127,21 @@ pub fn router(state: AppState) -> Router {
         .route("/connections/:id", delete(users::disconnect))
         .route("/users/:id", get(users::profile))
         .route("/users/:id/shared-items", get(items::shared_items))
+        // DataItem v2 (Documentation/DataItem_Design.md section 4)
         .route("/items", get(items::list).post(items::create))
         .route("/items/:id", get(items::get_one).patch(items::patch))
-        .route("/items/:id/attachments", get(items::attachments))
+        .route("/items/:id/close", post(items::close))
+        .route("/items/:id/reopen", post(items::reopen))
+        .route("/items/:id/messages", get(parts::messages_get).post(parts::messages_post))
+        .route("/items/:id/attachments", get(parts::attachments_get).post(parts::attachments_post))
+        .route("/items/:id/appointments", get(parts::appointments_get).post(parts::appointments_post))
+        .route("/items/:id/appointments/:aid", patch(parts::appointment_patch))
+        .route("/items/:id/appointments/:aid/visits/:date", post(parts::visit_action))
+        .route("/items/:id/alerts", get(parts::alerts_get).post(parts::alerts_post))
+        .route("/items/:id/alerts/:alert_id", delete(parts::alerts_delete))
+        .route("/appointments", get(parts::calendar))
+        .route("/conversations", get(parts::conversations))
         .route("/uploads/presign", post(items::presign))
-        .route("/threads", get(threads::list))
-        .route("/threads/:id/messages", get(threads::messages).post(threads::send))
         .route("/grants", get(grants::list).post(grants::create))
         .route("/grants/:id", delete(grants::revoke))
         .route("/affiliations/:doctor_id/end", post(grants::end_affiliation))

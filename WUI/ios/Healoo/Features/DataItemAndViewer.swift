@@ -1,7 +1,7 @@
 import SwiftUI
 import PDFKit
 
-// MARK: - Data view (10% pinned header)
+// MARK: - Data view (10% pinned header): one DataItem with its child lists (DataItem_Design.md 8)
 
 struct DataItemView: View {
     let itemId: String
@@ -9,20 +9,31 @@ struct DataItemView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @State private var item: DataItem?
-    @State private var linked: DataItem?
     @State private var me: UserProfile?
     @State private var contacts: [UserProfile] = []
     @State private var error: String?
+    @State private var actionError: String?
     @State private var viewerIndex: ViewerStart?
     @State private var confirmRevoke: Grant?
-    @State private var showShare = false
-    @State private var messageUser: String?
+    @State private var sheet: Sheet?
+    @State private var openDiscussion = false
 
     struct ViewerStart: Identifiable { let index: Int; var id: Int { index } }
+    enum Sheet: Identifiable {
+        case share, book, alert, close, addFiles, move(Appointment, Visit)
+        var id: String {
+            switch self {
+            case .share: "share"; case .book: "book"; case .alert: "alert"; case .close: "close"; case .addFiles: "files"
+            case .move(let a, let v): "move-\(a.id)-\(v.originalDate)"
+            }
+        }
+    }
+
+    private var doctors: [UserProfile] { contacts.filter { $0.primaryRole == .doctor } + (me?.primaryRole == .doctor ? [me!] : []) }
 
     var body: some View {
         VStack(spacing: 0) {
-            PinnedHeader(title: item?.title ?? "", subtitle: item.map { "\(me?.displayName ?? "") · added by \($0.createdByName)" } ?? "",
+            PinnedHeader(title: item?.title ?? "", subtitle: item.map { "\($0.primaryKind.label) · added by \($0.createdByName)" } ?? "",
                          onBack: { dismiss() }) {
                 if let me { Avatar(initials: me.initials, size: 36) }
             }
@@ -34,44 +45,74 @@ struct DataItemView: View {
                 }
                 .padding(20)
             }
+            .refreshable { await load() }
         }
         .background(Sage.background)
         .bottomActionBar {
             if let item {
-                if item.ownerId == me?.id {
-                    let doctor = item.accessList.first { $0.granteeType == .user }
-                    Button("Message doctor") { messageUser = doctor?.granteeId }.buttonStyle(SecondaryButtonStyle()).disabled(doctor == nil)
-                } else {
-                    // Doctor or lab viewing a patient's record: talk to the owner.
-                    Button("Message patient") { messageUser = item.ownerId }.buttonStyle(SecondaryButtonStyle())
+                if item.can("message") || !item.messages.isEmpty {
+                    Button(item.messages.isEmpty ? "Start discussion" : "Discussion") { openDiscussion = true }.buttonStyle(SecondaryButtonStyle())
                 }
-                if item.ownerId == me?.id { Button("Share with…") { showShare = true }.buttonStyle(PrimaryButtonStyle()) }
+                if item.can("share") { Button("Share with…") { sheet = .share }.buttonStyle(PrimaryButtonStyle()) }
+                else if item.can("reopen") { Button("Reopen") { run { try await env.repo.reopenItem(itemId) } }.buttonStyle(PrimaryButtonStyle()) }
             }
         }
-        .navigationDestination(item: $messageUser) { UserPageView(userId: $0, startOnMessages: true).toolbar(.hidden, for: .navigationBar) }
+        .navigationDestination(isPresented: $openDiscussion) { DiscussionView(itemId: itemId).toolbar(.hidden, for: .navigationBar) }
         .fullScreenCover(item: $viewerIndex) { start in
-            if let item { AttachmentViewer(title: item.title, attachments: item.attachments, startIndex: start.index) }
+            if let item { AttachmentViewer(title: item.title, attachments: item.sortedAttachments, startIndex: start.index) }
         }
         .confirmationDialog("Stop sharing with \(confirmRevoke?.granteeName ?? "")?", isPresented: Binding(
             get: { confirmRevoke != nil }, set: { if !$0 { confirmRevoke = nil } }), titleVisibility: .visible) {
             Button("Stop sharing", role: .destructive) {
-                if let g = confirmRevoke { Task { if let u = try? await env.repo.revoke(itemId, grantId: g.grantId) { item = u } } }
+                if let g = confirmRevoke { run { try await env.repo.revoke(itemId, grantId: g.grantId) } }
             }
             Button("Keep sharing", role: .cancel) {}
-        } message: { Text("They will lose access to this item straight away. You can share it again later.") }
-        .sheet(isPresented: $showShare) { shareSheet.presentationDetents([.medium]) }
+        } message: { Text("They will lose access to the whole item straight away: files, discussion and appointments. You can share it again later.") }
+        .sheet(item: $sheet) { s in sheetView(s) }
+        .onReceive(env.repo.events) { event in
+            switch event {
+            case .itemChanged(let id) where id == itemId: Task { await refresh() }
+            case .newMessage(let m) where m.itemId == itemId: Task { await refresh() }
+            default: break
+            }
+        }
         .task { if item == nil { await load() } }
     }
 
+    // MARK: Sections
+
     @ViewBuilder
     private func details(_ item: DataItem) -> some View {
-        // Type · date · status
+        let isOwner = item.ownerId == me?.id
+        statusRow(item)
+        if let actionError { Text(actionError).font(HFont.small).foregroundStyle(Sage.clay) }
+        if let c = item.closure { closureCard(c) }
+        if item.can("meta") {
+            Text("You can see this item's details and appointment times. Its files and discussion are shared with doctors only.")
+                .font(HFont.small).foregroundStyle(Sage.muted)
+                .padding(12).frame(maxWidth: .infinity, alignment: .leading).background(Sage.sandTint, in: RoundedRectangle(cornerRadius: Radius.card))
+        }
+        if !item.attachments.isEmpty || item.can("attach") { attachmentsSection(item) }
+        if item.can("message") || !item.messages.isEmpty { discussionSection(item) }
+        if !item.appointments.isEmpty || item.can("book") { appointmentsSection(item) }
+        if !item.alerts.isEmpty || item.can("alert") { alertsSection(item, isOwner: isOwner) }
+        if !item.links.isEmpty { linksSection(item.links) }
+        if !item.keywords.isEmpty { keywordsSection(item.keywords) }
+        if isOwner { accessSection(item) }
+    }
+
+    private func statusRow(_ item: DataItem) -> some View {
         HStack(spacing: 8) {
-            pill(item.type.label, item.type.style.tint, item.type.style.fg)
-            pill(DateText.long(item.date), Sage.sandTint, Sage.sand)
+            pill(item.primaryKind.label, item.primaryKind.style.tint, item.primaryKind.style.fg)
+            ForEach(item.kinds.filter { $0 != item.primaryKind.rawValue && $0 != PartKind.attachment }.prefix(2), id: \.self) { k in
+                pill(k.capitalized, Sage.sunken, Sage.inkSoft)
+            }
             Spacer()
             let open = item.status == .open
-            Button { Task { if let u = try? await env.repo.setStatus(itemId, open ? .closed : .open) { self.item = u } } } label: {
+            let canChange = open ? item.can("close") : item.can("reopen")
+            Button {
+                if open { sheet = .close } else { run { try await env.repo.reopenItem(itemId) } }
+            } label: {
                 HStack(spacing: 6) {
                     Circle().fill(open ? Sage.primary : Sage.muted).frame(width: 8, height: 8)
                     Text(open ? "Open" : "Closed").font(HFont.smallStrong)
@@ -79,76 +120,234 @@ struct DataItemView: View {
                 .foregroundStyle(open ? Sage.primary : Sage.muted).padding(.horizontal, 12).frame(minHeight: 36)
                 .overlay(Capsule().stroke(open ? Sage.primary : Sage.border))
             }
+            .disabled(!canChange)
             .accessibilityLabel(open ? "Status open. Double-tap to close" : "Status closed. Double-tap to reopen")
         }
+    }
 
-        if !item.attachments.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                FieldLabel("Attachments · \(item.attachments.count)")
+    private func closureCard(_ c: Closure) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            FieldLabel("Closed \(DateText.long(c.closedAt))")
+            if let r = c.rating {
+                HStack(spacing: 2) {
+                    ForEach(1...5, id: \.self) { n in Image(systemName: n <= r ? "star.fill" : "star").foregroundStyle(Sage.sand) }
+                }
+                .accessibilityElement().accessibilityLabel("Rated \(r) of 5")
+            }
+            if let f = c.feedback { Text(f).font(HFont.body).foregroundStyle(Sage.ink) }
+            if c.rating == nil && c.feedback == nil { Text("No feedback was left.").font(HFont.small).foregroundStyle(Sage.muted) }
+        }
+        .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+        .background(Sage.surface, in: RoundedRectangle(cornerRadius: Radius.card))
+    }
+
+    private func attachmentsSection(_ item: DataItem) -> some View {
+        let files = item.sortedAttachments
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                FieldLabel("Attachments · \(files.count)")
+                Spacer()
+                if item.can("attach") { Button("Add files") { sheet = .addFiles }.font(HFont.captionStrong).foregroundStyle(Sage.primary) }
+            }
+            if files.isEmpty {
+                Text("No files yet.").font(HFont.small).foregroundStyle(Sage.muted)
+            } else {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 10) {
-                        ForEach(Array(item.attachments.enumerated()), id: \.element.id) { i, a in
+                        ForEach(Array(files.enumerated()), id: \.element.id) { i, a in
                             Button { viewerIndex = ViewerStart(index: i) } label: { attachmentCard(a) }
                                 .buttonStyle(.plain)
-                                .accessibilityLabel("Open \(a.name), \(i + 1) of \(item.attachments.count)")
+                                .accessibilityLabel("Open \(a.name), \(i + 1) of \(files.count)")
                         }
                     }
                 }
             }
+            if files.contains(where: \.report) {
+                Text("Report files open only for doctors this item is shared with.").font(HFont.small).foregroundStyle(Sage.muted)
+            }
         }
+    }
 
-        if !item.links.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                FieldLabel("Links")
+    private func discussionSection(_ item: DataItem) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            FieldLabel("Discussion · \(item.messages.count)" + (item.counts.unreadMessages > 0 ? " · \(item.counts.unreadMessages) new" : ""))
+            Button { openDiscussion = true } label: {
+                VStack(alignment: .leading, spacing: 8) {
+                    if item.messages.isEmpty {
+                        Text("No messages yet. Everyone this item is shared with can take part.").font(HFont.small).foregroundStyle(Sage.muted)
+                    }
+                    ForEach(item.messages.suffix(2)) { m in
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(senderName(item, m.senderId)).font(HFont.smallStrong).foregroundStyle(Sage.primary)
+                            Text(m.body).font(HFont.body).foregroundStyle(Sage.ink).lineLimit(2).multilineTextAlignment(.leading)
+                        }
+                    }
+                    Text(item.messages.isEmpty ? "Start discussion ›" : "Open discussion ›").font(HFont.captionStrong).foregroundStyle(Sage.primary)
+                }
+                .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                .background(Sage.surface, in: RoundedRectangle(cornerRadius: Radius.card))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func appointmentsSection(_ item: DataItem) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                FieldLabel("Appointments · \(item.appointments.count)")
+                Spacer()
+                if item.can("book") { Button("Book") { sheet = .book }.font(HFont.captionStrong).foregroundStyle(Sage.primary) }
+            }
+            if item.appointments.isEmpty { Text("No appointments yet.").font(HFont.small).foregroundStyle(Sage.muted) }
+            ForEach(item.appointments) { a in appointmentCard(item, a) }
+        }
+    }
+
+    private func appointmentCard(_ item: DataItem, _ a: Appointment) -> some View {
+        let manage = item.can("book") && a.status != "CANCELLED"
+        let count = a.recurrence != nil ? (a.visitCount.map { " · \($0) visits" } ?? "") : ""
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(a.doctorName.isEmpty ? "Doctor" : a.doctorName).font(HFont.bodyStrong).foregroundStyle(Sage.ink)
+                    Text((a.recurrence?.label ?? "Single visit") + count + (a.status == "CANCELLED" ? " · cancelled" : ""))
+                        .font(HFont.small).foregroundStyle(Sage.muted)
+                    if let n = a.notes { Text(n).font(HFont.small).foregroundStyle(Sage.inkSoft) }
+                }
+                Spacer()
+                if manage && a.recurrence != nil {
+                    Menu {
+                        Button("Cancel whole series", role: .destructive) { run { try await env.repo.cancelAppointment(itemId, appointmentId: a.id) } }
+                    } label: { Image(systemName: "ellipsis").foregroundStyle(Sage.muted).frame(width: 44, height: 44) }
+                    .accessibilityLabel("Appointment options")
+                }
+            }
+            .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 6)
+            if a.visits.isEmpty {
+                Text(a.status == "CANCELLED" ? "No upcoming visits." : "No more upcoming visits.").font(HFont.small).foregroundStyle(Sage.muted)
+                    .padding(.horizontal, 14).padding(.bottom, 12)
+            }
+            ForEach(Array(a.visits.prefix(4))) { v in
+                RowDivider()
+                HStack {
+                    Text(visitLabel(v)).font(HFont.caption).foregroundStyle(v.status == "SCHEDULED" ? Sage.ink : Sage.muted)
+                    Spacer()
+                    if manage && v.status == "SCHEDULED" {
+                        Menu {
+                            Button("Move this visit") { sheet = .move(a, v) }
+                            Button("Cancel this visit", role: .destructive) { visit(a, v, "CANCELLED") }
+                            if me?.id == a.doctorId && v.date <= DateText.today() {
+                                Button("Mark attended") { visit(a, v, "COMPLETED") }
+                                Button("Mark missed") { visit(a, v, "NO_SHOW") }
+                            }
+                        } label: { Image(systemName: "ellipsis.circle").foregroundStyle(Sage.primary).frame(width: 44, height: 44) }
+                        .accessibilityLabel("Options for visit on \(DateText.long(v.date))")
+                    }
+                }
+                .padding(.leading, 14).frame(minHeight: 44)
+            }
+            if a.visits.count > 4 {
+                RowDivider()
+                Text("+ \(a.visits.count - 4) more upcoming").font(HFont.small).foregroundStyle(Sage.muted).padding(14)
+            }
+        }
+        .background(Sage.surface, in: RoundedRectangle(cornerRadius: Radius.card))
+    }
+
+    private func visitLabel(_ v: Visit) -> String {
+        let state: String = switch v.status {
+        case "CANCELLED": " · cancelled"; case "COMPLETED": " · attended"; case "NO_SHOW": " · missed"; default: ""
+        }
+        return "\(DateText.long(v.date)) · \(v.time)" + (v.originalDate != v.date ? " (moved)" : "") + state
+    }
+
+    private func alertsSection(_ item: DataItem, isOwner: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                FieldLabel("Alerts · \(item.alerts.count)")
+                Spacer()
+                if item.can("alert") { Button("Add alert") { sheet = .alert }.font(HFont.captionStrong).foregroundStyle(Sage.primary) }
+            }
+            if item.alerts.isEmpty { Text("No alerts.").font(HFont.small).foregroundStyle(Sage.muted) }
+            if !item.alerts.isEmpty {
                 GroupCard {
-                    ForEach(Array(item.links.enumerated()), id: \.offset) { i, link in
+                    ForEach(Array(item.alerts.enumerated()), id: \.element.id) { i, al in
                         if i > 0 { RowDivider() }
-                        Button { if let u = URL(string: link) { openURL(u) } } label: {
-                            Label(link, systemImage: "link").font(HFont.caption).foregroundStyle(Sage.primary).lineLimit(1)
-                                .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading).padding(.horizontal, 14)
+                        HStack(spacing: 12) {
+                            Image(systemName: "bell").font(.system(size: 15)).foregroundStyle(Sage.clay)
+                                .frame(width: 32, height: 32).background(Sage.clayTint, in: RoundedRectangle(cornerRadius: 10))
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(al.text).font(HFont.bodyStrong).foregroundStyle(Sage.ink)
+                                Text("\(DateText.clock(al.firesAt)) · \(al.recurrence?.label ?? "once on \(DateText.long(al.firesAt))")" + (al.active ? "" : " · stopped"))
+                                    .font(HFont.small).foregroundStyle(Sage.muted)
+                            }
+                            Spacer()
+                            if item.can("alert") && (isOwner || al.forUser == me?.id) && al.type != "APPOINTMENT_REMINDER" {
+                                Button { run { try await env.repo.deleteAlert(itemId, alertId: al.id) } } label: {
+                                    Image(systemName: "trash").foregroundStyle(Sage.clay).frame(width: 44, height: 44)
+                                }
+                                .accessibilityLabel("Delete alert \(al.text)")
+                            }
                         }
+                        .padding(.horizontal, 12).frame(minHeight: 56)
                     }
                 }
             }
         }
+    }
 
-        if !item.keywords.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                FieldLabel("Keywords")
-                FlowLayout(spacing: 8) {
-                    ForEach(item.keywords, id: \.self) {
-                        Text($0).font(HFont.caption).foregroundStyle(Sage.ink).padding(.horizontal, 12).padding(.vertical, 7)
-                            .background(Sage.surface, in: Capsule()).overlay(Capsule().stroke(Sage.border))
+    private func linksSection(_ links: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            FieldLabel("Links")
+            GroupCard {
+                ForEach(Array(links.enumerated()), id: \.offset) { i, link in
+                    if i > 0 { RowDivider() }
+                    Button { if let u = URL(string: link) { openURL(u) } } label: {
+                        Label(link, systemImage: "link").font(HFont.caption).foregroundStyle(Sage.primary).lineLimit(1)
+                            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading).padding(.horizontal, 14)
                     }
                 }
             }
         }
+    }
 
-        let isOwner = item.ownerId == me?.id
+    private func keywordsSection(_ keywords: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            FieldLabel("Keywords")
+            FlowLayout(spacing: 8) {
+                ForEach(keywords, id: \.self) {
+                    Text($0).font(HFont.caption).foregroundStyle(Sage.ink).padding(.horizontal, 12).padding(.vertical, 7)
+                        .background(Sage.surface, in: Capsule()).overlay(Capsule().stroke(Sage.border))
+                }
+            }
+        }
+    }
+
+    private func accessSection(_ item: DataItem) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             FieldLabel("Who can see this")
             GroupCard {
-                accessRow("person", isOwner ? "You (owner)" : "Owner", "Full control", nil)
+                accessRow("person", "You (owner)", "Full control", nil)
                 ForEach(item.accessList) { g in
                     RowDivider()
                     let hospital = g.granteeType == .hospital
-                    let revoke: (() -> Void)? = isOwner ? { confirmRevoke = g } : nil
                     accessRow(hospital ? "cross.case" : "person", g.granteeName,
                               hospital ? "All affiliated doctors" : (g.viaHospitalId != nil ? "Via hospital" : "Shared directly"),
-                              revoke)
+                              item.can("revoke") ? { confirmRevoke = g } : nil)
                 }
             }
-            if item.type == .report {
-                Text("Report files open only for doctors you share with.").font(HFont.small).foregroundStyle(Sage.muted)
-            }
+            Text("Sharing covers everything in this item: files, discussion, appointments and alerts.").font(HFont.small).foregroundStyle(Sage.muted)
         }
+    }
 
-        if let linked {
-            VStack(alignment: .leading, spacing: 8) {
-                FieldLabel("Linked items")
-                NavigationLink(value: Route.item(linked.id)) { DataItemRow(item: linked) }.buttonStyle(.plain)
-            }
-        }
+    // MARK: Helpers
+
+    private func senderName(_ item: DataItem, _ senderId: String) -> String {
+        if senderId == me?.id { return "You" }
+        if let g = item.accessList.first(where: { $0.granteeId == senderId }) { return g.granteeName }
+        if let a = item.appointments.first(where: { $0.doctorId == senderId }), !a.doctorName.isEmpty { return a.doctorName }
+        if senderId == item.ownerId { return "Patient" }
+        return contacts.first { $0.id == senderId }?.displayName ?? "Care team"
     }
 
     private func pill(_ text: String, _ bg: Color, _ fg: Color) -> some View {
@@ -189,8 +388,28 @@ struct DataItemView: View {
         .padding(.horizontal, 12).frame(minHeight: 56)
     }
 
+    @ViewBuilder
+    private func sheetView(_ s: Sheet) -> some View {
+        switch s {
+        case .share: shareSheet.presentationDetents([.medium, .large])
+        case .book:
+            BookAppointmentSheet(patientId: item?.ownerId ?? "", doctors: doctors, defaultDoctor: me?.primaryRole == .doctor ? me?.id : nil) { a in
+                item = try await env.repo.bookAppointment(itemId, a)
+            }
+        case .alert: AddAlertSheet { a in item = try await env.repo.addAlert(itemId, a) }
+        case .close: CloseItemSheet(canRate: item?.can("rate") ?? false) { f, r in item = try await env.repo.closeItem(itemId, feedback: f, rating: r) }
+        case .move(let a, let v):
+            MoveVisitSheet(visit: v) { d, t in
+                item = try await env.repo.visitAction(itemId, appointmentId: a.id, visitDate: v.originalDate, action: "MOVED", newDate: d, newTime: t)
+            }
+        case .addFiles:
+            NavigationStack { UploadView(targetUserId: nil, addToItemId: itemId) { _ in sheet = nil; Task { await refresh() } } }
+        }
+    }
+
     private var shareSheet: some View {
-        let available = contacts.filter { c in !(item?.accessList.contains { $0.granteeId == c.id } ?? false) }
+        let available = contacts.filter { c in c.primaryRole == .doctor || c.primaryRole == .hospital }
+            .filter { c in !(item?.accessList.contains { $0.granteeId == c.id } ?? false) }
         return NavigationStack {
             List {
                 if available.isEmpty {
@@ -198,7 +417,8 @@ struct DataItemView: View {
                 }
                 ForEach(available) { c in
                     Button {
-                        Task { if let u = try? await env.repo.share(itemId, with: c.id) { item = u }; showShare = false }
+                        run { try await env.repo.share(itemId, with: c.id) }
+                        sheet = nil
                     } label: {
                         HStack(spacing: 12) {
                             Avatar(initials: c.initials, size: 36)
@@ -211,18 +431,31 @@ struct DataItemView: View {
                 }
             }
             .navigationTitle("Share this item").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showShare = false } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { sheet = nil } } }
         }
     }
+
+    private func visit(_ a: Appointment, _ v: Visit, _ action: String) {
+        run { try await env.repo.visitAction(itemId, appointmentId: a.id, visitDate: v.originalDate, action: action, newDate: nil, newTime: nil) }
+    }
+
+    /// Runs a change that returns the updated item; shows the server's reason if it fails.
+    private func run(_ f: @escaping () async throws -> DataItem) {
+        actionError = nil
+        Task {
+            do { item = try await f() }
+            catch { actionError = error.localizedDescription }
+        }
+    }
+
+    private func refresh() async { if let it = try? await env.repo.item(itemId) { item = it } }
 
     private func load() async {
         error = nil
         do {
             me = try await env.repo.me()
-            let it = try await env.repo.item(itemId)
-            item = it
-            if let p = it.pointerItemId { linked = try? await env.repo.item(p) }
-            contacts = (try? await env.repo.connections())?.filter { $0.primaryRole == .doctor || $0.primaryRole == .hospital } ?? []
+            item = try await env.repo.item(itemId)
+            contacts = (try? await env.repo.connections()) ?? []
         } catch { self.error = "Couldn't open this item. You may no longer have access to it." }
     }
 }

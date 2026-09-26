@@ -27,8 +27,8 @@ import kotlinx.coroutines.tasks.await
  * Push payload (data message, design doc 8):
  *   type     = "message" | "report" | "alert" | "booking"
  *   title, body
- *   item_id  = open this item (optional)
- *   user_id  = open the conversation with this user (optional)
+ *   item_id  = open this item (optional); for type "message" opens the item's discussion
+ *   user_id  = open the conversations with this user (optional)
  */
 object PushRegistrar {
     private var lastToken: String? = null
@@ -80,6 +80,7 @@ object Notifications {
     const val CHANNEL_RECORDS = "records"
     const val EXTRA_ITEM = "healoo.item_id"
     const val EXTRA_USER = "healoo.user_id"
+    const val EXTRA_TYPE = "healoo.type"
 
     fun createChannels(context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java)
@@ -91,6 +92,7 @@ object Notifications {
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
             itemId?.let { putExtra(EXTRA_ITEM, it) }
+            putExtra(EXTRA_TYPE, type)
             userId?.let { putExtra(EXTRA_USER, it) }
         }
         val pending = PendingIntent.getActivity(context, (itemId ?: userId ?: title).hashCode(), intent,
@@ -113,6 +115,7 @@ object Notifications {
 /** Where to go when the app is opened from a notification. */
 sealed interface DeepLink {
     data class Item(val id: String) : DeepLink
+    data class Discussion(val itemId: String) : DeepLink
     data class Conversation(val userId: String) : DeepLink
 }
 
@@ -122,10 +125,14 @@ object DeepLinks {
 
     fun handle(intent: Intent?) {
         intent ?: return
-        intent.getStringExtra(Notifications.EXTRA_ITEM)?.let { _links.tryEmit(DeepLink.Item(it)) }
+        val type = intent.getStringExtra(Notifications.EXTRA_TYPE)
+        intent.getStringExtra(Notifications.EXTRA_ITEM)?.let {
+            _links.tryEmit(if (type == "message") DeepLink.Discussion(it) else DeepLink.Item(it))
+        }
             ?: intent.getStringExtra(Notifications.EXTRA_USER)?.let { _links.tryEmit(DeepLink.Conversation(it)) }
         intent.removeExtra(Notifications.EXTRA_ITEM)
         intent.removeExtra(Notifications.EXTRA_USER)
+        intent.removeExtra(Notifications.EXTRA_TYPE)
     }
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)

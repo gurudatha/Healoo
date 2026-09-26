@@ -1,11 +1,20 @@
 import Foundation
 
-// Mirrors design doc 2.2 (DataItem) and 4.3 (REST API). JSON is snake_case; the decoder converts it.
+// DataItem v2 (Documentation/DataItem_Design.md): a container for one case with a fixed primary
+// kind plus messages, attachments, appointments and alerts. JSON is snake_case; the decoder
+// converts it. Swift's synthesized decoding needs every non-optional key, so fields the server
+// may omit are optional here.
 
-enum CoreItemType: String, Codable, CaseIterable, Identifiable {
-    case report = "REPORT", alert = "ALERT", booking = "BOOKING", feedback = "FEEDBACK", payment = "PAYMENT", message = "MESSAGE"
+/// What an item started as (fixed at creation).
+enum PrimaryKind: String, Codable, CaseIterable, Identifiable {
+    case appointment = "APPOINTMENT", message = "MESSAGE", alert = "ALERT", report = "REPORT"
     var id: String { rawValue }
     var label: String { rawValue.capitalized }
+}
+
+/// Part kinds listed in DataItem.kinds.
+enum PartKind {
+    static let appointment = "APPOINTMENT", message = "MESSAGE", alert = "ALERT", report = "REPORT", attachment = "ATTACHMENT"
 }
 
 enum ItemStatus: String, Codable { case open = "OPEN", closed = "CLOSED" }
@@ -16,7 +25,32 @@ enum Role: String, Codable, CaseIterable {
 }
 enum GranteeType: String, Codable { case user = "USER", hospital = "HOSPITAL" }
 
+enum Frequency: String, Codable, CaseIterable, Identifiable {
+    case daily = "DAILY", weekly = "WEEKLY", biweekly = "BIWEEKLY", monthly = "MONTHLY", quarterly = "QUARTERLY"
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .daily: "Daily"; case .weekly: "Weekly"; case .biweekly: "Every 2 weeks"
+        case .monthly: "Monthly"; case .quarterly: "Every 3 months"
+        }
+    }
+}
+
+enum Period: String, Codable, CaseIterable, Identifiable {
+    case oneMonth = "ONE_MONTH", twoMonths = "TWO_MONTHS", threeMonths = "THREE_MONTHS", sixMonths = "SIX_MONTHS"
+    var id: String { rawValue }
+    var months: Int { switch self { case .oneMonth: 1; case .twoMonths: 2; case .threeMonths: 3; case .sixMonths: 6 } }
+    var label: String { months == 1 ? "1 month" : "\(months) months" }
+}
+
+struct Recurrence: Codable, Hashable {
+    var frequency: Frequency
+    var period: Period?
+    var label: String { frequency.label + (period.map { " for \($0.label)" } ?? " until cancelled") }
+}
+
 struct Attachment: Codable, Hashable, Identifiable {
+    var attachmentId: String?
     var kind: AttachmentKind
     var uri: String
     var mime: String
@@ -25,7 +59,10 @@ struct Attachment: Codable, Hashable, Identifiable {
     var name: String
     var pageCount: Int?
     var thumbUri: String?
-    var id: String { uri }
+    var addedBy: String?
+    var isReport: Bool?
+    var id: String { attachmentId ?? uri }
+    var report: Bool { isReport ?? false }
 }
 
 struct Grant: Codable, Hashable, Identifiable {
@@ -35,29 +72,6 @@ struct Grant: Codable, Hashable, Identifiable {
     var granteeName: String
     var viaHospitalId: String?
     var id: String { grantId }
-}
-
-struct DataItem: Codable, Hashable, Identifiable {
-    var itemId: String
-    var date: String
-    var coreItemType: CoreItemType
-    var title: String
-    var subtitle: String = ""
-    var keywords: [String] = []
-    var coreItemData: [Attachment] = []
-    var links: [String] = []
-    var ownerId: String
-    var createdByName: String = ""
-    var accessList: [Grant] = []
-    var pointerToMessage: String?
-    var pointerItemId: String?
-    var rating: Int?
-    var status: ItemStatus = .open
-    var allowedActions: [String] = []
-
-    var id: String { itemId }
-    var type: CoreItemType { coreItemType }
-    var attachments: [Attachment] { coreItemData.sorted { $0.position < $1.position } }
 }
 
 struct UserProfile: Codable, Hashable, Identifiable {
@@ -80,23 +94,170 @@ struct UserProfile: Codable, Hashable, Identifiable {
     }
 }
 
+/// A message in an item's discussion (every message belongs to an item, design D5).
 struct Message: Codable, Hashable, Identifiable {
     var messageId: String
-    var threadId: String
+    var itemId: String
     var senderId: String
     var body: String
-    var sentAt: String
-    var linkedItemId: String?
+    var sentAt: String                  // ISO timestamp with offset
+    var attachmentIds: [String]?
     var id: String { messageId }
 }
 
-struct ThreadSummary: Codable, Hashable, Identifiable {
-    var threadId: String
+/// One occurrence of an appointment. status: SCHEDULED | COMPLETED | CANCELLED | NO_SHOW
+struct Visit: Codable, Hashable, Identifiable {
+    var date: String                    // YYYY-MM-DD (after any move)
+    var time: String                    // HH:MM
+    var originalDate: String            // the series date; used for visit actions
+    var status: String
+    var id: String { originalDate }
+}
+
+/// A per-visit change. action: CANCELLED | MOVED
+struct VisitException: Codable, Hashable {
+    var date: String
+    var action: String
+    var newDate: String?
+    var newTime: String?
+}
+
+struct Appointment: Codable, Hashable, Identifiable {
+    var appointmentId: String
+    var itemId: String
+    var patientId: String
+    var doctorId: String
+    var doctorName: String
+    var hospitalId: String?
+    var date: String                    // first visit
+    var time: String
+    var timezone: String
+    var durationMin: Int
+    var notes: String?
+    var recurrence: Recurrence?
+    var exceptions: [VisitException]
+    var status: String                  // series: SCHEDULED | COMPLETED | CANCELLED
+    var visitCount: Int?                // nil = until cancelled
+    var visits: [Visit]                 // upcoming visits (server sends the next 12)
+
+    var id: String { appointmentId }
+    var nextVisit: Visit? { visits.first { $0.status == "SCHEDULED" } }
+}
+
+/// type: MEDICATION | APPOINTMENT_REMINDER | FOLLOW_UP | RESULT_READY | CUSTOM
+struct Alert: Codable, Hashable, Identifiable {
+    var alertId: String
+    var itemId: String
+    var type: String
+    var text: String
+    var forUser: String
+    var firesAt: String                 // ISO timestamp with offset (first firing)
+    var timezone: String
+    var recurrence: Recurrence?
+    var appointmentId: String?
+    var active: Bool
+    var id: String { alertId }
+}
+
+/// Present when the item is closed. Rating is only accepted from the owner (patient).
+struct Closure: Codable, Hashable {
+    var closedAt: String
+    var closedBy: String
+    var feedback: String?
+    var rating: Int?
+}
+
+struct ItemCounts: Codable, Hashable {
+    var messages = 0, attachments = 0, appointments = 0, alerts = 0, unreadMessages = 0
+}
+
+/// The container: a small header plus child lists (DataItem_Design.md 1 and 3.1).
+struct DataItem: Codable, Hashable, Identifiable {
+    var itemId: String
+    var ownerId: String
+    var primaryKind: PrimaryKind
+    var kinds: [String]
+    var title: String
+    var keywords: [String]
+    var status: ItemStatus
+    var closure: Closure?
+    var accessList: [Grant]             // owner only
+    var counts: ItemCounts
+    var messages: [Message]
+    var attachments: [Attachment]
+    var appointments: [Appointment]
+    var alerts: [Alert]
+    var links: [String]
+    var createdByName: String
+    var createdAt: String
+    var updatedAt: String
+    var allowedActions: [String]
+
+    var id: String { itemId }
+    /// read, meta, message, attach, book, alert, close, share, revoke, rate, reopen
+    func can(_ action: String) -> Bool { allowedActions.contains(action) }
+    var sortedAttachments: [Attachment] { attachments.sorted { $0.position < $1.position } }
+    var nextVisit: Visit? { appointments.compactMap(\.nextVisit).min { $0.date + $0.time < $1.date + $1.time } }
+
+    /// Date shown in lists: next visit for appointments, otherwise last activity.
+    var date: String {
+        if primaryKind == .appointment, let v = nextVisit { return v.date }
+        let d = String(updatedAt.prefix(10))
+        return d.isEmpty ? String(createdAt.prefix(10)) : d
+    }
+
+    /// One-line summary for lists, based on the primary part.
+    var subtitle: String {
+        var extra: [String] = []
+        if primaryKind != .message && counts.messages > 0 { extra.append("\(counts.messages) msg") }
+        if primaryKind != .appointment && counts.appointments > 0 { extra.append("appointment") }
+        let main: String
+        switch primaryKind {
+        case .report:
+            let files = counts.attachments > 0 ? "\(counts.attachments) file\(counts.attachments == 1 ? "" : "s")" : ""
+            main = [createdByName.isEmpty ? "Report" : createdByName, files].filter { !$0.isEmpty }.joined(separator: " · ")
+        case .appointment:
+            if let a = appointments.first {
+                main = a.doctorName + (nextVisit.map { " · \(DateText.short($0.date)) \($0.time)" } ?? (status == .closed ? " · closed" : ""))
+            } else { main = "Appointment" }
+        case .message: main = messages.last?.body ?? "Discussion"
+        case .alert: main = alerts.first.map { "\($0.text) · \(DateText.clock($0.firesAt))" } ?? "Alert"
+        }
+        return ([main] + extra).filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    /// Empty header, used by the demo repository.
+    static func new(id: String, owner: String, kind: PrimaryKind, title: String, keywords: [String] = [],
+                    accessList: [Grant] = [], createdByName: String, now: String) -> DataItem {
+        DataItem(itemId: id, ownerId: owner, primaryKind: kind, kinds: [kind.rawValue], title: title, keywords: keywords,
+                 status: .open, closure: nil, accessList: accessList, counts: ItemCounts(), messages: [], attachments: [],
+                 appointments: [], alerts: [], links: [], createdByName: createdByName, createdAt: now, updatedAt: now,
+                 allowedActions: [])
+    }
+}
+
+/// Messages tab row: an item with a discussion, with one other person.
+struct Conversation: Codable, Hashable, Identifiable {
+    var itemId: String
+    var itemTitle: String
+    var primaryKind: PrimaryKind
     var otherUser: UserProfile
     var lastMessage: String
     var lastMessageAt: String
-    var unread: Int = 0
-    var id: String { threadId }
+    var unread: Int
+    var id: String { "\(itemId)|\(otherUser.id)" }
+}
+
+/// One visit in the calendar (GET /v1/appointments).
+struct CalendarVisit: Codable, Hashable, Identifiable {
+    var startsAt: String
+    var appointmentId: String
+    var itemId: String
+    var itemTitle: String
+    var withUserId: String
+    var withUserName: String
+    var status: String
+    var id: String { appointmentId + startsAt }
 }
 
 struct Dashboard: Codable, Hashable {
@@ -110,6 +271,50 @@ struct PageResult<T: Codable>: Codable {
     var pageState: String?
 }
 
+// MARK: - Requests (encoded snake_case)
+
+/// A file already uploaded through presign, to attach to an item.
+struct NewAttachment: Codable, Hashable { var kind: AttachmentKind; var uri: String; var mime: String; var size: Int64; var name: String }
+struct NewReport: Codable { var title: String; var attachments: [NewAttachment]; var links: [String] }
+struct NewMessage: Codable { var body: String; var clientMsgId: String }
+
+struct NewAppointment: Codable {
+    var patientId: String
+    var doctorId: String
+    var date: String                    // YYYY-MM-DD
+    var time: String                    // HH:MM
+    var timezone = "Asia/Kolkata"
+    var durationMin = 15
+    var notes: String?
+    var recurrence: Recurrence?
+}
+
+struct NewAlert: Codable {
+    var type: String
+    var text: String
+    var forUser: String?
+    var date: String
+    var time: String
+    var timezone = "Asia/Kolkata"
+    var recurrence: Recurrence?
+}
+
+/// POST /v1/items: exactly one of appointment, message, alert or report.
+struct NewItemRequest: Encodable {
+    var ownerId: String?
+    var title = ""
+    var keywords: [String] = []
+    var shareWith: [String] = []
+    var appointment: NewAppointment?
+    var message: NewMessage?
+    var alert: NewAlert?
+    var report: NewReport?
+}
+
+struct CloseRequest: Encodable { var feedback: String?; var rating: Int? }
+struct AddAttachmentsRequest: Encodable { var attachments: [NewAttachment]; var isReport: Bool }
+struct VisitActionRequest: Encodable { var action: String; var newDate: String?; var newTime: String? }
+
 /// A file the user picked, copied into the app's temporary folder, before upload.
 struct PendingAttachment: Identifiable, Hashable {
     let id = UUID()
@@ -120,16 +325,13 @@ struct PendingAttachment: Identifiable, Hashable {
     var size: Int64
 }
 
-struct UploadDraft {
+/// Upload screen: a new report.
+struct ReportDraft {
     var ownerId: String
-    var type: CoreItemType
     var title: String
-    var date: String
     var keywords: [String]
     var links: [String]
-    var status: ItemStatus
     var shareWith: [String]
-    var pointerToMessage: String?
 }
 
 enum Limits {
@@ -144,14 +346,18 @@ enum DateText {
     private static let longFmt: DateFormatter = { let f = DateFormatter(); f.dateFormat = "d MMM yyyy"; return f }()
 
     static func short(_ s: String) -> String {
-        guard let d = iso.date(from: s) else { return s }
+        guard let d = iso.date(from: String(s.prefix(10))) else { return s }
         return Calendar.current.isDateInToday(d) ? "Today" : shortFmt.string(from: d)
     }
-    static func long(_ s: String) -> String { iso.date(from: s).map(longFmt.string) ?? s }
+    static func long(_ s: String) -> String { iso.date(from: String(s.prefix(10))).map(longFmt.string) ?? s }
     static func today() -> String { iso.string(from: Date()) }
+    static func string(_ d: Date) -> String { iso.string(from: d) }
+    static func date(_ s: String) -> Date? { iso.date(from: String(s.prefix(10))) }
+    /// "HH:MM" from an ISO timestamp such as 2026-09-21T20:00:00+05:30.
+    static func clock(_ s: String) -> String { s.count >= 16 ? String(s.dropFirst(11).prefix(5)) : s }
 }
 
-// MARK: - Added in 0.2: profile, sharing overview, notification prefs, realtime
+// MARK: - Profile, sharing overview, notification prefs, realtime
 
 struct ProfileUpdate: Codable { var displayName: String; var location: String? }
 
@@ -171,7 +377,7 @@ struct OwnedGrant: Codable, Hashable, Identifiable {
     var granteeName: String
     var itemId: String
     var itemTitle: String
-    var coreItemType: CoreItemType
+    var primaryKind: PrimaryKind
     var id: String { grantId }
 }
 

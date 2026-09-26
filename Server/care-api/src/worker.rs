@@ -1,15 +1,21 @@
 //! care-worker consumers (doc 6.4):
 //! * `audit-writer` — persists `access.audit` decisions into Cassandra.
-//! * `media` — on `item.created`, makes image thumbnails, counts PDF pages and records sha256
-//!   (doc 7.4), then emits `item.updated` so open screens refresh.
-//! Both are idempotent by event_id via `processed_events` (doc 6.3).
+//! * `media` — on `item.attachments_added`, makes image thumbnails, counts PDF pages and records
+//!   sha256 (doc 7.4), then emits `item.attachment` so open screens refresh.
+//! * alert scheduler — fires due alerts every minute (DataItem v2).
+//! All are idempotent via `processed_events` (doc 6.3).
 
 use crate::{
     events::{topics, Envelope, EventBus, EventHandler, Publisher},
     files::{key_of, object_uri, ObjectStore},
-    model::AttachmentUdt,
-    store::Db,
+    model::ItemStatus,
+    store::{
+        parts::{local_millis, today_in, AlertRow, AttachmentRow},
+        Db,
+    },
 };
+use chrono::Utc;
+use std::time::Duration;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
@@ -42,14 +48,14 @@ pub struct MediaProcessor {
 
 const THUMB_PX: u32 = 320;
 
-impl MediaProcessor {
-    async fn process(&self, a: &AttachmentUdt) -> Result<AttachmentUdt> {
-        let mut out = a.clone();
-        let Some(key) = a.uri.as_deref().and_then(key_of) else { return Ok(out) };
-        let bytes = self.files.get(key).await.with_context(|| format!("reading {key}"))?;
-        out.sha256 = Some(hex::encode(Sha256::digest(&bytes)));
-        out.size = Some(bytes.len() as i64);
+/// Result of processing one file.
+struct Media { sha256: String, size: i64, page_count: Option<i32>, thumb_uri: Option<String> }
 
+impl MediaProcessor {
+    async fn process(&self, a: &AttachmentRow) -> Result<Option<Media>> {
+        let Some(key) = a.uri.as_deref().and_then(key_of) else { return Ok(None) };
+        let bytes = self.files.get(key).await.with_context(|| format!("reading {key}"))?;
+        let mut m = Media { sha256: hex::encode(Sha256::digest(&bytes)), size: bytes.len() as i64, page_count: a.page_count, thumb_uri: a.thumb_uri.clone() };
         match a.kind.as_deref() {
             Some("IMAGE") if a.thumb_uri.is_none() => {
                 let data = bytes.clone();
@@ -62,52 +68,105 @@ impl MediaProcessor {
                 }).await??;
                 let thumb_key = format!("thumbs/{key}.jpg");
                 self.files.put(&thumb_key, jpeg.into(), "image/jpeg").await?;
-                out.thumb_uri = Some(object_uri(&thumb_key));
+                m.thumb_uri = Some(object_uri(&thumb_key));
             }
             Some("PDF") if a.page_count.is_none() => {
                 let data = bytes.clone();
-                let pages = tokio::task::spawn_blocking(move || lopdf::Document::load_mem(&data).map(|d| d.get_pages().len() as i32)).await?;
-                match pages {
-                    Ok(n) => out.page_count = Some(n),
+                match tokio::task::spawn_blocking(move || lopdf::Document::load_mem(&data).map(|d| d.get_pages().len() as i32)).await? {
+                    Ok(n) => m.page_count = Some(n),
                     Err(e) => tracing::warn!(key, "could not read PDF: {e}"),
                 }
                 // First-page thumbnails need a PDF renderer (e.g. pdfium); the apps show a PDF icon meanwhile.
             }
             _ => {}
         }
-        Ok(out)
+        Ok(Some(m))
     }
 }
 
 #[async_trait]
 impl EventHandler for MediaProcessor {
     async fn handle(&self, _topic: &str, ev: Envelope) -> Result<()> {
-        if ev.event_type != "item.created" { return Ok(()); }
+        if ev.event_type != "item.attachments_added" { return Ok(()); }
         if self.db.already_processed("media", &ev.event_id).await? { return Ok(()); }
         let id: Uuid = ev.subject_id.parse()?;
+        let wanted: Vec<Uuid> = ev.payload.get("attachment_ids").and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_str()?.parse().ok()).collect()).unwrap_or_default();
         let Some(item) = self.db.item(id).await? else { return Ok(()) };
-        if item.attachments.is_empty() { return self.db.mark_processed("media", &ev.event_id).await; }
-
-        let mut updated = Vec::with_capacity(item.attachments.len());
-        for a in &item.attachments {
-            updated.push(match self.process(a).await {
-                Ok(x) => x,
-                Err(e) => { tracing::warn!(item = %id, "attachment processing failed: {e:#}"); a.clone() }
-            });
+        for a in self.db.attachments(id).await?.iter().filter(|a| wanted.contains(&a.attachment_id)) {
+            match self.process(a).await {
+                Ok(Some(m)) => self.db.set_attachment_media(id, a.position, m.page_count, m.thumb_uri.as_deref(), &m.sha256, m.size).await?,
+                Ok(None) => {}
+                Err(e) => tracing::warn!(item = %id, "attachment processing failed: {e:#}"),
+            }
         }
-        self.db.set_attachments(id, &updated).await?;
-        let done = Envelope::new("item.updated", ev.actor_id, id, ev.audience.clone(), serde_json::json!({ "item_id": id, "media": "processed" }));
+        let done = Envelope::new("item.attachment", ev.actor_id, id, item.audience(), serde_json::json!({ "item_id": id, "change": "attachment" }));
         self.publisher.emit(topics::ITEMS, &item.owner_id.to_string(), done).await?;
         self.db.mark_processed("media", &ev.event_id).await
     }
 }
 
-/// Starts both consumers; used by care-worker, and inside care-api when EVENT_BUS=memory.
+/// Alert scheduler (DataItem_Design.md 3.5/3.7): every minute, fires queued alerts, queues the
+/// next firing of recurring ones, and skips appointment reminders whose visit was cancelled.
+pub async fn run_alert_scheduler(db: Arc<Db>, publisher: Publisher, stop: CancellationToken) {
+    let mut next_minute = Utc::now().timestamp_millis() / 60_000 * 60_000 - 5 * 60_000; // catch up 5 min after restart
+    let mut tick = tokio::time::interval(Duration::from_secs(20));
+    loop {
+        tokio::select! { _ = stop.cancelled() => return, _ = tick.tick() => {} }
+        let now = Utc::now().timestamp_millis();
+        while next_minute <= now {
+            if let Err(e) = fire_minute(&db, &publisher, next_minute).await {
+                tracing::warn!("alert scheduler: {e:#}");
+                break; // retry this minute on the next tick
+            }
+            next_minute += 60_000;
+        }
+    }
+}
+
+async fn fire_minute(db: &Db, publisher: &Publisher, minute: i64) -> Result<()> {
+    for (alert_id, item_id, user) in db.alerts_due_at(minute).await? {
+        let key = format!("{alert_id}:{minute}");
+        if db.already_processed("alert-scheduler", &key).await? { db.remove_due(minute, alert_id).await?; continue; }
+        let (Some(item), Some(alert)) = (db.item(item_id).await?, db.alert(item_id, alert_id).await?) else {
+            db.remove_due(minute, alert_id).await?;
+            continue;
+        };
+        if alert.active.unwrap_or(true) && item.status == ItemStatus::Open && reminder_still_valid(db, item_id, &alert, minute).await? {
+            let ev = Envelope::new("alert.fired", item.owner_id, item_id, vec![user.to_string()], serde_json::json!({
+                "alert_id": alert_id, "type": alert.kind, "text": alert.text, "item_id": item_id,
+            }));
+            publisher.emit(topics::ALERTS, &user.to_string(), ev).await?;
+        }
+        match alert.next_after(minute + 59_999) {
+            Some(next) if alert.active.unwrap_or(true) => db.queue_alert(next, alert_id, item_id, user).await?,
+            _ => db.set_alert_active(item_id, alert_id, false).await?,
+        }
+        db.mark_processed("alert-scheduler", &key).await?;
+        db.remove_due(minute, alert_id).await?;
+    }
+    Ok(())
+}
+
+/// A reminder is sent only if its appointment still has a scheduled visit in the next 25 hours.
+async fn reminder_still_valid(db: &Db, item_id: Uuid, alert: &AlertRow, minute: i64) -> Result<bool> {
+    let Some(appt_id) = alert.appointment_id else { return Ok(true) };
+    let Some(a) = db.appointment(item_id, appt_id).await? else { return Ok(false) };
+    if a.is_cancelled() { return Ok(false); }
+    let today = today_in(a.tz());
+    Ok(a.visits(today, today + chrono::Duration::days(2), 10).iter().any(|(v, status)| {
+        let ms = local_millis(v.date, v.time, a.tz());
+        status == "SCHEDULED" && ms > minute && ms - minute <= 25 * 3_600_000
+    }))
+}
+
+/// Starts the consumers and the alert scheduler; used by care-worker, and inside care-api when
+/// EVENT_BUS=memory.
 pub fn spawn(bus: Arc<dyn EventBus>, db: Arc<Db>, files: Arc<dyn ObjectStore>, publisher: Publisher, stop: CancellationToken) -> Vec<tokio::task::JoinHandle<()>> {
     let audit: Arc<dyn EventHandler> = Arc::new(AuditWriter { db: db.clone() });
-    let media: Arc<dyn EventHandler> = Arc::new(MediaProcessor { db, files, publisher });
+    let media: Arc<dyn EventHandler> = Arc::new(MediaProcessor { db: db.clone(), files, publisher: publisher.clone() });
     let (b1, s1) = (bus.clone(), stop.clone());
-    let (b2, s2) = (bus, stop);
+    let (b2, s2) = (bus, stop.clone());
     vec![
         tokio::spawn(async move {
             if let Err(e) = b1.consume("audit-writer", &[topics::AUDIT], true, audit, s1).await { tracing::error!("audit-writer stopped: {e:#}"); }
@@ -115,5 +174,6 @@ pub fn spawn(bus: Arc<dyn EventBus>, db: Arc<Db>, files: Arc<dyn ObjectStore>, p
         tokio::spawn(async move {
             if let Err(e) = b2.consume("media", &[topics::ITEMS], true, media, s2).await { tracing::error!("media worker stopped: {e:#}"); }
         }),
+        tokio::spawn(run_alert_scheduler(db, publisher, stop)),
     ]
 }

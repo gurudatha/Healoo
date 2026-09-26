@@ -27,7 +27,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.healoo.app.data.CoreItemType
+import com.healoo.app.data.PrimaryKind
 import com.healoo.app.data.DataItem
 import com.healoo.app.ui.theme.*
 import java.time.LocalDate
@@ -35,13 +35,11 @@ import java.time.format.DateTimeFormatter
 
 data class TypeStyle(val tint: Color, val fg: Color, val icon: ImageVector)
 
-fun styleFor(type: CoreItemType): TypeStyle = when (type) {
-    CoreItemType.REPORT -> TypeStyle(Sage.SageTint, Sage.Primary, Icons.Outlined.Description)
-    CoreItemType.MESSAGE -> TypeStyle(Sage.SageTint, Sage.Primary, Icons.AutoMirrored.Outlined.Chat)
-    CoreItemType.BOOKING -> TypeStyle(Sage.SandTint, Sage.Sand, Icons.Outlined.Event)
-    CoreItemType.FEEDBACK -> TypeStyle(Sage.SandTint, Sage.Sand, Icons.Outlined.RateReview)
-    CoreItemType.PAYMENT -> TypeStyle(Sage.SandTint, Sage.Sand, Icons.Outlined.CreditCard)
-    CoreItemType.ALERT -> TypeStyle(Sage.ClayTint, Sage.Clay, Icons.Outlined.NotificationsNone)
+fun styleFor(kind: PrimaryKind): TypeStyle = when (kind) {
+    PrimaryKind.REPORT -> TypeStyle(Sage.SageTint, Sage.Primary, Icons.Outlined.Description)
+    PrimaryKind.MESSAGE -> TypeStyle(Sage.SageTint, Sage.Primary, Icons.AutoMirrored.Outlined.Chat)
+    PrimaryKind.APPOINTMENT -> TypeStyle(Sage.SandTint, Sage.Sand, Icons.Outlined.Event)
+    PrimaryKind.ALERT -> TypeStyle(Sage.ClayTint, Sage.Clay, Icons.Outlined.NotificationsNone)
 }
 
 fun shortDate(iso: String): String = runCatching {
@@ -58,7 +56,7 @@ fun longDate(iso: String): String = runCatching {
 fun screenFraction(fraction: Float): Dp = (LocalConfiguration.current.screenHeightDp * fraction).dp
 
 @Composable
-fun TypeBadge(type: CoreItemType) {
+fun TypeBadge(type: PrimaryKind) {
     val s = styleFor(type)
     Text(
         type.label, style = HType.tiny, color = s.fg,
@@ -67,7 +65,7 @@ fun TypeBadge(type: CoreItemType) {
 }
 
 @Composable
-fun TypeTile(type: CoreItemType, size: Dp = 40.dp) {
+fun TypeTile(type: PrimaryKind, size: Dp = 40.dp) {
     val s = styleFor(type)
     Box(
         Modifier.size(size).clip(RoundedCornerShape(Radius.tile)).background(s.tint),
@@ -83,14 +81,14 @@ fun DataItemRow(item: DataItem, onClick: () -> Unit, showDate: Boolean = true) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        TypeTile(item.type)
+        TypeTile(item.primaryKind)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(item.title, style = HType.bodyStrong, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Sage.Ink)
             Text(item.subtitle, style = HType.caption, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Sage.Muted)
         }
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (showDate) Text(shortDate(item.date), style = HType.small, color = Sage.Muted)
-            TypeBadge(item.type)
+            TypeBadge(item.primaryKind)
         }
     }
 }

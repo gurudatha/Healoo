@@ -1,4 +1,5 @@
-//! items, items_by_owner, items_by_grantee, grants_by_id, grants_by_owner (doc 7.2 / 7.3)
+//! DataItem v2 header: items, items_by_owner, items_by_grantee, grants_by_id, grants_by_owner.
+//! Children (messages, attachments, appointments, alerts) are in store/parts.rs.
 
 use super::Db;
 use crate::model::*;
@@ -7,36 +8,54 @@ use scylla::frame::value::{CqlTimestamp, CqlTimeuuid};
 use std::collections::HashSet;
 use uuid::Uuid;
 
-/// Full item as stored in `items`.
 #[derive(Clone, Debug)]
 pub struct Item {
     pub id: Uuid,
     pub owner_id: Uuid,
+    pub primary_kind: PrimaryKind,
+    pub kinds: HashSet<String>,
+    pub title: String,
+    pub keywords: HashSet<String>,
+    pub grants: Vec<GrantUdt>,
+    pub status: ItemStatus,
+    pub closure: Option<ClosureUdt>,
+    pub has_report_files: bool,
+    pub links: Vec<String>,
     pub created_by: Uuid,
     pub created_by_name: String,
-    pub date: CqlTimestamp,
-    pub item_type: CoreItemType,
-    pub title: String,
-    pub subtitle: String,
-    pub keywords: HashSet<String>,
-    pub attachments: Vec<AttachmentUdt>,
-    pub links: Vec<String>,
-    pub grants: Vec<GrantUdt>,
-    pub pointer_to_message: Option<Uuid>,
-    pub pointer_item_id: Option<Uuid>,
-    pub rating: Option<i8>,
-    pub status: ItemStatus,
+    pub created_at: CqlTimestamp,
+    pub updated_at: CqlTimestamp,
 }
 
 impl Item {
     pub fn grant_list(&self) -> Vec<Grant> { self.grants.iter().filter_map(Grant::from_udt).collect() }
+
     pub fn facts(&self) -> crate::policy::ItemFacts {
         crate::policy::ItemFacts {
             owner_id: self.owner_id,
             created_by: self.created_by,
-            item_type: self.item_type,
+            has_report_files: self.has_report_files,
             grants: self.grant_list().iter().map(|g| (g.grantee_type, g.grantee_id)).collect(),
         }
+    }
+
+    /// Owner plus every user granted directly (hospital grants are expanded by the fan-out).
+    pub fn participants(&self) -> Vec<Uuid> {
+        let mut v = vec![self.owner_id];
+        for g in self.grant_list() {
+            if g.grantee_type == GranteeType::User && !v.contains(&g.grantee_id) { v.push(g.grantee_id); }
+        }
+        v
+    }
+
+    /// Event audience: owner, direct grantees and "hospital:<id>" for hospital grants.
+    pub fn audience(&self) -> Vec<String> {
+        let mut a = vec![self.owner_id.to_string()];
+        a.extend(self.grant_list().iter().map(|g| match g.grantee_type {
+            GranteeType::User => g.grantee_id.to_string(),
+            GranteeType::Hospital => format!("hospital:{}", g.grantee_id),
+        }));
+        a
     }
 }
 
@@ -44,113 +63,101 @@ impl Item {
 struct ItemRow {
     item_id: CqlTimeuuid,
     owner_id: Uuid,
+    primary_kind: Option<String>,
+    kinds: Option<HashSet<String>>,
+    title: Option<String>,
+    keywords: Option<HashSet<String>>,
+    access_list: Option<Vec<GrantUdt>>,
+    status: Option<String>,
+    closure: Option<ClosureUdt>,
+    has_report_files: Option<bool>,
+    links: Option<Vec<String>>,
     created_by: Option<Uuid>,
     created_by_name: Option<String>,
-    date: Option<CqlTimestamp>,
-    core_item_type: Option<String>,
-    title: Option<String>,
-    subtitle: Option<String>,
-    keywords: Option<HashSet<String>>,
-    core_item_data: Option<Vec<AttachmentUdt>>,
-    links: Option<Vec<String>>,
-    access_list: Option<Vec<GrantUdt>>,
-    pointer_to_message: Option<CqlTimeuuid>,
-    pointer_item_id: Option<CqlTimeuuid>,
-    rating: Option<i8>,
-    status: Option<String>,
+    created_at: Option<CqlTimestamp>,
+    updated_at: Option<CqlTimestamp>,
 }
 
 impl From<ItemRow> for Item {
     fn from(r: ItemRow) -> Self {
-        let item_type = r.core_item_type.as_deref().and_then(parse).unwrap_or(CoreItemType::Report);
+        let primary_kind = r.primary_kind.as_deref().and_then(parse).unwrap_or(PrimaryKind::Report);
         Item {
             id: un(r.item_id),
             owner_id: r.owner_id,
+            primary_kind,
+            kinds: r.kinds.unwrap_or_default(),
+            title: r.title.unwrap_or_else(|| primary_kind.label().to_string()),
+            keywords: r.keywords.unwrap_or_default(),
+            grants: r.access_list.unwrap_or_default(),
+            status: r.status.as_deref().and_then(parse).unwrap_or(ItemStatus::Open),
+            closure: r.closure,
+            has_report_files: r.has_report_files.unwrap_or(false),
+            links: r.links.unwrap_or_default(),
             created_by: r.created_by.unwrap_or(r.owner_id),
             created_by_name: r.created_by_name.unwrap_or_default(),
-            date: r.date.unwrap_or(CqlTimestamp(0)),
-            item_type,
-            title: r.title.unwrap_or_else(|| item_type.label()),
-            subtitle: r.subtitle.unwrap_or_default(),
-            keywords: r.keywords.unwrap_or_default(),
-            attachments: r.core_item_data.unwrap_or_default(),
-            links: r.links.unwrap_or_default(),
-            grants: r.access_list.unwrap_or_default(),
-            pointer_to_message: r.pointer_to_message.map(un),
-            pointer_item_id: r.pointer_item_id.map(un),
-            rating: r.rating,
-            status: r.status.as_deref().and_then(parse).unwrap_or(ItemStatus::Open),
+            created_at: r.created_at.unwrap_or(CqlTimestamp(0)),
+            updated_at: r.updated_at.unwrap_or(CqlTimestamp(0)),
         }
     }
 }
 
-/// Row of a list partition — enough for list screens without loading the full item.
+/// Row of a list partition: enough for list screens without loading the item.
 #[derive(Clone, Debug)]
 pub struct ItemSummary {
     pub id: Uuid,
     pub owner_id: Uuid,
-    pub item_type: CoreItemType,
-    pub date: CqlTimestamp,
+    pub primary_kind: PrimaryKind,
+    pub kinds: HashSet<String>,
     pub title: String,
-    pub subtitle: String,
     pub status: ItemStatus,
+    pub updated_at: CqlTimestamp,
 }
 
-const ITEM_COLS_Q: &str = "SELECT item_id, owner_id, created_by, created_by_name, date, core_item_type, title, subtitle, keywords, core_item_data, links, access_list, pointer_to_message, pointer_item_id, rating, status FROM items WHERE item_id = ?";
+const ITEM_Q: &str = "SELECT item_id, owner_id, primary_kind, kinds, title, keywords, access_list, status, closure, has_report_files, links, created_by, created_by_name, created_at, updated_at FROM items WHERE item_id = ?";
 
 impl Db {
     pub async fn item(&self, id: Uuid) -> Result<Option<Item>> {
-        Ok(self.one::<ItemRow>(ITEM_COLS_Q, (tu(id),)).await?.map(Item::from))
+        Ok(self.one::<ItemRow>(ITEM_Q, (tu(id),)).await?.map(Item::from))
     }
 
-    /// Writes the item, its owner row, and one grantee row + grant index rows per grant.
+    /// Writes the header, its owner row, and one grantee row + grant index rows per grant.
     pub async fn insert_item(&self, it: &Item) -> Result<()> {
-        let st = text(&it.status);
-        let ty = text(&it.item_type);
+        let (st, pk) = (text(&it.status), text(&it.primary_kind));
         self.exec(
-            "INSERT INTO items (item_id, owner_id, created_by, created_by_name, date, core_item_type, title, subtitle, keywords, core_item_data, links, access_list, pointer_to_message, pointer_item_id, rating, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                tu(it.id), it.owner_id, it.created_by, &it.created_by_name, it.date, &ty, &it.title, &it.subtitle,
-                &it.keywords, &it.attachments, &it.links, &it.grants, it.pointer_to_message.map(tu),
-                it.pointer_item_id.map(tu), it.rating, &st,
-            ),
+            "INSERT INTO items (item_id, owner_id, primary_kind, kinds, title, keywords, access_list, status, closure, has_report_files, links, created_by, created_by_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (tu(it.id), it.owner_id, &pk, &it.kinds, &it.title, &it.keywords, &it.grants, &st, &it.closure,
+             it.has_report_files, &it.links, it.created_by, &it.created_by_name, it.created_at, it.updated_at),
         ).await?;
-        // `updated_at` is set separately: SerializeRow tuples stop at 16 values.
-        self.exec("UPDATE items SET updated_at = ? WHERE item_id = ?", (now_ts(), tu(it.id))).await?;
         self.exec(
-            "INSERT INTO items_by_owner (owner_id, status, item_id, core_item_type, date, title, subtitle) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (it.owner_id, &st, tu(it.id), &ty, it.date, &it.title, &it.subtitle),
+            "INSERT INTO items_by_owner (owner_id, status, item_id, primary_kind, kinds, title, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (it.owner_id, &st, tu(it.id), &pk, &it.kinds, &it.title, it.updated_at),
         ).await?;
-        for g in &it.grants {
-            self.index_grant(it, g).await?;
-        }
+        for g in &it.grants { self.index_grant(it, g).await?; }
         Ok(())
     }
 
     async fn index_grant(&self, it: &Item, g: &GrantUdt) -> Result<()> {
         let grant = Grant::from_udt(g).ok_or_else(|| anyhow!("incomplete grant"))?;
-        let (st, ty) = (text(&it.status), text(&it.item_type));
+        let (st, pk) = (text(&it.status), text(&it.primary_kind));
         self.batch(
             &[
-                "INSERT INTO items_by_grantee (grantee_key, status, item_id, owner_id, core_item_type, date, title, subtitle, via_hospital_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO items_by_grantee (grantee_key, status, item_id, owner_id, primary_kind, kinds, title, updated_at, via_hospital_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 "INSERT INTO grants_by_id (grant_id, item_id, owner_id, grantee_key) VALUES (?, ?, ?, ?)",
-                "INSERT INTO grants_by_owner (owner_id, grant_id, item_id, item_title, core_item_type, grantee_type, grantee_id, grantee_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO grants_by_owner (owner_id, grant_id, item_id, item_title, primary_kind, grantee_type, grantee_id, grantee_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             ],
             (
-                (grant.key(), &st, tu(it.id), it.owner_id, &ty, it.date, &it.title, &it.subtitle, grant.via_hospital_id),
+                (grant.key(), &st, tu(it.id), it.owner_id, &pk, &it.kinds, &it.title, it.updated_at, grant.via_hospital_id),
                 (grant.grant_id, tu(it.id), it.owner_id, grant.key()),
-                (it.owner_id, grant.grant_id, tu(it.id), &it.title, &ty, text(&grant.grantee_type), grant.grantee_id, &grant.grantee_name),
+                (it.owner_id, grant.grant_id, tu(it.id), &it.title, &pk, text(&grant.grantee_type), grant.grantee_id, &grant.grantee_name),
             ),
         ).await
     }
 
-    /// Adds a grant to the item's access list and indexes it (doc 7.3 "re-share").
     pub async fn add_grant(&self, it: &Item, g: GrantUdt) -> Result<()> {
         self.exec("UPDATE items SET access_list = access_list + ?, updated_at = ? WHERE item_id = ?", (vec![g.clone()], now_ts(), tu(it.id))).await?;
         self.index_grant(it, &g).await
     }
 
-    /// Revoke: remove from access_list and delete every index row in one logged batch.
     pub async fn remove_grant(&self, it: &Item, g: &GrantUdt) -> Result<()> {
         let grant = Grant::from_udt(g).ok_or_else(|| anyhow!("incomplete grant"))?;
         self.batch(
@@ -176,13 +183,13 @@ impl Db {
 
     pub async fn grants_by_owner(&self, owner: Uuid) -> Result<Vec<OwnedGrantDto>> {
         let rows = self.rows::<(Uuid, CqlTimeuuid, Option<String>, Option<String>, Option<String>, Uuid, Option<String>)>(
-            "SELECT grant_id, item_id, item_title, core_item_type, grantee_type, grantee_id, grantee_name FROM grants_by_owner WHERE owner_id = ?",
+            "SELECT grant_id, item_id, item_title, primary_kind, grantee_type, grantee_id, grantee_name FROM grants_by_owner WHERE owner_id = ?",
             (owner,)).await?;
         Ok(rows.into_iter().map(|r| OwnedGrantDto {
             grant_id: r.0,
             item_id: un(r.1),
             item_title: r.2.unwrap_or_default(),
-            core_item_type: r.3.as_deref().and_then(parse).unwrap_or(CoreItemType::Report),
+            primary_kind: r.3.as_deref().and_then(parse).unwrap_or(PrimaryKind::Report),
             grantee_type: r.4.as_deref().and_then(parse).unwrap_or(GranteeType::User),
             grantee_id: r.5,
             grantee_name: r.6.unwrap_or_default(),
@@ -190,76 +197,98 @@ impl Db {
     }
 
     pub async fn owner_partition(&self, owner: Uuid, status: ItemStatus, limit: i32) -> Result<Vec<ItemSummary>> {
-        let rows = self.rows::<(CqlTimeuuid, Option<String>, Option<CqlTimestamp>, Option<String>, Option<String>)>(
-            "SELECT item_id, core_item_type, date, title, subtitle FROM items_by_owner WHERE owner_id = ? AND status = ? LIMIT ?",
+        let rows = self.rows::<(CqlTimeuuid, Option<String>, Option<HashSet<String>>, Option<String>, Option<CqlTimestamp>)>(
+            "SELECT item_id, primary_kind, kinds, title, updated_at FROM items_by_owner WHERE owner_id = ? AND status = ? LIMIT ?",
             (owner, text(&status), limit)).await?;
         Ok(rows.into_iter().map(|r| summary(un(r.0), owner, r.1, r.2, r.3, r.4, status)).collect())
     }
 
     pub async fn grantee_partition(&self, key: &str, status: ItemStatus, limit: i32) -> Result<Vec<ItemSummary>> {
-        let rows = self.rows::<(CqlTimeuuid, Uuid, Option<String>, Option<CqlTimestamp>, Option<String>, Option<String>)>(
-            "SELECT item_id, owner_id, core_item_type, date, title, subtitle FROM items_by_grantee WHERE grantee_key = ? AND status = ? LIMIT ?",
+        let rows = self.rows::<(CqlTimeuuid, Uuid, Option<String>, Option<HashSet<String>>, Option<String>, Option<CqlTimestamp>)>(
+            "SELECT item_id, owner_id, primary_kind, kinds, title, updated_at FROM items_by_grantee WHERE grantee_key = ? AND status = ? LIMIT ?",
             (key, text(&status), limit)).await?;
         Ok(rows.into_iter().map(|r| summary(un(r.0), r.1, r.2, r.3, r.4, r.5, status)).collect())
     }
 
-    /// OPEN ↔ CLOSED moves rows between status partitions (doc 7.3).
-    pub async fn set_status(&self, it: &Item, to: ItemStatus) -> Result<()> {
+    /// Records that the item now contains a part of `kind` (D2) and bumps updated_at, in the
+    /// header and in every list row so list icons stay right.
+    pub async fn add_kind(&self, it: &Item, kind: &str) -> Result<()> {
+        let now = now_ts();
+        let mut kinds = it.kinds.clone();
+        kinds.insert(kind.to_string());
+        let st = text(&it.status);
+        self.exec("UPDATE items SET kinds = ?, updated_at = ? WHERE item_id = ?", (&kinds, now, tu(it.id))).await?;
+        self.exec("UPDATE items_by_owner SET kinds = ?, updated_at = ? WHERE owner_id = ? AND status = ? AND item_id = ?",
+            (&kinds, now, it.owner_id, &st, tu(it.id))).await?;
+        for g in it.grant_list() {
+            self.exec("UPDATE items_by_grantee SET kinds = ?, updated_at = ? WHERE grantee_key = ? AND status = ? AND item_id = ?",
+                (&kinds, now, g.key(), &st, tu(it.id))).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn set_has_report_files(&self, id: Uuid) -> Result<()> {
+        self.exec("UPDATE items SET has_report_files = true WHERE item_id = ?", (tu(id),)).await?;
+        Ok(())
+    }
+
+    pub async fn set_title_keywords(&self, it: &Item, title: Option<&str>, keywords: Option<&HashSet<String>>) -> Result<()> {
+        let now = now_ts();
+        if let Some(k) = keywords {
+            self.exec("UPDATE items SET keywords = ?, updated_at = ? WHERE item_id = ?", (k, now, tu(it.id))).await?;
+        }
+        if let Some(t) = title {
+            let st = text(&it.status);
+            self.exec("UPDATE items SET title = ?, updated_at = ? WHERE item_id = ?", (t, now, tu(it.id))).await?;
+            self.exec("UPDATE items_by_owner SET title = ? WHERE owner_id = ? AND status = ? AND item_id = ?", (t, it.owner_id, &st, tu(it.id))).await?;
+            for g in it.grant_list() {
+                self.exec("UPDATE items_by_grantee SET title = ? WHERE grantee_key = ? AND status = ? AND item_id = ?", (t, g.key(), &st, tu(it.id))).await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// OPEN <-> CLOSED: moves list rows between status partitions and sets or clears the closure.
+    pub async fn set_status(&self, it: &Item, to: ItemStatus, closure: Option<ClosureUdt>) -> Result<()> {
+        let now = now_ts();
+        let (from_s, to_s, pk) = (text(&it.status), text(&to), text(&it.primary_kind));
+        self.exec("UPDATE items SET status = ?, closure = ?, updated_at = ? WHERE item_id = ?", (&to_s, &closure, now, tu(it.id))).await?;
         if it.status == to { return Ok(()); }
-        let (from_s, to_s, ty) = (text(&it.status), text(&to), text(&it.item_type));
         self.batch(
             &[
-                "UPDATE items SET status = ?, updated_at = ? WHERE item_id = ?",
                 "DELETE FROM items_by_owner WHERE owner_id = ? AND status = ? AND item_id = ?",
-                "INSERT INTO items_by_owner (owner_id, status, item_id, core_item_type, date, title, subtitle) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO items_by_owner (owner_id, status, item_id, primary_kind, kinds, title, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
             ],
             (
-                (&to_s, now_ts(), tu(it.id)),
                 (it.owner_id, &from_s, tu(it.id)),
-                (it.owner_id, &to_s, tu(it.id), &ty, it.date, &it.title, &it.subtitle),
+                (it.owner_id, &to_s, tu(it.id), &pk, &it.kinds, &it.title, now),
             ),
         ).await?;
         for g in it.grant_list() {
             self.batch(
                 &[
                     "DELETE FROM items_by_grantee WHERE grantee_key = ? AND status = ? AND item_id = ?",
-                    "INSERT INTO items_by_grantee (grantee_key, status, item_id, owner_id, core_item_type, date, title, subtitle, via_hospital_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO items_by_grantee (grantee_key, status, item_id, owner_id, primary_kind, kinds, title, updated_at, via_hospital_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 ],
                 (
                     (g.key(), &from_s, tu(it.id)),
-                    (g.key(), &to_s, tu(it.id), it.owner_id, &ty, it.date, &it.title, &it.subtitle, g.via_hospital_id),
+                    (g.key(), &to_s, tu(it.id), it.owner_id, &pk, &it.kinds, &it.title, now, g.via_hospital_id),
                 ),
             ).await?;
         }
         Ok(())
     }
-
-    pub async fn set_rating_keywords(&self, id: Uuid, rating: Option<i8>, keywords: Option<&HashSet<String>>) -> Result<()> {
-        if let Some(r) = rating {
-            self.exec("UPDATE items SET rating = ?, updated_at = ? WHERE item_id = ?", (r, now_ts(), tu(id))).await?;
-        }
-        if let Some(k) = keywords {
-            self.exec("UPDATE items SET keywords = ?, updated_at = ? WHERE item_id = ?", (k, now_ts(), tu(id))).await?;
-        }
-        Ok(())
-    }
-
-    /// Used by the media worker after thumbnails and page counts are computed (doc 7.4).
-    pub async fn set_attachments(&self, id: Uuid, attachments: &[AttachmentUdt]) -> Result<()> {
-        self.exec("UPDATE items SET core_item_data = ?, updated_at = ? WHERE item_id = ?", (attachments.to_vec(), now_ts(), tu(id))).await?;
-        Ok(())
-    }
 }
 
-fn summary(id: Uuid, owner: Uuid, ty: Option<String>, date: Option<CqlTimestamp>, title: Option<String>, sub: Option<String>, status: ItemStatus) -> ItemSummary {
-    let item_type = ty.as_deref().and_then(parse).unwrap_or(CoreItemType::Report);
+fn summary(id: Uuid, owner: Uuid, pk: Option<String>, kinds: Option<HashSet<String>>, title: Option<String>, updated: Option<CqlTimestamp>, status: ItemStatus) -> ItemSummary {
+    let primary_kind = pk.as_deref().and_then(parse).unwrap_or(PrimaryKind::Report);
     ItemSummary {
         id,
         owner_id: owner,
-        item_type,
-        date: date.unwrap_or(CqlTimestamp(0)),
-        title: title.unwrap_or_else(|| item_type.label()),
-        subtitle: sub.unwrap_or_default(),
+        primary_kind,
+        kinds: kinds.unwrap_or_default(),
+        title: title.unwrap_or_else(|| primary_kind.label().to_string()),
         status,
+        updated_at: updated.unwrap_or(CqlTimestamp(0)),
     }
 }

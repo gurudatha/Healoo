@@ -87,7 +87,7 @@ fun ActiveSharingScreen(onBack: () -> Unit, onOpenItem: (String) -> Unit, vm: Ac
                                     Modifier.fillMaxWidth().clickable { onOpenItem(grant.itemId) }.heightIn(min = 56.dp).padding(start = 12.dp),
                                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
                                 ) {
-                                    TypeTile(grant.type, 32.dp)
+                                    TypeTile(grant.primaryKind, 32.dp)
                                     Text(grant.itemTitle, style = HType.body, color = Sage.Ink, modifier = Modifier.weight(1f),
                                         maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     TextButton({ confirm = g.granteeName to listOf(grant) }) {

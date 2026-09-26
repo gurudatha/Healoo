@@ -4,6 +4,7 @@
 
 pub mod items;
 pub mod misc;
+pub mod parts;
 pub mod social;
 pub mod users;
 

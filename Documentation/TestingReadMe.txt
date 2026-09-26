@@ -150,7 +150,8 @@ Notes:
 Both apps start in demo mode, so no backend is needed. Go through these checks
 in order:
 
-  1. Demo sign-in: choose Lakshmi K. (patient). Home shows counters and open items.
+  1. Demo sign-in: choose Lakshmi K. (patient). Home shows counters and open items
+     (report, discussion, appointment and alert items).
   2. Viewer: open "CBC - Complete blood count", then tap an attachment. Swipe
      through all 4 files, scroll the PDF pages, pinch or double-tap to zoom,
      and tap the thumbnails.
@@ -161,19 +162,39 @@ in order:
   5. Notification settings: turn a toggle off, go to another tab and come back.
      It should still be off.
   6. Edit profile: change your name and save. Your QR code is shown on this screen.
-  7. Live messages: open Messages -> Dr. Anitha Rao and send a message. A reply
-     should appear about 1.5 seconds later without refreshing.
+  7. Live messages: open Messages. Each row is one item's discussion with a
+     person. Open "Latest BP readings" and send a message. A reply should appear
+     about 1.5 seconds later without refreshing.
   8. Search: search for HL-3K8M1, then tap "Add". The result should now show as
      connected.
-  9. Upload: attach several images and PDFs, reorder them, upload, and check the
-     new item opens.
+  9. New report: in the Upload tab keep "Report", attach several images and PDFs,
+     reorder them, upload, and check the new item opens.
  10. Lab flow: Settings -> Log out, then sign in as City Diagnostics. Open
      Lakshmi's page and use "Upload for Lakshmi". The Share section should be
      hidden.
  11. Patient sees the lab upload: log out, sign in as Lakshmi, and check the
      lab's upload is on Home.
  12. Doctor view: sign in as Dr. Anitha Rao. Items shared with her or with her
-     hospital appear. On an item, the button reads "Message patient".
+     hospital appear. On an item, "Discussion" opens its messages.
+ 13. Item as a container: open "CBC - Complete blood count". Check the sections:
+     attachments, discussion (1 new), a bi-weekly appointment for 3 months with
+     its visit count, and a daily medication alert.
+ 14. Book an appointment: on the CBC item tap "Book". Choose Monthly for 1 month:
+     the sheet explains it gives only one visit and won't book. Choose Weekly for
+     2 months: it shows 9 visits. Book it.
+ 15. One visit: on a visit, use the menu to "Move this visit" to another day,
+     then cancel a different visit. The rest of the series stays the same.
+ 16. Alerts: "Add alert" on any item; delete it again with the bin icon.
+ 17. Add files: on the CBC item tap "Add files", pick a PDF and add it.
+ 18. New appointment item: Upload tab -> "Appointment", pick Dr. Anitha Rao,
+     date, time, no repeat. The new item opens with the appointment.
+ 19. Close with rating: on "Latest BP readings" tap the Open status, give 4
+     stars and feedback, close. The item shows the closure; messaging is off.
+     Reopen it with the Reopen button.
+ 20. Rating is patient-only: sign in as Dr. Anitha Rao, close an item: the
+     sheet has feedback but no stars.
+ 21. Start a discussion: open Dr. Srinivas Rao's page (Search -> HL-3K8M1),
+     Messages tab, write a message. A new discussion item opens.
 
 Items that need extra setup:
   - QR scanning: on Android it needs the Play Store emulator image; the camera
@@ -214,7 +235,11 @@ This uses the Rust backend (healoo-backend.zip) on your computer, with no Auth0.
  5. Repeat checks 1-12 above. Differences from demo mode: data comes from the
     server, messages arrive live between two devices or emulators signed in
     as Lakshmi and Dr. Anitha Rao, and thumbnails/page counts appear a moment
-    after an upload.
+    after an upload. Alerts fire as notifications (the scheduler checks every
+    20 seconds; set an alert a couple of minutes ahead to test). After updating
+    from v0.1, recreate and re-seed the database first:
+      docker compose down -v
+      docker compose up -d --build     (the care-seed job reloads the test data)
  6. Extra accounts for access-rule tests: Dr. Srinivas Rao (HL-3K8M1,
     independent doctor), Hospital A Admin (HL-8A2D4), Meena S. (HL-8S5T7,
     assistant to Dr. Rao).

@@ -1,7 +1,8 @@
 HEALOO REST API - DEVELOPER DOCUMENTATION: AUTHENTICATION AND USER API
 =====================================================================
 
-Applies to: care-api v0.1 (healoo-backend.zip), design document sections 4 and 5.
+Applies to: care-api v0.2 (DataItem v2), design document sections 4 and 5, and
+Documentation/DataItem_Design.md.
 Note: the server code has not been compiled yet. This document describes the
 behaviour written in the source; confirm it against a running server.
 
@@ -10,9 +11,11 @@ Contents
   2. Authentication
   3. Add user
   4. Query users
-  5. Upload document
-  6. List data items
-  7. Quick reference
+  5. Upload document (create an item)
+  6. Read and list data items
+  7. Working inside an item (messages, files, appointments, alerts, closing)
+  8. Messages tab, calendar and live updates
+  9. Quick reference
   Appendix: trial accounts
 
 
@@ -37,9 +40,11 @@ TLS on the LAN
 Formats
   - Requests and responses are JSON (Content-Type: application/json),
     except file uploads, which send the raw file.
-  - IDs are UUID strings. Item, thread and message IDs are time-based UUIDs.
+  - IDs are UUID strings. Item and message IDs are time-based UUIDs.
   - Every user also has a short Healoo ID such as HL-2M9P4 ("public_id").
-  - Item dates are "YYYY-MM-DD". Message times are ISO-8601.
+  - Dates are "YYYY-MM-DD", clock times "HH:MM" (24-hour). Timestamps
+    (sent_at, fires_at, created_at) are ISO-8601 with the offset, e.g.
+    2026-09-21T20:00:00+05:30. Time zone defaults to Asia/Kolkata.
   - Optional fields that have no value are left out of responses, not
     sent as null.
   - Lists come wrapped as:  { "data": [ ... ], "page_state": null }
@@ -59,8 +64,8 @@ Errors
   400   BAD_REQUEST      Invalid input; message says what to fix
   401   UNAUTHORIZED     Missing, invalid or expired token
   403   ACCESS_DENIED    Signed in, but not allowed (message gives the reason)
-  404   NOT_FOUND        No such user, item, thread or grant
-  409   CONFLICT         Conflicting change
+  404   NOT_FOUND        No such user, item, appointment, alert or grant
+  409   CONFLICT         Conflicting change, e.g. adding to a closed item
   429   RATE_LIMITED     Too many requests
   500   INTERNAL         Server error; quote request_id when reporting it
 
@@ -331,103 +336,109 @@ or PDFs attached. Uploading takes three steps:
   needed: the URL itself carries a signature.
 
 5.3 Step 3: create the item
+  A data item is a container for one case. It starts from exactly one
+  primary part (report, appointment, alert or message) and can then grow:
+  people discuss it, add files, book visits and set reminders. The item has
+  one owner (always a patient), one access list covering everything inside
+  it, and one status.
+
       POST /v1/items
       {
-        "core_item_type": "REPORT",
+        "owner_id": "5eed0000-0000-4000-8000-000000000001",
         "title": "CBC - Complete blood count",
-        "date": "2026-09-20",
         "keywords": ["CBC", "Haemoglobin"],
-        "core_item_data": [
-          { "kind": "IMAGE", "uri": "obj:uploads/.../01J9...-cbc_page1.jpg",
-            "mime": "image/jpeg", "size": 482113, "position": 0, "name": "cbc_page1.jpg" },
-          { "kind": "PDF", "uri": "obj:uploads/.../01J9...-cbc_report.pdf",
-            "mime": "application/pdf", "size": 1203344, "position": 1, "name": "cbc_report.pdf" }
-        ],
-        "links": ["https://example.com/lab-result/123"],
-        "share_with": ["5eed0000-0000-4000-8000-000000000002"]
+        "share_with": ["5eed0000-0000-4000-8000-000000000002"],
+        "report": {
+          "title": "CBC - Complete blood count",
+          "attachments": [
+            { "kind": "IMAGE", "uri": "obj:uploads/.../01J9...-cbc_page1.jpg",
+              "mime": "image/jpeg", "size": 482113, "name": "cbc_page1.jpg" },
+            { "kind": "PDF", "uri": "obj:uploads/.../01J9...-cbc_report.pdf",
+              "mime": "application/pdf", "size": 1203344, "name": "cbc_report.pdf" }
+          ],
+          "links": ["https://example.com/lab-result/123"]
+        }
       }
 
-  Fields
-    core_item_type   required: REPORT, ALERT, BOOKING, FEEDBACK, PAYMENT, MESSAGE
-    owner_id         optional; defaults to you. Set it to a patient's user_id
-                     to upload for that patient (see rules below).
-    title            optional; defaults to the type name; max 120 characters
-    date             optional "YYYY-MM-DD"; defaults to now
-    keywords         optional; up to 20
-    core_item_data   the files from step 2, in the order they should be shown.
-                     kind is IMAGE or PDF. The server numbers "position" from
-                     this order and ignores the values you send.
-    links            optional web links; only https:// links are kept (max 20)
-    status           optional OPEN (default) or CLOSED
-    share_with       optional user IDs to share with at once. Sharing with a
-                     hospital account creates a hospital-wide share.
-                     Only used when you are the owner.
-    pointer_to_message, pointer_item_id   optional links to a thread or item
+  Header fields
+    owner_id     optional; defaults to you. Must be a PATIENT. Set it to a
+                 patient's user_id to create an item for that patient.
+    title        optional, max 120 characters. Default comes from the primary
+                 part: the report title, "Appointment with Dr. ...", the
+                 first line of the message, or the alert text.
+    keywords     optional; up to 20
+    share_with   optional user IDs to share with at once. A hospital account
+                 creates a hospital-wide share. Only used when you are the owner.
+
+  Primary part: send exactly one of these (otherwise 400):
+    report       { title, attachments[], links[] }. At least one file or link.
+                 Files are marked as report files (is_report = true).
+    appointment  see 7.3 (patient_id must equal the owner)
+    alert        see 7.4
+    message      { body, client_msg_id, attachments[]? } starts a discussion
 
   Rules
     - Attachments must be files you uploaded yourself through step 1
       (otherwise 403). kind must match mime, and sizes must be within the
-      limits (otherwise 400).
-    - A REPORT needs at least one file or link.
-    - Uploading for someone else: only DOCTOR, ASSISTANT and LAB users can,
+      limits (otherwise 400). The server numbers "position" in the order sent.
+    - Creating for someone else: only DOCTOR, ASSISTANT and LAB users can,
       the owner must be a PATIENT in your contacts, and you get access to
-      that item automatically. The patient decides any further sharing.
-    - A LAB must set owner_id when creating a REPORT.
+      the item automatically. The patient decides any further sharing.
+    - A LAB must set owner_id when creating a report.
+    - Booking an appointment gives the doctor access automatically.
+    - New items are always OPEN.
 
-  Response 200: the new data item (fields in section 6.5), with short-lived
-  view URLs in core_item_data. Image thumbnails, PDF page counts and SHA-256
-  hashes are added a moment later by the media worker; connected apps then
-  receive an "item.updated" WebSocket event.
+  Response 200: the new data item (section 6.5), with short-lived view URLs
+  for its files. Image thumbnails, PDF page counts and SHA-256 hashes are
+  added a moment later by the media worker; connected apps then receive an
+  "item.updated" WebSocket event.
 
   Common errors
+    400  "send exactly one of appointment, message, alert or report"
+    400  "items belong to a patient: owner_id must be a patient"
     400  "a report needs at least one file or link"
     400  "<name> is not an allowed IMAGE (type or size)"
     403  "attachments must be files you uploaded"
-    403  "you can upload only for patients in your contacts"
+    403  "you can create items only for patients in your contacts"
+
+  Other ways to start an item (examples)
+      Appointment:
+      { "appointment": { "patient_id": "<patient>", "doctor_id": "<doctor>",
+          "date": "2026-10-05", "time": "11:30",
+          "recurrence": { "frequency": "BIWEEKLY", "period": "THREE_MONTHS" } } }
+
+      Alert (owned by you):
+      { "title": "Evening medicine",
+        "alert": { "type": "MEDICATION", "text": "Iron tablet after dinner",
+                   "date": "2026-09-21", "time": "20:00",
+                   "recurrence": { "frequency": "DAILY", "period": "ONE_MONTH" } } }
+
+      Message (new discussion with a doctor; the patient owns it):
+      { "share_with": ["<doctor>"],
+        "message": { "body": "Here are my BP readings.", "client_msg_id": "c-001" } }
 
 
-6. LIST DATA ITEMS
-------------------
+6. READ AND LIST DATA ITEMS
+---------------------------
 
 6.1 List items you can see
-      GET /v1/items?status=OPEN&type=REPORT&limit=20
+      GET /v1/items?status=OPEN&kind=REPORT&limit=20
 
   status   OPEN (default) or CLOSED
-  type     optional: REPORT, ALERT, BOOKING, FEEDBACK, PAYMENT, MESSAGE
+  kind     optional: APPOINTMENT, MESSAGE, ALERT, REPORT or ATTACHMENT.
+           Matches any part the item contains, not only the primary kind.
   limit    1 to 100, default 20
 
-  Includes, newest first:
+  Includes, most recently updated first:
     - items you own;
     - items shared directly with you;
     - for doctors: items shared with a hospital where you currently work;
     - for assistants: items of patients your doctor delegated to you.
 
-  The list returns short summaries: keywords, core_item_data, links,
-  access_list and created_by_name are empty. Use GET /v1/items/{id} for
-  the full item. The type filter is applied after the limit, so a filtered
-  list can be shorter than "limit".
-
-  Response 200:
-      {
-        "data": [
-          {
-            "item_id": "8a4b1c20-7f2e-11f1-9c3d-2b1f5e7a9d01",
-            "date": "2026-09-20",
-            "core_item_type": "REPORT",
-            "title": "CBC - Complete blood count",
-            "subtitle": "City Diagnostics · Lab report",
-            "keywords": [],
-            "core_item_data": [],
-            "links": [],
-            "owner_id": "5eed0000-0000-4000-8000-000000000001",
-            "created_by_name": "",
-            "access_list": [],
-            "status": "OPEN",
-            "allowed_actions": ["read", "share", "status"]
-          }
-        ],
-        "page_state": null
-      }
+  List entries are headers with counts; the child lists (messages,
+  attachments, appointments, alerts, links) are empty and access_list is
+  empty. Use GET /v1/items/{id} for the full item. The kind filter is
+  applied after the limit, so a filtered list can be shorter than "limit".
 
   Example:
       curl --cacert healoo-local-ca.crt "$BASE/v1/items?status=OPEN&limit=50" \
@@ -436,20 +447,22 @@ or PDFs attached. Uploading takes three steps:
 6.2 One item
       GET /v1/items/{item_id}
 
-  The access rules decide what you get:
-    - Full access: the whole item, with view URLs valid for 10 minutes.
-    - Metadata only (for example an assistant without delegation, or a
-      REPORT shared with someone who isn't a doctor): type, date, title,
-      status and keywords, but no files or links; allowed_actions is ["meta"].
+  Returns the header plus the child lists: the latest 100 messages, all
+  attachments (view URLs valid for 10 minutes), appointments with their
+  next 12 visits, and the alerts you may see. What you get depends on your
+  access to the whole item:
+    - Full access: everything. You see your own alerts; the owner sees all.
+    - Metadata only (for example an assistant without delegation, or an
+      item with report files shared with someone who isn't a doctor):
+      header, keywords, status and appointment dates/times/doctor only; no
+      messages, files, links, notes or alerts. allowed_actions is ["meta"].
     - No access: 403 with the reason, e.g. "no grant for this user" or
       "hospital grant, but no active affiliation with that hospital".
   Every decision is recorded in the audit log.
 
-6.3 An item's attachments
-      GET /v1/items/{item_id}/attachments
-  Response 200: { "data": [Attachment, ...], "page_state": null }, in
-  display order, with fresh view and thumbnail URLs. Full access only
-  (otherwise 403).
+6.3 Change the title or keywords (owner only)
+      PATCH /v1/items/{item_id}
+      { "title": "CBC and follow-up", "keywords": ["CBC", "Iron"] }
 
 6.4 Other item lists
       GET /v1/users/{user_id}/shared-items
@@ -457,61 +470,275 @@ or PDFs attached. Uploading takes three steps:
         unless the user is in your contacts.
       GET /v1/dashboard
         { "open_reports": 1, "unread_messages": 2, "upcoming_appointments": 1 }
+        open_reports = open items with report files; upcoming_appointments =
+        scheduled visits in the next 7 days.
 
 6.5 Data item fields
-  item_id             time-based UUID
-  date                "YYYY-MM-DD"
-  core_item_type      REPORT, ALERT, BOOKING, FEEDBACK, PAYMENT, MESSAGE
-  title, subtitle     text shown in lists
-  keywords            array of text
-  core_item_data      array of Attachment, in display order
-  links               array of https links
-  owner_id            the patient who owns the item
-  created_by_name     who created it (lab, doctor or patient)
-  access_list         who it is shared with; only shown to the owner.
-                      Each: grant_id, grantee_type (USER or HOSPITAL),
-                      grantee_id, grantee_name, via_hospital_id (optional)
-  pointer_to_message  optional thread ID
-  pointer_item_id     optional linked item ID
-  rating              optional 1-5
-  status              OPEN or CLOSED
-  allowed_actions     what you may do: read, share, revoke, status, rate,
-                      comment, or meta (metadata only)
+  item_id           time-based UUID
+  owner_id          the patient who owns the item
+  primary_kind      APPOINTMENT, MESSAGE, ALERT or REPORT; fixed at creation
+  kinds             parts the item contains now: APPOINTMENT, MESSAGE,
+                    ALERT, REPORT, ATTACHMENT
+  title, keywords   text
+  status            OPEN or CLOSED
+  closure           only when CLOSED: closed_at, closed_by, feedback?,
+                    rating? (1-5, only ever set by the patient)
+  access_list       who it is shared with; only shown to the owner. Each:
+                    grant_id, grantee_type (USER or HOSPITAL), grantee_id,
+                    grantee_name, via_hospital_id (optional)
+  counts            messages, attachments, appointments, alerts,
+                    unread_messages (for you)
+  messages          Message list (7.1), oldest first
+  attachments       Attachment list (7.2), in display order
+  appointments      Appointment list (7.3)
+  alerts            Alert list (7.4)
+  links             https links added with a report
+  created_by_name, created_at, updated_at
+  allowed_actions   what you may do: read, message, attach, book, alert,
+                    close, share, revoke, rate, reopen, or meta
 
+  Example (full access, shortened):
+      {
+        "item_id": "8a4b1c20-7f2e-11f1-9c3d-2b1f5e7a9d01",
+        "owner_id": "5eed0000-0000-4000-8000-000000000001",
+        "primary_kind": "REPORT",
+        "kinds": ["REPORT", "APPOINTMENT", "MESSAGE", "ALERT", "ATTACHMENT"],
+        "title": "CBC - Complete blood count",
+        "keywords": ["CBC", "Haemoglobin"],
+        "status": "OPEN",
+        "access_list": [ { "grant_id": "...", "grantee_type": "USER",
+                           "grantee_id": "5eed...0002", "grantee_name": "Dr. Anitha Rao" } ],
+        "counts": { "messages": 2, "attachments": 4, "appointments": 1, "alerts": 4, "unread_messages": 1 },
+        "messages": [ ... ], "attachments": [ ... ], "appointments": [ ... ], "alerts": [ ... ],
+        "links": [],
+        "created_by_name": "City Diagnostics",
+        "created_at": "2026-09-20T09:02:11+05:30",
+        "updated_at": "2026-09-21T10:14:02+05:30",
+        "allowed_actions": ["read", "message", "attach", "book", "alert", "close", "share", "revoke", "rate"]
+      }
+
+
+7. WORKING INSIDE AN ITEM
+-------------------------
+
+Adding anything needs full access to the item, and the item must be OPEN
+(409 "this item is closed; reopen it to add to it"). Every change sends
+"item.updated" to everyone with access.
+
+7.1 Messages (every message belongs to an item)
+      GET  /v1/items/{item_id}/messages?limit=100
+      POST /v1/items/{item_id}/messages
+      { "body": "Haemoglobin is slightly low.", "client_msg_id": "c-7f2a",
+        "attachments": [ ...optional files from /v1/uploads/presign... ] }
+
+  - Reading marks the discussion as read for you.
+  - body 1-4000 characters. client_msg_id (max 64 characters) makes
+    sending safe to retry: resending the same one returns the first message.
+  - Files sent with a message also appear in the item's attachments.
+  - Everyone with full access to the item can read and write. A discussion
+    between a patient and two doctors works when both are on the access list.
+  Message fields: message_id, item_id, sender_id, body, sent_at, attachment_ids
+
+7.2 Attachments
+      GET  /v1/items/{item_id}/attachments
+      POST /v1/items/{item_id}/attachments
+      { "attachments": [ { "kind": "PDF", "uri": "obj:uploads/...", "mime": "application/pdf",
+                           "size": 90211, "name": "discharge.pdf" } ],
+        "is_report": false }
+
+  - Upload the files first (5.1, 5.2). Up to 20 per request.
+  - is_report = true marks them as report files. Report files make the
+    item readable in full only by doctors (other grantees get metadata).
   Attachment fields
-  kind          IMAGE or PDF
-  uri           short-lived view URL (10 minutes); fetch a new one by
-                reading the item again
-  mime, size    type and size in bytes
-  position      display order, starting at 0
-  name          original file name
-  page_count    PDFs, once processed
-  thumb_uri     images, once processed
-  sha256        once processed
+    attachment_id, kind (IMAGE or PDF), uri (view URL, 10 minutes; read the
+    item again for a new one), mime, size, position, name, page_count and
+    thumb_uri and sha256 (once processed), added_by, added_at,
+    message_id (if posted in a message), is_report
+
+7.3 Appointments
+      POST /v1/items/{item_id}/appointments
+      {
+        "patient_id": "5eed0000-0000-4000-8000-000000000001",
+        "doctor_id":  "5eed0000-0000-4000-8000-000000000002",
+        "date": "2026-10-05",
+        "time": "11:30",
+        "timezone": "Asia/Kolkata",
+        "duration_min": 15,
+        "hospital_id": "5eed0000-0000-4000-8000-000000000003",
+        "notes": "Haemoglobin review",
+        "recurrence": { "frequency": "BIWEEKLY", "period": "THREE_MONTHS" }
+      }
+
+  Fields
+    patient_id    required; must be the item's owner
+    doctor_id     required; must be a DOCTOR. Gets access to the item.
+    date, time    required; first visit, not in the past
+    timezone      optional IANA name; default Asia/Kolkata
+    duration_min  optional 5-240; default 15
+    hospital_id   optional; a hospital the doctor works at
+    notes         optional, max 500 characters
+    recurrence    optional; leave out for a single visit
+      frequency   DAILY, WEEKLY, BIWEEKLY, MONTHLY or QUARTERLY
+      period      ONE_MONTH, TWO_MONTHS, THREE_MONTHS or SIX_MONTHS;
+                  leave out to repeat until cancelled
+
+  Who can book: the patient, the doctor, or the doctor's assistant.
+
+  Repeat rules
+    - Visits are the first date, then every step (1 day, 7 days, 14 days,
+      1 month, 3 months) while the visit date is before date + period.
+    - MONTHLY and QUARTERLY keep the day of the month; if the month is
+      shorter, the visit falls on its last day.
+    - Combinations giving only one visit are refused (400): MONTHLY for
+      1 month, QUARTERLY for 1, 2 or 3 months. Book a single visit instead.
+    - DAILY needs a period.
+    Visits for a start on 1 Oct:
+                 1 month  2 months  3 months  6 months  no period
+      Daily        31       61        92       182      refused
+      Weekly        5        9        14        26      until cancelled
+      Bi-weekly     3        5         7        13      until cancelled
+      Monthly    refused     2         3         6      until cancelled
+      Quarterly  refused  refused   refused      2      until cancelled
+
+  Automatic reminders: APPOINTMENT_REMINDER alerts for the patient (1 day
+  and 1 hour before each visit) and for the doctor (1 hour before).
+
+  Change the series (future visits only)
+      PATCH /v1/items/{item_id}/appointments/{appointment_id}
+      { "date": "2026-10-06", "time": "10:00", "duration_min": 20, "notes": "...",
+        "recurrence": { "frequency": "WEEKLY", "period": "TWO_MONTHS" } }
+    Send "recurrence": null to turn a series into a single visit. The rule
+    you send replaces the old one. { "status": "CANCELLED" } cancels the
+    whole series and its reminders.
+
+  One visit
+      POST /v1/items/{item_id}/appointments/{appointment_id}/visits/{date}
+      { "action": "MOVED", "new_date": "2026-10-20", "new_time": "10:00" }
+    {date} is the visit's original_date. action is one of:
+      CANCELLED   patient, doctor or assistant
+      MOVED       patient, doctor or assistant; needs new_date and/or new_time
+      COMPLETED   doctor or assistant (attended)
+      NO_SHOW     doctor or assistant (missed)
+    The rest of the series doesn't change.
+
+  Appointment fields
+    appointment_id, item_id, patient_id, doctor_id, doctor_name,
+    hospital_id?, date, time, timezone, duration_min, notes?, recurrence?,
+    exceptions [ { date, action (CANCELLED or MOVED), new_date?, new_time? } ],
+    status (SCHEDULED, COMPLETED or CANCELLED), visit_count (absent when it
+    repeats until cancelled), visits: the next 12 visits, each
+    { date, time, original_date, status: SCHEDULED | COMPLETED | CANCELLED | NO_SHOW }
+
+  Common errors
+    400  "daily repeats need a period (1, 2, 3 or 6 months)"
+    400  "this repeat and period give only one visit; book a single appointment instead"
+    400  "patient_id must be the item's owner"
+    400  "the first visit can't be in the past"
+    403  "only the patient, the doctor or the doctor's assistant can book"
+
+7.4 Alerts
+      GET    /v1/items/{item_id}/alerts
+      POST   /v1/items/{item_id}/alerts
+      { "type": "MEDICATION", "text": "Iron tablet after dinner",
+        "for_user": "5eed0000-0000-4000-8000-000000000001",
+        "date": "2026-09-21", "time": "20:30", "timezone": "Asia/Kolkata",
+        "recurrence": { "frequency": "DAILY", "period": "ONE_MONTH" } }
+      DELETE /v1/items/{item_id}/alerts/{alert_id}
+
+  - type: MEDICATION, APPOINTMENT_REMINDER, FOLLOW_UP, RESULT_READY or CUSTOM
+  - text 1-200 characters; for_user defaults to you and must have access.
+  - recurrence follows the same rules as appointments.
+  - The server sends each firing as a push notification and an "alert"
+    WebSocket frame. Removing needs the owner or the alert's recipient.
+  Alert fields: alert_id, item_id, type, text, for_user, fires_at (first
+  firing), timezone, recurrence?, appointment_id? (for reminders), active
+
+7.5 Close and reopen
+      POST /v1/items/{item_id}/close
+      { "feedback": "Explained everything clearly.", "rating": 5 }
+
+      POST /v1/items/{item_id}/reopen
+
+  - Anyone with full access may close, with optional feedback (max 1000
+    characters). rating (1-5) is accepted only when the patient closes
+    their own item; from anyone else it is refused (400).
+  - Closing cancels future visits and stops alerts.
+  - Reopen: the owner or a treating doctor. The previous closure is kept in
+    history; future visits aren't restored, so book again if needed.
 
 
-7. QUICK REFERENCE
+8. MESSAGES TAB, CALENDAR AND LIVE UPDATES
+------------------------------------------
+
+8.1 Conversations (replaces /v1/threads)
+      GET /v1/conversations
+      GET /v1/conversations?with={user_id}
+
+  One row per item with messages, per other person:
+      { "item_id": "...", "item_title": "Latest BP readings", "primary_kind": "MESSAGE",
+        "other_user": { ...profile... }, "last_message": "Sure, I will upload them tonight.",
+        "last_message_at": "2026-09-22T10:50:00+05:30", "unread": 1 }
+  Open one with GET /v1/items/{item_id}/messages. To start a new
+  conversation, create a MESSAGE item (5.3). The patient in the pair owns
+  it: a doctor writing to a patient sets owner_id to the patient.
+
+8.2 Calendar
+      GET /v1/appointments?from=2026-10-01&to=2026-10-31
+  Upcoming visits across all your items: patients see their own visits,
+  doctors see visits booked with them. Range up to 62 days (default: today
+  to 30 days ahead).
+      { "starts_at": "2026-10-05T11:30:00+05:30", "appointment_id": "...", "item_id": "...",
+        "item_title": "CBC - Complete blood count", "with_user_id": "...",
+        "with_user_name": "Dr. Anitha Rao", "status": "SCHEDULED" }
+
+8.3 WebSocket (wss://<host>/v1/ws)
+  Send {"type":"auth","token":"<access token>"} within 10 seconds. The server
+  closes with code 4001 when the token expires; reconnect with a fresh one.
+  Frames from the server:
+      {"type":"message.new","item_id":"...","message":{...}}
+      {"type":"item.updated","item_id":"...","change":"message"}
+          change: created, message, attachment, appointment, alert,
+                  closed, reopened, shared, updated
+      {"type":"alert","item_id":"...", ...}
+      {"type":"typing","item_id":"...","user_id":"..."}
+      {"type":"ping"}   answer with {"type":"pong"}
+  Frames you can send:
+      {"type":"message.send","item_id":"...","body":"...","client_msg_id":"..."}
+          answered with {"type":"message.sent","client_msg_id":"...","message":{...}}
+      {"type":"typing","item_id":"..."}
+
+
+9. QUICK REFERENCE
 ------------------
 
-  Method  Path                              Token  Purpose
-  GET     /v1/config                        no     Server mode, URLs, sign-in mode
-  GET     /dev/users                        no     Trial accounts (LAN + dev only)
-  POST    /dev/token                        no     Trial token (LAN + dev only)
-  GET     /v1/me                            yes    Your profile; creates the account on first call
-  PATCH   /v1/me                            yes    Update your name and location
-  POST    /v1/connections                   yes    Add a user to contacts
-  DELETE  /v1/connections/{user_id}         yes    Remove a contact
-  GET     /v1/connections                   yes    Your contacts
-  GET     /v1/search?q=&type=               yes    Find users by Healoo ID or name
-  GET     /v1/users/{user_id}               yes    One user's profile
-  POST    /v1/uploads/presign               yes    Upload URLs for 1-20 files
-  PUT     <upload_url>                      no*    Upload one file (*signed URL)
-  POST    /v1/items                         yes    Create a data item
-  GET     /v1/items?status=&type=&limit=    yes    List visible items
-  GET     /v1/items/{item_id}               yes    Read one item
-  GET     /v1/items/{item_id}/attachments   yes    Attachments with view URLs
-  GET     /v1/users/{user_id}/shared-items  yes    Items shared with a contact
-  GET     /v1/dashboard                     yes    Counts for the home screen
+  Method  Path                                              Purpose
+  GET     /v1/config                                        Server mode, URLs, sign-in mode (no token)
+  GET     /dev/users, POST /dev/token                       Trial accounts and tokens (LAN + dev only)
+  GET     /v1/me  /  PATCH /v1/me                           Your profile
+  GET/POST /v1/connections, DELETE /v1/connections/{id}     Contacts
+  GET     /v1/search?q=&type=                               Find users by Healoo ID or name
+  GET     /v1/users/{user_id}                               One user's profile
+  GET     /v1/users/{user_id}/shared-items                  Items shared with a contact
+  GET     /v1/dashboard                                     Counts for the home screen
+  POST    /v1/uploads/presign  +  PUT <upload_url>          Upload files
+  POST    /v1/items                                         Create an item from one primary part
+  GET     /v1/items?status=&kind=&limit=                    List visible items
+  GET     /v1/items/{id}  /  PATCH /v1/items/{id}           Read one item / edit title, keywords
+  POST    /v1/items/{id}/close  |  /reopen                  Close (feedback, rating) / reopen
+  GET/POST /v1/items/{id}/messages                          Discussion
+  GET/POST /v1/items/{id}/attachments                       Files
+  GET/POST /v1/items/{id}/appointments                      Appointments
+  PATCH   /v1/items/{id}/appointments/{aid}                 Change or cancel a series
+  POST    /v1/items/{id}/appointments/{aid}/visits/{date}   Cancel, move or mark one visit
+  GET/POST /v1/items/{id}/alerts, DELETE .../alerts/{aid}   Alerts
+  GET     /v1/appointments?from=&to=                        Calendar
+  GET     /v1/conversations?with=                           Messages tab
+  GET/POST /v1/grants, DELETE /v1/grants/{id}               Sharing
+  POST/DELETE /v1/devices                                   Push registration
+  GET     /v1/ws                                            WebSocket
+
+  Removed in v0.2: /v1/threads, /v1/threads/{id}/messages, PATCH status on
+  items (use close/reopen), core_item_type, core_item_data, pointer fields.
 
 
 APPENDIX: TRIAL ACCOUNTS (care-seed)

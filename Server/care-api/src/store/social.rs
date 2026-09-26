@@ -1,23 +1,20 @@
-//! connections_by_user, threads_by_user, threads_by_id, messages_by_thread, message_dedupe
+//! connections_by_user and conversations_by_user (the Messages tab: items with a discussion,
+//! per other person). Messages themselves are in store/parts.rs.
 
 use super::Db;
 use crate::model::*;
 use anyhow::Result;
-use chrono::{Datelike, Duration as ChronoDuration, Utc};
 use scylla::frame::value::{CqlTimestamp, CqlTimeuuid};
 use uuid::Uuid;
 
 #[derive(Clone, Debug)]
-pub struct ThreadRow {
+pub struct ConversationRow {
     pub other_user_id: Uuid,
-    pub thread_id: Uuid,
+    pub item_id: Uuid,
     pub last_message: String,
     pub last_message_at: Option<CqlTimestamp>,
     pub unread: i32,
 }
-
-/// Month bucket bounds partition size (doc 7.2).
-fn bucket(t: chrono::DateTime<Utc>) -> String { format!("{:04}-{:02}", t.year(), t.month()) }
 
 impl Db {
     // ---- contacts (rule 8: connecting grants no data access by itself) ----
@@ -53,106 +50,37 @@ impl Db {
             (user, text(&other_role), other)).await?.is_some())
     }
 
-    // ---- threads ----
+    // ---- conversations (Messages tab) ----
 
-    pub async fn thread_with(&self, user: Uuid, other: Uuid) -> Result<Option<ThreadRow>> {
-        let row = self.one::<(CqlTimeuuid, Option<String>, Option<CqlTimestamp>, Option<i32>)>(
-            "SELECT thread_id, last_message, last_message_at, unread FROM threads_by_user WHERE user_id = ? AND other_user_id = ? LIMIT 1",
-            (user, other)).await?;
-        Ok(row.map(|r| ThreadRow { other_user_id: other, thread_id: un(r.0), last_message: r.1.unwrap_or_default(), last_message_at: r.2, unread: r.3.unwrap_or(0) }))
-    }
-
-    pub async fn threads_of(&self, user: Uuid) -> Result<Vec<ThreadRow>> {
+    pub async fn conversations_of(&self, user: Uuid) -> Result<Vec<ConversationRow>> {
         let rows = self.rows::<(Uuid, CqlTimeuuid, Option<String>, Option<CqlTimestamp>, Option<i32>)>(
-            "SELECT other_user_id, thread_id, last_message, last_message_at, unread FROM threads_by_user WHERE user_id = ?",
+            "SELECT other_user_id, item_id, last_message, last_message_at, unread FROM conversations_by_user WHERE user_id = ?",
             (user,)).await?;
-        let mut v: Vec<ThreadRow> = rows.into_iter()
-            .map(|r| ThreadRow { other_user_id: r.0, thread_id: un(r.1), last_message: r.2.unwrap_or_default(), last_message_at: r.3, unread: r.4.unwrap_or(0) })
-            .collect();
-        v.sort_by_key(|t| std::cmp::Reverse(t.last_message_at.map(|t| t.0).unwrap_or(0)));
+        let mut v: Vec<ConversationRow> = rows.into_iter().map(|r| ConversationRow {
+            other_user_id: r.0, item_id: un(r.1), last_message: r.2.unwrap_or_default(), last_message_at: r.3, unread: r.4.unwrap_or(0),
+        }).collect();
+        v.sort_by_key(|c| std::cmp::Reverse(c.last_message_at.map(|t| t.0).unwrap_or(0)));
         Ok(v)
     }
 
-    pub async fn create_thread(&self, a: Uuid, b: Uuid) -> Result<Uuid> {
-        let id = new_timeuuid();
-        let now = now_ts();
-        self.batch(
-            &[
-                "INSERT INTO threads_by_id (thread_id, user_a, user_b, created_at) VALUES (?, ?, ?, ?)",
-                "INSERT INTO threads_by_user (user_id, other_user_id, thread_id, last_message, last_message_at, unread) VALUES (?, ?, ?, '', ?, 0)",
-                "INSERT INTO threads_by_user (user_id, other_user_id, thread_id, last_message, last_message_at, unread) VALUES (?, ?, ?, '', ?, 0)",
-            ],
-            ((tu(id), a, b, now), (a, b, tu(id), now), (b, a, tu(id), now)),
-        ).await?;
-        Ok(id)
+    pub async fn conversation_unread(&self, user: Uuid, other: Uuid, item: Uuid) -> Result<i32> {
+        Ok(self.one::<(Option<i32>,)>("SELECT unread FROM conversations_by_user WHERE user_id = ? AND other_user_id = ? AND item_id = ?",
+            (user, other, tu(item))).await?.and_then(|r| r.0).unwrap_or(0))
     }
 
-    pub async fn thread_members(&self, thread: Uuid) -> Result<Option<(Uuid, Uuid)>> {
-        self.one::<(Uuid, Uuid)>("SELECT user_a, user_b FROM threads_by_id WHERE thread_id = ?", (tu(thread),)).await
-    }
-
-    // ---- messages ----
-
-    /// Idempotent by (thread, client_msg_id): a resend returns the first message id (doc 4.4).
-    pub async fn existing_message(&self, thread: Uuid, client_msg_id: &str) -> Result<Option<Uuid>> {
-        Ok(self.one::<(CqlTimeuuid,)>("SELECT message_id FROM message_dedupe WHERE thread_id = ? AND client_msg_id = ?",
-            (tu(thread), client_msg_id)).await?.map(|r| un(r.0)))
-    }
-
-    pub async fn insert_message(&self, m: &MessageDto, client_msg_id: &str) -> Result<()> {
-        let at = crate::model::ts_to_dt(CqlTimestamp(uuid_millis(&m.message_id)));
-        self.batch(
-            &[
-                "INSERT INTO messages_by_thread (thread_id, bucket, message_id, sender_id, body, client_msg_id, linked_item_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                "INSERT INTO message_dedupe (thread_id, client_msg_id, message_id) VALUES (?, ?, ?) USING TTL 86400",
-            ],
-            (
-                (tu(m.thread_id), bucket(at), tu(m.message_id), m.sender_id, &m.body, client_msg_id, m.linked_item_id.map(tu)),
-                (tu(m.thread_id), client_msg_id, tu(m.message_id)),
-            ),
-        ).await
-    }
-
-    pub async fn message(&self, thread: Uuid, id: Uuid) -> Result<Option<MessageDto>> {
-        let at = crate::model::ts_to_dt(CqlTimestamp(uuid_millis(&id)));
-        let row = self.one::<(Uuid, Option<String>, Option<CqlTimeuuid>)>(
-            "SELECT sender_id, body, linked_item_id FROM messages_by_thread WHERE thread_id = ? AND bucket = ? AND message_id = ?",
-            (tu(thread), bucket(at), tu(id))).await?;
-        Ok(row.map(|r| MessageDto { message_id: id, thread_id: thread, sender_id: r.0, body: r.1.unwrap_or_default(), sent_at: at.to_rfc3339(), linked_item_id: r.2.map(un) }))
-    }
-
-    /// Latest messages of the current and previous month, oldest first (as the apps render them).
-    pub async fn messages(&self, thread: Uuid, limit: i32) -> Result<Vec<MessageDto>> {
-        let now = Utc::now();
-        let mut out = Vec::new();
-        for b in [bucket(now), bucket(now - ChronoDuration::days(31))] {
-            let rows = self.rows::<(CqlTimeuuid, Uuid, Option<String>, Option<CqlTimeuuid>)>(
-                "SELECT message_id, sender_id, body, linked_item_id FROM messages_by_thread WHERE thread_id = ? AND bucket = ? LIMIT ?",
-                (tu(thread), b, limit)).await?;
-            out.extend(rows.into_iter().map(|r| {
-                let id = un(r.0);
-                MessageDto {
-                    message_id: id, thread_id: thread, sender_id: r.1, body: r.2.unwrap_or_default(),
-                    sent_at: ts_to_dt(CqlTimestamp(uuid_millis(&id))).to_rfc3339(), linked_item_id: r.3.map(un),
-                }
-            }));
-            if out.len() as i32 >= limit { break; }
-        }
-        out.sort_by_key(|m| uuid_millis(&m.message_id));
-        let skip = out.len().saturating_sub(limit as usize);
-        Ok(out.into_iter().skip(skip).collect())
-    }
-
-    pub async fn touch_thread(&self, user: Uuid, other: Uuid, thread: Uuid, last: &str, unread: i32) -> Result<()> {
+    pub async fn touch_conversation(&self, user: Uuid, other: Uuid, item: Uuid, last: &str, unread: i32) -> Result<()> {
         self.exec(
-            "UPDATE threads_by_user SET last_message = ?, last_message_at = ?, unread = ? WHERE user_id = ? AND other_user_id = ? AND thread_id = ?",
-            (last, now_ts(), unread, user, other, tu(thread))).await?;
+            "UPDATE conversations_by_user SET last_message = ?, last_message_at = ?, unread = ? WHERE user_id = ? AND other_user_id = ? AND item_id = ?",
+            (last, now_ts(), unread, user, other, tu(item))).await?;
         Ok(())
     }
 
-    pub async fn mark_read(&self, user: Uuid, other: Uuid, thread: Uuid) -> Result<()> {
-        self.exec("UPDATE threads_by_user SET unread = 0 WHERE user_id = ? AND other_user_id = ? AND thread_id = ?",
-            (user, other, tu(thread))).await?;
+    /// Opening an item's discussion clears the reader's unread counts for it.
+    pub async fn mark_item_read(&self, user: Uuid, item: Uuid) -> Result<()> {
+        for c in self.conversations_of(user).await?.into_iter().filter(|c| c.item_id == item && c.unread > 0) {
+            self.exec("UPDATE conversations_by_user SET unread = 0 WHERE user_id = ? AND other_user_id = ? AND item_id = ?",
+                (user, c.other_user_id, tu(item))).await?;
+        }
         Ok(())
     }
 }

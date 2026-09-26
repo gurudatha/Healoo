@@ -19,6 +19,7 @@ pub mod files;
 pub mod model;
 pub mod net;
 pub mod policy;
+pub mod recurrence;
 pub mod seed;
 pub mod store;
 pub mod worker;

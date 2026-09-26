@@ -1,6 +1,6 @@
 [package]
 name = "care-api"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.80"
 default-run = "care-api"
@@ -21,6 +21,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1.10", features = ["v1", "v4", "serde", "std"] }
 chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"          # appointment times are local to the clinic (default Asia/Kolkata)
 ulid = "1"
 
 # Auth (doc 5)

@@ -1,0 +1,53 @@
+--- Documentation/DataItem_Design.md
++++ Documentation/DataItem_Design.md
+@@ -1,7 +1,8 @@
+ # DataItem v2 — design specification
+ 
+-Status: **proposed** (not implemented yet). Replaces the DataItem in design document section 2.2
+-and the `items` shape used by server v0.1 and apps 0.3.
++Status: **implemented** in server v0.2 and apps 0.4 (not compiled yet; see "Implementation notes"
++at the end). Replaces the DataItem in design document section 2.2 and the `items` shape used by
++server v0.1 and apps 0.3. The API reference is `userapidocumentation.txt` sections 5–9.
+ 
+ ## 1. Idea in one paragraph
+ 
+@@ -426,8 +427,37 @@ The trial holds test data only, so the simplest path is to apply the new schema
+ 
+ ## 10. Open points
+ 
+-- Who may book: patient, doctor, assistant (on behalf of the doctor)? Proposed: all three,
+-  with the doctor always the appointment's `doctor_id`.
++- Who may book: implemented as proposed — the patient, the doctor, or the doctor's assistant,
++  with the doctor always the appointment's `doctor_id`. Change `may_manage` in
++  `src/api/parts.rs` if this should be narrower.
+ - Payment: add back later as a child (`payments`) once billing is designed.
+ - Group discussions (patient + two doctors) work automatically when both doctors are on the
+   access list; decide whether that is wanted for every item kind.
++
++## 11. Implementation notes (v0.2)
++
++Where the code differs from, or adds detail to, the sections above:
++
++- **Counts** are computed from the lists fetched for the response (no `item_counts` counter
++  table). List entries (`GET /v1/items`) carry counts but empty child lists.
++- **Messages:** `GET /v1/items/{id}` returns the latest 100; `GET .../messages?limit=` up to 500.
++  Paging cursors (`page_state`) are not implemented yet. Message dedupe is the
++  `item_message_dedupe` table keyed by `(item_id, client_msg_id)`.
++- **Appointment PATCH** replaces the whole rule you send; past visits keep their status.
++  `recurrence: null` turns a series into a single visit.
++- **Visits** in responses: the next 12 upcoming (`visits`), with `original_date` used to address
++  one visit in `POST .../visits/{date}`. `visit_count` is absent when a series runs until
++  cancelled. Visit statuses live in `item_appointments.visit_status` (date → COMPLETED/NO_SHOW);
++  moves and cancellations are `exceptions`.
++- **Calendar tables** `visits_by_doctor` / `visits_by_patient` are rebuilt for the next 6 months
++  whenever an appointment or exception changes. Dates are stored as text (`YYYY-MM-DD`).
++- **Alerts:** the worker's scheduler runs every 20 seconds from `alerts_due`, sends a push and a
++  WebSocket `alert` frame, then schedules the next firing. Cancelled appointment reminders and
++  alerts of closed items are skipped.
++- **Reopen** does not restore cancelled visits; book again if needed.
++- **Old tables** (`threads_*`, `messages_by_thread`, `message_dedupe`, `dashboard_counters`) and
++  `/v1/threads` are removed. The trial database must be recreated and re-seeded.
++- **Seed data** (`care-seed`): a CBC report that grew into a full case (files, discussion,
++  bi-weekly appointment for 3 months, daily medication alert), a BP discussion, a standalone
++  appointment, a standalone weekly alert, a closed item with feedback and a 5-star rating, and
++  Priya's unshared lipid profile.
