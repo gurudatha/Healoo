@@ -1,0 +1,132 @@
+package com.healoo.app.ui.landing
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.healoo.app.data.*
+import com.healoo.app.ui.components.*
+import com.healoo.app.ui.search.RoleFilterRow
+import com.healoo.app.ui.search.SearchField
+import com.healoo.app.ui.theme.*
+import kotlinx.coroutines.launch
+import java.time.LocalDate
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
+
+class LandingViewModel : ViewModel() {
+    private val repo = ServiceLocator.repository
+    var me by mutableStateOf<UserProfile?>(null); private set
+    var dashboard by mutableStateOf<Dashboard?>(null); private set
+    var items by mutableStateOf<List<DataItem>?>(null); private set
+    var error by mutableStateOf<String?>(null); private set
+
+    init {
+        load()
+        // Keep counters and the list current when new items or messages arrive live.
+        viewModelScope.launch { repo.events.collect { if (it !is RealtimeEvent.ConnectionChanged) load() } }
+    }
+
+    fun load() = viewModelScope.launch {
+        error = null
+        runCatching {
+            me = repo.me()
+            dashboard = repo.dashboard()
+            items = repo.openItems(limit = 20)
+        }.onFailure { error = "Couldn't load your items. Check your connection and try again." }
+    }
+}
+
+@Composable
+fun LandingScreen(
+    onOpenItem: (String) -> Unit,
+    onSearch: (query: String, role: Role?) -> Unit,
+    onOpenProfile: () -> Unit,
+    onTab: (Tab) -> Unit,
+    vm: LandingViewModel = viewModel(),
+) {
+    var query by remember { mutableStateOf("") }
+    var role by remember { mutableStateOf<Role?>(Role.DOCTOR) }
+
+    Scaffold(containerColor = Sage.Background, bottomBar = { HealooBottomBar(Tab.HOME, onTab) }) { padding ->
+        Column(Modifier.fillMaxSize().padding(bottom = padding.calculateBottomPadding())) {
+            DashboardHeader(vm.me, vm.dashboard, onOpenProfile)
+            LazyColumn(
+                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        FieldLabel("Find doctors, patients, hospitals or labs")
+                        SearchField(query, { query = it }, placeholder = "Search by name or Healoo ID", onSubmit = { onSearch(query, role) })
+                        RoleFilterRow(selected = role, includeAll = false, onSelect = { role = it; onSearch(query, it) })
+                    }
+                }
+                item { Spacer(Modifier.height(6.dp)); SectionHeader("Open items", "See all") { onSearch("", null) } }
+                when {
+                    vm.error != null -> item { ErrorBox(vm.error!!, vm::load) }
+                    vm.items == null -> item { LoadingBox() }
+                    vm.items!!.isEmpty() -> item {
+                        Text("Nothing open right now. New reports, messages and bookings will appear here.",
+                            style = HType.body, color = Sage.Muted, modifier = Modifier.padding(vertical = 16.dp))
+                    }
+                    else -> items(vm.items!!, key = { it.id }) { DataItemRow(it, onClick = { onOpenItem(it.id) }) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DashboardHeader(me: UserProfile?, d: Dashboard?, onOpenProfile: () -> Unit) {
+    val greeting = when (LocalTime.now().hour) { in 0..11 -> "Good morning"; in 12..16 -> "Good afternoon"; else -> "Good evening" }
+    Column(
+        Modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(bottomStart = Radius.header, bottomEnd = Radius.header))
+            .background(Sage.Primary).statusBarsPadding().height(screenFraction(HeaderRatio.LANDING))
+            .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 16.dp),
+        verticalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(LocalDate.now().format(DateTimeFormatter.ofPattern("EEEE, d MMM")), style = HType.caption, color = Sage.OnPrimarySoft)
+                Text("$greeting, ${me?.displayName?.substringBefore(' ') ?: ""}", style = HType.greeting, color = Color.White,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            androidx.compose.foundation.layout.Box(Modifier.clip(RoundedCornerShape(22.dp))) {
+                androidx.compose.material3.Surface(onClick = onOpenProfile, color = Color.Transparent) {
+                    Avatar(me?.initials ?: "", size = 44.dp, border = Sage.OnPrimaryLine)
+                }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Counter(d?.openReports, "Open reports", Modifier.weight(1f))
+            Counter(d?.unreadMessages, "Unread messages", Modifier.weight(1f))
+            Counter(d?.upcomingAppointments, "Appointments", Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun Counter(value: Int?, label: String, modifier: Modifier) {
+    Column(
+        modifier.clip(RoundedCornerShape(14.dp)).background(Sage.PrimaryRaised).padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(value?.toString() ?: "–", style = HType.counter, color = Color.White)
+        Text(label, style = HType.small, color = Sage.OnPrimarySoft, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}

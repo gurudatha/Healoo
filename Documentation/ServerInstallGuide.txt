@@ -1,0 +1,433 @@
+HEALOO SERVER - LOCAL INSTALLATION GUIDE (STARTING FROM A BARE MACHINE)
+=====================================================================
+
+Installs the Healoo trial server (care-api, care-worker) and everything it
+depends on (Cassandra, Kafka, Kafka UI) on one computer, so phones and
+emulators on the same Wi-Fi can use it.
+
+Covers Windows 10/11, macOS and Ubuntu Linux. Assumes nothing is installed.
+
+Note: the server code has not been compiled yet. The first build (step 7)
+may stop with Rust compile errors. If it does, copy the first 20-30 error
+lines and send them back for fixing.
+
+Contents
+   0. What gets installed
+   1. Check the computer
+   2. Install Docker
+   3. Install small command-line tools
+   4. Unpack the server
+   5. Find this computer's LAN IP address
+   6. Configure the server
+   7. Build and start everything
+   8. Open the firewall for phones
+   9. Check that it works
+  10. Trust the server certificate on test devices
+  11. Everyday commands
+  12. Optional: build and run the server without Docker (for developers)
+  13. Troubleshooting
+
+
+0. WHAT GETS INSTALLED
+----------------------
+
+Installed on the computer:
+  - Docker (Docker Desktop on Windows and macOS, Docker Engine on Linux)
+  - On Windows: WSL 2 with Ubuntu (Docker Desktop needs it)
+  - curl and unzip (usually already present)
+
+Run inside Docker containers, downloaded automatically in step 7:
+  - Cassandra 5.0            database                 localhost:9042
+  - Apache Kafka 3.8         event bus                localhost:29092
+  - Kafka UI                 web view of Kafka        http://localhost:8081
+  - care-api                 REST + WebSocket server  https://<LAN IP>:8443
+  - care-worker              background jobs (thumbnails, audit log)
+  - care-seed                loads test accounts once, then stops
+  - Rust 1.82 build image    compiles care-api inside Docker
+
+You do NOT need to install Java, Cassandra, Kafka or Rust yourself for the
+normal setup. Rust is only needed for the optional developer loop (step 12).
+
+
+1. CHECK THE COMPUTER
+---------------------
+
+  RAM:   8 GB minimum, 16 GB recommended (Cassandra + Kafka use about 3-4 GB)
+  Disk:  about 15 GB free (images, build cache, data)
+  CPU:   64-bit; Intel/AMD or Apple silicon
+  OS:    Windows 10 22H2 or Windows 11 / macOS 13 or later / Ubuntu 22.04 or 24.04
+  Network: the computer and the test phones on the same Wi-Fi
+
+Windows only: hardware virtualization must be enabled.
+  Open Task Manager > Performance > CPU and check "Virtualization: Enabled".
+  If it says Disabled, enable Intel VT-x / AMD-V (SVM) in the BIOS/UEFI setup.
+
+
+2. INSTALL DOCKER
+-----------------
+
+2A. WINDOWS 10/11
+
+  1. Install WSL 2 with Ubuntu. Open PowerShell as Administrator:
+         wsl --install
+     Restart when asked. After the restart an Ubuntu window opens: choose a
+     Linux user name and password (remember them).
+     Check (normal PowerShell):
+         wsl --status            (should show "Default Version: 2")
+
+  2. Give WSL enough memory. In Notepad, create the file
+         C:\Users\<your user>\.wslconfig
+     with:
+         [wsl2]
+         memory=8GB
+         processors=4
+     (Use memory=6GB on an 8 GB machine.) Then in PowerShell:
+         wsl --shutdown
+
+  3. Install Docker Desktop:
+     - Download from https://www.docker.com/products/docker-desktop/
+     - Run the installer and keep "Use WSL 2 instead of Hyper-V" ticked.
+     - Sign out and back in (or restart) when asked, then start Docker Desktop
+       and accept the terms. Wait until it shows "Engine running".
+     - Settings > Resources > WSL integration: turn on "Ubuntu". Apply & restart.
+
+  4. Check in PowerShell:
+         docker version
+         docker compose version
+         docker run --rm hello-world
+
+2B. macOS
+
+  1. Install Docker Desktop from https://www.docker.com/products/docker-desktop/
+     (pick "Apple silicon" or "Intel chip" to match your Mac).
+  2. Open Docker from Applications and accept the terms.
+  3. Docker > Settings > Resources: Memory at least 6 GB (8 GB is better).
+     Apply & restart.
+  4. Check in Terminal:
+         docker version
+         docker compose version
+         docker run --rm hello-world
+
+2C. UBUNTU LINUX
+
+  In a terminal:
+      sudo apt update
+      sudo apt install -y ca-certificates curl gnupg
+      sudo install -m 0755 -d /etc/apt/keyrings
+      curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+      sudo chmod a+r /etc/apt/keyrings/docker.gpg
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+      sudo apt update
+      sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      sudo usermod -aG docker $USER
+
+  Log out and back in (so the docker group applies), then check:
+      docker version
+      docker compose version
+      docker run --rm hello-world
+
+
+3. INSTALL SMALL COMMAND-LINE TOOLS
+-----------------------------------
+
+  Windows: curl and tar come with Windows 10/11. For the checks in step 9,
+           use the Ubuntu (WSL) terminal, which also has curl:
+               sudo apt update && sudo apt install -y curl unzip jq
+  macOS:   curl and unzip are built in. Optional: install Homebrew
+           (https://brew.sh), then:  brew install jq websocat
+  Ubuntu:  sudo apt install -y curl unzip jq
+
+  jq (pretty JSON) and websocat (WebSocket test) are optional.
+
+
+4. UNPACK THE SERVER
+--------------------
+
+  Put healoo-backend.zip in a folder without spaces in its path, for example
+      Windows:  C:\healoo\
+      macOS:    ~/healoo/
+      Ubuntu:   ~/healoo/
+
+  Windows: right-click the zip > Extract All... into C:\healoo
+  macOS/Ubuntu:
+      mkdir -p ~/healoo && cd ~/healoo
+      unzip ~/Downloads/healoo-backend.zip
+
+  You should now have healoo-backend/ containing care-api/, db/, kafka/,
+  deploy/, proxy/, Dockerfile and README.md.
+
+
+5. FIND THIS COMPUTER'S LAN IP ADDRESS
+--------------------------------------
+
+  Windows (PowerShell):  ipconfig
+      Look under "Wireless LAN adapter Wi-Fi" (or your Ethernet adapter)
+      for "IPv4 Address", e.g. 192.168.1.20. Ignore "vEthernet (WSL)".
+  macOS:   ipconfig getifaddr en0        (Wi-Fi; try en1 if empty)
+  Ubuntu:  hostname -I                   (the first address, usually 192.168.x.x)
+
+  Tip: in your Wi-Fi router, reserve this address for the computer (DHCP
+  reservation) so it doesn't change. If it changes, repeat step 6.
+
+
+6. CONFIGURE THE SERVER
+-----------------------
+
+  Go to the LAN profile folder and create the settings file:
+
+  Windows (PowerShell):
+      cd C:\healoo\healoo-backend\deploy\lan
+      copy .env.lan.example .env
+      notepad .env
+  macOS/Ubuntu:
+      cd ~/healoo/healoo-backend/deploy/lan
+      cp .env.lan.example .env
+      nano .env          (or any editor)
+
+  Set these values and save:
+      HOST_LAN_IP=192.168.1.20                  <- your address from step 5
+      AUTH_MODE=dev                             <- test sign-in, no Auth0 needed
+      DEV_JWT_SECRET=<any long random text>
+      FILES_SECRET=<a different long random text>
+
+  Random text can be made with:  openssl rand -hex 32   (macOS/Ubuntu/WSL)
+
+  Windows: make sure the file is named ".env" and not ".env.txt". Using the
+  copy command above avoids that problem.
+
+
+7. BUILD AND START EVERYTHING
+-----------------------------
+
+  In the deploy/lan folder (same place as step 6):
+      docker compose up -d --build
+
+  What happens:
+    - Docker downloads the Cassandra, Kafka, Kafka UI and Rust images
+      (about 3 GB, once).
+    - care-api is compiled inside Docker. The first build takes 10-25
+      minutes; later builds reuse a cache and are much faster.
+    - Cassandra takes 1-2 minutes to start. Then cassandra-init loads the
+      database schema, kafka-init creates the Kafka topics, care-seed loads
+      the test accounts, and care-api and care-worker start.
+
+  Watch progress:
+      docker compose ps
+      docker compose logs -f care-api        (Ctrl+C stops watching, not the server)
+
+  Ready when:
+    - "docker compose ps" shows cassandra, kafka, kafka-ui, care-api and
+      care-worker as running, and cassandra-init, kafka-init and care-seed
+      as "exited (0)";
+    - the care-api log shows "listening (HTTPS, built-in)".
+
+
+8. OPEN THE FIREWALL FOR PHONES
+-------------------------------
+
+  Only port 8443 needs to be reachable from the Wi-Fi. Cassandra, Kafka and
+  Kafka UI listen on this computer only.
+
+  Windows (PowerShell as Administrator):
+      New-NetFirewallRule -DisplayName "Healoo trial 8443" -Direction Inbound -Protocol TCP -LocalPort 8443 -Action Allow -Profile Private
+      Also make sure the Wi-Fi network is set to "Private"
+      (Settings > Network & internet > Wi-Fi > your network > Private network).
+  macOS: if a "Do you want to allow incoming connections" prompt appears for
+      Docker, click Allow. With the macOS firewall on, allow Docker in
+      System Settings > Network > Firewall > Options.
+  Ubuntu (only if ufw is enabled):
+      sudo ufw allow 8443/tcp
+
+
+9. CHECK THAT IT WORKS
+----------------------
+
+  Windows: run these in the Ubuntu (WSL) terminal. macOS/Ubuntu: in Terminal.
+  First go to the deploy/lan folder:
+      Windows (WSL):  cd /mnt/c/healoo/healoo-backend/deploy/lan
+      macOS/Ubuntu:   cd ~/healoo/healoo-backend/deploy/lan
+
+  1. Copy the server's certificate out of Docker:
+         docker compose cp care-api:/data/tls/healoo-local-ca.crt .
+
+  2. Health checks (expect "ok" and "ready"):
+         curl --cacert healoo-local-ca.crt https://localhost:8443/healthz
+         curl --cacert healoo-local-ca.crt https://localhost:8443/readyz
+
+  3. Server settings (shows network_mode "lan" and auth mode "dev"):
+         curl --cacert healoo-local-ca.crt https://localhost:8443/v1/config
+
+  4. Test accounts, then a token and your profile as Lakshmi:
+         curl --cacert healoo-local-ca.crt https://localhost:8443/dev/users
+         TOKEN=$(curl -s --cacert healoo-local-ca.crt -X POST https://localhost:8443/dev/token \
+           -H 'content-type: application/json' -d '{"public_id":"HL-2M9P4"}' | jq -r .access_token)
+         curl --cacert healoo-local-ca.crt https://localhost:8443/v1/me -H "authorization: Bearer $TOKEN"
+         curl --cacert healoo-local-ca.crt https://localhost:8443/v1/items -H "authorization: Bearer $TOKEN"
+
+  5. From the LAN address (what phones use):
+         curl --cacert healoo-local-ca.crt https://<HOST_LAN_IP>:8443/healthz
+
+  6. Database and Kafka:
+         docker compose exec cassandra cqlsh -e "SELECT public_id, display_name FROM careconnect.users_by_public_id;"
+     Kafka UI in a browser: http://localhost:8081 (topics such as
+     chat.messages and items.events should be listed).
+
+  7. From a phone on the same Wi-Fi, open https://<HOST_LAN_IP>:8443/healthz
+     in the browser. Before step 10 it warns about the certificate; after
+     step 10 it shows "ok".
+
+  More API calls: see userapidocumentation.txt.
+
+
+10. TRUST THE SERVER CERTIFICATE ON TEST DEVICES
+------------------------------------------------
+
+  Use the healoo-local-ca.crt file from step 9.1. Install it once per device.
+  It stays valid when the LAN IP changes (only the server certificate is
+  re-issued).
+
+  Android emulator or phone: copy the file to the device (drag it onto the
+  emulator window), then Settings > Security > Encryption & credentials >
+  Install a certificate > CA certificate > pick the file.
+  iOS Simulator or iPhone: drag the file onto the simulator (or AirDrop /
+  email it to the phone), install the profile in Settings > General > VPN &
+  Device Management, then turn it on in Settings > General > About >
+  Certificate Trust Settings.
+
+  Connecting the apps: see TestingReadMe.txt section 4b.
+
+
+11. EVERYDAY COMMANDS
+---------------------
+
+  Run these in deploy/lan.
+
+  Stop (keeps all data):        docker compose stop
+  Start again:                  docker compose start
+  Status:                       docker compose ps
+  Logs:                         docker compose logs -f care-api care-worker
+  After changing server code:   docker compose up -d --build care-api care-worker
+  After changing .env:          docker compose up -d
+  After the LAN IP changed:     edit HOST_LAN_IP in .env, then docker compose up -d
+  Wipe everything and start fresh (deletes all data and uploaded files):
+                                docker compose down -v
+                                docker compose up -d --build
+
+  Docker Desktop must be running on Windows/macOS. You can set it to start
+  at login in its settings.
+
+
+12. OPTIONAL: BUILD AND RUN THE SERVER WITHOUT DOCKER (FOR DEVELOPERS)
+---------------------------------------------------------------------
+
+  Faster edit-compile-run loop: Cassandra and Kafka stay in Docker, care-api
+  runs directly on the machine. Windows users do this inside Ubuntu (WSL),
+  where the tools are simpler to set up.
+
+  12.1 Install the build tools
+    Ubuntu / WSL:
+        sudo apt update
+        sudo apt install -y build-essential cmake pkg-config libssl-dev zlib1g-dev libsasl2-dev libcurl4-openssl-dev curl git
+    macOS:
+        xcode-select --install          (Apple's compilers)
+        brew install cmake pkg-config curl
+
+  12.2 Install Rust
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        source "$HOME/.cargo/env"
+        rustc --version                 (1.80 or later)
+
+  12.3 Stop the Docker copies of the server, keep the infrastructure
+        cd <...>/healoo-backend/deploy/lan
+        docker compose stop care-api care-worker
+        (Cassandra, Kafka and Kafka UI keep running.)
+
+  12.4 Build and test
+        cd ../../care-api
+        cargo build                      (first build 5-15 minutes)
+        cargo test                       (includes the access-rule tests)
+
+  12.5 Run
+        export NETWORK_MODE=lan CASSANDRA_NODES=127.0.0.1:9042 KAFKA_BROKERS=localhost:29092
+        export DEV_JWT_SECRET=<same as .env> FILES_SECRET=<same as .env>
+        cargo run --bin care-seed        (only needed on an empty database)
+        cargo run --bin care-api
+    In a second terminal (same exports):
+        cargo run --bin care-worker
+
+    Keep the project under ~/ (not /mnt/c, and never inside OneDrive): builds
+    there are much slower and OneDrive tries to sync the large target/ folder.
+
+    Native runs keep files and certificates in care-api/data/. This is a new
+    local certificate authority, so install care-api/data/tls/healoo-local-ca.crt
+    on devices too. Natively the server also announces itself on the network
+    (mDNS, _healoo._tcp).
+
+    Windows note: a server started inside WSL is reachable at
+    https://localhost:8443 from Windows (curl, emulator via 10.0.2.2), but not
+    from phones on the Wi-Fi. For phone tests, use the Docker version (step 7).
+
+    Quick run without Kafka: set EVENT_BUS=memory and skip care-worker (the
+    worker jobs then run inside care-api).
+
+
+13. TROUBLESHOOTING
+-------------------
+
+  "set HOST_LAN_IP in .env" when starting
+      The .env file is missing, in the wrong folder, or named .env.txt (step 6).
+
+  "port is already allocated" (8443, 9042, 29092 or 8081)
+      Another program uses that port. Stop it, or change the left-hand
+      number in the "ports:" line of docker-compose.yml.
+
+  Cassandra keeps restarting, or cassandra-init never finishes
+      Usually too little memory. Give Docker/WSL at least 6 GB (step 2),
+      then:  docker compose restart cassandra
+
+  kafka-init shows "waiting for Kafka" for more than 2 minutes
+      docker compose logs kafka     - then  docker compose restart kafka kafka-init
+
+  kafka-init fails with "$'\r': command not found"
+      kafka/create-topics.sh was saved with Windows line endings. Re-extract
+      it from the zip, or in WSL:  sed -i 's/\r$//' ../../kafka/create-topics.sh
+
+  The build (step 7 or 12.4) stops with Rust "error[E...]" messages
+      Expected for this first, untested version. Send the first error lines.
+  Native build complains about cmake, a C compiler, or NASM
+      Repeat step 12.1. On macOS run xcode-select --install again.
+  Native build fails in rdkafka-sys with "curl/curl.h: No such file or directory"
+      sudo apt install -y libcurl4-openssl-dev, then cargo build again.
+  Build is very slow, or fails in a folder under /mnt/c or OneDrive
+      Move the project into the Linux home folder (~/) - see step 12.
+
+  rdkafka-sys fails with "CMake Error ... configure_file: Operation not permitted"
+  (often followed by "Could NOT find ZLIB")
+      The project is on a Windows drive (/mnt/c, /mnt/d), where WSL can't set
+      Linux file permissions. Either copy the project to ~/ and build there, or
+      keep it where it is and build into Linux:
+          echo 'export CARGO_TARGET_DIR=$HOME/.cargo-target' >> ~/.bashrc
+          source ~/.bashrc && rm -rf target && cargo build
+      Also make sure zlib1g-dev is installed (step 12.1).
+
+  /readyz says "cassandra unavailable"
+      Cassandra is still starting or crashed:  docker compose ps,  docker compose logs cassandra
+
+  Phone can't open https://<HOST_LAN_IP>:8443/healthz
+      - Same Wi-Fi network? Guest networks and "AP/client isolation" block
+        device-to-device traffic.
+      - Firewall rule from step 8; on Windows the network must be "Private".
+      - HOST_LAN_IP matches the current address (step 5).
+      - Some VPN programs block local network access; turn them off to test.
+
+  Certificate warning or "can't reach the trial server" in the apps
+      Install healoo-local-ca.crt (step 10). If you wiped data with
+      "down -v", a new certificate authority was made: copy and install
+      the new file.
+
+  Start over completely
+      docker compose down -v
+      docker builder prune -f          (clears the build cache)
+      docker compose up -d --build
+
+  Test data only. Never put real patient information on the trial server.

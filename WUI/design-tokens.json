@@ -1,0 +1,58 @@
+{
+  "name": "Healoo · Sage Clinic",
+  "color": {
+    "primary": "#2F6B5E",
+    "primaryRaised": "#3C7A6C",
+    "primaryPressed": "#1F4A40",
+    "onPrimary": "#FFFFFF",
+    "onPrimarySoft": "#E4EFEB",
+    "onPrimaryLine": "#CFE3DC",
+    "background": "#F5F3EE",
+    "surface": "#FFFFFF",
+    "sunken": "#E9E5DC",
+    "preview": "#EDEAE2",
+    "ink": "#1F2A27",
+    "inkSoft": "#3E4A46",
+    "muted": "#56625E",
+    "placeholder": "#66706C",
+    "border": "#D9D5CB",
+    "divider": "#E4E0D6",
+    "rowDivider": "#EEEBE4",
+    "sageTint": "#E3EEEA",
+    "avatar": "#E7EFEC",
+    "clay": "#9A4A26",
+    "clayTint": "#F6E6DC",
+    "clayBorder": "#E8CFC0",
+    "sand": "#5B5340",
+    "sandTint": "#EFEADF",
+    "sandInk": "#4A4436",
+    "switchOff": "#CFCAC0",
+    "viewerBackground": "#141A18"
+  },
+  "type": {
+    "display": { "family": "Fraunces", "weight": 600 },
+    "body": { "family": "Figtree", "weights": [400, 500, 600] },
+    "scale": { "screenTitle": 26, "greeting": 24, "profileName": 23, "section": 19, "counter": 26, "body": 15, "caption": 13, "small": 12, "tiny": 11 }
+  },
+  "radius": { "header": 28, "card": 16, "tile": 12, "field": 14, "chip": 20, "pill": 25 },
+  "layout": {
+    "phone": { "width": 390, "height": 844 },
+    "headers": {
+      "landing": { "fraction": 0.20, "collapsible": false },
+      "userPage": { "expanded": 0.25, "collapsed": 0.10 },
+      "dataView": { "fraction": 0.10, "pinned": true },
+      "upload": { "fraction": 0.10, "pinned": true }
+    },
+    "bottomBar": 72,
+    "minTouchTarget": 44
+  },
+  "itemTypes": {
+    "REPORT":   { "tint": "sageTint", "fg": "primary" },
+    "MESSAGE":  { "tint": "sageTint", "fg": "primary" },
+    "BOOKING":  { "tint": "sandTint", "fg": "sand" },
+    "FEEDBACK": { "tint": "sandTint", "fg": "sand" },
+    "PAYMENT":  { "tint": "sandTint", "fg": "sand" },
+    "ALERT":    { "tint": "clayTint", "fg": "clay" }
+  },
+  "limits": { "attachmentsPerItem": 20, "imageMaxMB": 10, "pdfMaxMB": 25 }
+}

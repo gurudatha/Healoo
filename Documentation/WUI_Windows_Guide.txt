@@ -1,0 +1,419 @@
+HEALOO WUI 0.3 ON WINDOWS - INSTALL, TEST ON THE EMULATOR, COMPILE
+==================================================================
+
+For Windows 10 (22H2) and Windows 11, 64-bit. Assumes nothing is installed.
+Covers the Android app. The iOS app cannot be built on Windows (section 9).
+
+All commands are for PowerShell unless marked otherwise.
+
+Project location used throughout this guide:
+    D:\Gurudatha\ElevateSystems\Srikanth\healoo-wui
+(the Android project is in D:\Gurudatha\ElevateSystems\Srikanth\healoo-wui\android)
+
+Build tools used by the project:
+  Gradle 9.3.0, Android Gradle plugin 9.0.1, JDK 17,
+  compile SDK 36, target SDK 35 (Android 15), minimum SDK 29 (Android 10).
+
+Note: the app code has not been compiled yet. The first build may stop with
+errors (section 10). Send the first few error lines back for fixing.
+
+Contents
+   1. Check the computer
+   2. Install JDK 17
+   3. Install the Android SDK
+   4. Install Gradle 9.3.0 (only to create the wrapper)
+   5. Prepare the project
+   6. Create and start the emulator
+   7. Build, install and run on the emulator
+   8. Test checklist
+   9. iOS: what is and isn't possible on Windows
+  10. Compile APKs for phones (debug and release)
+  11. Troubleshooting
+
+
+1. CHECK THE COMPUTER
+---------------------
+
+  RAM:    8 GB minimum, 16 GB recommended (Gradle + emulator use 5-6 GB)
+  Disk:   about 20 GB free (SDK, emulator image, Gradle caches)
+  CPU:    Intel or AMD with virtualization
+
+  Virtualization must be on, or the emulator will be very slow or refuse to
+  start. Open Task Manager > Performance > CPU and check
+  "Virtualization: Enabled". If it says Disabled, turn on Intel VT-x or AMD-V
+  (SVM) in the BIOS/UEFI setup.
+
+  Turn on Windows Hypervisor Platform (the emulator uses it for speed). In
+  PowerShell as Administrator:
+      Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -All
+  Restart when asked. (This works alongside WSL 2 and Docker Desktop.)
+
+  Keep the project out of OneDrive and synced folders. The location used here,
+  D:\Gurudatha\ElevateSystems\Srikanth\healoo-wui, is fine: it is not synced and has no spaces.
+  Gradle's build folders nest deeply, so allow long paths once
+  (PowerShell as Administrator):
+      New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name LongPathsEnabled -Value 1 -PropertyType DWORD -Force
+
+
+2. INSTALL JDK 17
+-----------------
+
+  1. Download Eclipse Temurin 17 (JDK, Windows x64, .msi) from
+     https://adoptium.net/temurin/releases/?version=17
+  2. Run the installer. On the "Custom Setup" page turn ON:
+       - "Set JAVA_HOME variable"
+       - "Add to PATH"
+  3. Open a NEW PowerShell window and check:
+         java -version            -> must show 17.x
+         echo $env:JAVA_HOME      -> must point to the jdk-17 folder
+
+  If you also have JDK 11 (or older) installed, Gradle 9 will refuse to start
+  when it picks that one. Either:
+    - make JDK 17 the default: System > Advanced system settings > Environment
+      Variables > set JAVA_HOME to the JDK 17 folder, and in Path move
+      %JAVA_HOME%\bin above any other Java entry; or
+    - keep JDK 11 as default and tell only Gradle to use 17: create or edit
+      C:\Users\<you>\.gradle\gradle.properties and add (forward slashes):
+        org.gradle.java.home=C:/Program Files/Eclipse Adoptium/jdk-17.0.16.8-hotspot
+      (use your real folder name).
+
+
+3. INSTALL THE ANDROID SDK
+--------------------------
+
+Choose A (easiest) or B (smaller, command line only).
+
+3A. With Android Studio
+  1. Install Android Studio from https://developer.android.com/studio
+  2. First start: choose "Standard" setup; it installs the SDK to
+     C:\Users\<you>\AppData\Local\Android\Sdk
+  3. More Actions (or Tools) > SDK Manager:
+       SDK Platforms tab:  Android 16 (API 36)  and  Android 15 (API 35)
+       SDK Tools tab:      Android SDK Build-Tools 36, Android SDK Platform-Tools,
+                           Android Emulator, Android SDK Command-line Tools (latest)
+     Apply.
+  You can still build from PowerShell or VS Code as described below; Android
+  Studio is only needed for the SDK (and is a handy alternative editor).
+
+3B. Command-line tools only
+  1. From https://developer.android.com/studio (scroll to "Command line tools
+     only") download the Windows zip.
+  2. Create C:\Users\<you>\AppData\Local\Android\Sdk\cmdline-tools\latest\ and
+     unzip so that this file exists:
+       ...\Sdk\cmdline-tools\latest\bin\sdkmanager.bat
+     (the zip contains a "cmdline-tools" folder - move its contents into "latest").
+  3. Install the parts (PowerShell, after step 3C below):
+       sdkmanager --licenses                      (answer y to each)
+       sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "emulator" "system-images;android-35;google_apis_playstore;x86_64"
+
+3C. Environment variables (both A and B)
+  System > Advanced system settings > Environment Variables > User variables:
+    New:   ANDROID_HOME = C:\Users\<you>\AppData\Local\Android\Sdk
+    Edit Path, add these three:
+           %ANDROID_HOME%\platform-tools
+           %ANDROID_HOME%\emulator
+           %ANDROID_HOME%\cmdline-tools\latest\bin
+  Open a NEW PowerShell and check:
+      adb version
+      emulator -version
+      sdkmanager --version
+
+  With option A, also install the emulator image (needed for section 6):
+      sdkmanager "system-images;android-35;google_apis_playstore;x86_64"
+  The Play Store image matters: the QR scanner needs Google Play services.
+
+
+4. INSTALL GRADLE 9.3.0 (ONLY TO CREATE THE WRAPPER)
+----------------------------------------------------
+
+The project builds with its own Gradle wrapper (gradlew.bat). A full Gradle
+install is needed once, to create that wrapper.
+
+  1. Download "gradle-9.3.0-bin.zip" from https://gradle.org/releases/
+  2. Unzip to C:\Gradle so that C:\Gradle\gradle-9.3.0\bin\gradle.bat exists.
+  3. Add C:\Gradle\gradle-9.3.0\bin to Path (as in 3C), open a new PowerShell:
+         gradle --version        -> Gradle 9.3.0, and "Launcher JVM: 17..."
+
+
+5. PREPARE THE PROJECT
+----------------------
+
+  1. Unzip healoo-wui-0.3.zip into D:\Gurudatha\ElevateSystems\Srikanth so that
+     this folder exists:  D:\Gurudatha\ElevateSystems\Srikanth\healoo-wui\android
+     (The zip already contains the healoo-wui folder. If you unzip with
+      "Extract All", Windows may add an extra folder level - move healoo-wui up
+      so the path matches exactly.)
+     Check:
+         Test-Path "D:\Gurudatha\ElevateSystems\Srikanth\healoo-wui\android\settings.gradle.kts"      -> True
+
+  2. Create the wrapper and point it at the SDK:
+         cd D:\Gurudatha\ElevateSystems\Srikanth\healoo-wui\android
+         gradle wrapper --gradle-version 9.3.0
+         Set-Content local.properties "sdk.dir=C:/Users/$env:USERNAME/AppData/Local/Android/Sdk"
+         .\gradlew.bat --version
+     Check that "Launcher JVM" and "Daemon JVM" both show 17. If they show 11,
+     see section 2.
+     (Already made a wrapper with an older Gradle? Run
+      .\gradlew.bat wrapper --gradle-version 9.3.0 once.)
+
+  3. Add the fonts. Download Fraunces and Figtree from fonts.google.com, take
+     these files from each download's "static" folder, rename them to exactly
+     these lower-case names and copy them to
+     D:\Gurudatha\ElevateSystems\Srikanth\healoo-wui\android\app\src\main\res\font\
+         Fraunces-SemiBold.ttf  ->  fraunces_semibold.ttf
+         Figtree-Regular.ttf    ->  figtree_regular.ttf
+         Figtree-Medium.ttf     ->  figtree_medium.ttf
+         Figtree-SemiBold.ttf   ->  figtree_semibold.ttf
+     The build fails without them.
+
+  4. Choose the data mode in android\gradle.properties:
+
+     Demo mode (default, no server needed):
+         healoo.useFakeData=true
+
+     Trial server (healoo-backend on this computer, developer sign-in):
+         healoo.useFakeData=false
+         healoo.apiBaseUrl=https://10.0.2.2:8443/
+         healoo.devSignIn=true
+       (10.0.2.2 is how the emulator reaches this computer. On a real phone use
+        https://<this computer's LAN IP>:8443/ instead.)
+
+     Auth0 sign-in: healoo.useFakeData=false plus healoo.auth0.domain,
+     healoo.auth0.clientId and healoo.auth0.audience (README section 5).
+
+     Keep personal values (Auth0 IDs, signing passwords) in
+     C:\Users\<you>\.gradle\gradle.properties instead; it overrides the project file.
+
+
+6. CREATE AND START THE EMULATOR
+--------------------------------
+
+  Create it once:
+      avdmanager create avd -n healoo -k "system-images;android-35;google_apis_playstore;x86_64" -d pixel_7
+  (Android Studio users can instead use Device Manager > Create device >
+   Pixel 7 > API 35 "Google Play" image.)
+
+  Check acceleration (should report WHPX or AEHD as usable):
+      emulator -accel-check
+
+  Start it and leave this window open:
+      emulator -avd healoo
+
+  First boot takes 1-3 minutes. Sign in to a Google account in the emulator's
+  Play Store if the QR scanner asks to download its module.
+
+  Check it is connected (in another PowerShell):
+      adb devices              -> shows emulator-5554   device
+
+
+7. BUILD, INSTALL AND RUN ON THE EMULATOR
+-----------------------------------------
+
+      cd D:\Gurudatha\ElevateSystems\Srikanth\healoo-wui\android
+      .\gradlew.bat installDebug
+      adb shell am start -n com.healoo.app/.MainActivity
+
+  The first build downloads Gradle, the Android plugin and the libraries
+  (about 1 GB) and takes 5-15 minutes. Later builds take seconds to a minute.
+
+  After code changes, run the same two commands again.
+
+  Watch errors and crashes:
+      adb logcat *:E
+  Only this app's log:
+      adb logcat --pid=(adb shell pidof com.healoo.app)
+
+  Start fresh (clears the app's data and sign-in):
+      adb shell pm clear com.healoo.app
+
+  One key press in VS Code: File > Open Folder >
+  D:\Gurudatha\ElevateSystems\Srikanth\healoo-wui, save the following as
+  D:\Gurudatha\ElevateSystems\Srikanth\healoo-wui\.vscode\tasks.json,
+  then press Ctrl+Shift+B:
+
+  {
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "Healoo: run Android",
+        "type": "shell",
+        "command": ".\\gradlew.bat installDebug; adb shell am start -n com.healoo.app/.MainActivity",
+        "options": { "cwd": "${workspaceFolder}/android" },
+        "group": { "kind": "build", "isDefault": true },
+        "problemMatcher": []
+      }
+    ]
+  }
+
+  Useful VS Code extensions: "Kotlin" (syntax highlighting), "Gradle for Java".
+
+7b. Testing against the trial server (optional)
+  1. Start healoo-backend (ServerInstallGuide.txt, steps 6-7).
+  2. Copy the certificate:  docker compose cp care-api:/data/tls/healoo-local-ca.crt .
+  3. Build it into the app (debug builds only). Either:
+       - leave it in healoo-backend\deploy\lan - found automatically, because
+         healoo-backend sits next to healoo-wui in D:\Gurudatha\ElevateSystems\Srikanth; or
+       - copy healoo-local-ca.crt into
+         D:\Gurudatha\ElevateSystems\Srikanth\healoo-wui\android\certs\
+     The build prints "Healoo debug build trusts bundled certificate: ..." for
+     each one. No installation on the emulator or phone is needed.
+     (Opening the site in Chrome and tapping "Proceed (unsafe)" does NOT make
+      the app trust the server.)
+     If the server's certificate changes (e.g. after "docker compose down -v"),
+     copy the new file and rebuild.
+  4. Set the trial-server mode in gradle.properties (section 5, step 4), then
+     rebuild and launch (section 7).
+  5. The sign-in screen shows "Developer sign-in": tap Lakshmi K. (HL-2M9P4).
+  Check the server from the emulator's Chrome: https://10.0.2.2:8443/healthz -> ok
+
+
+8. TEST CHECKLIST
+-----------------
+
+In demo mode, go through these in order:
+
+   1. Demo sign-in: choose Lakshmi K. (patient). Home shows counters and open items.
+   2. Viewer: open "CBC - Complete blood count", tap an attachment. Swipe through
+      all 4 files, scroll the PDF pages, pinch or double-tap to zoom, tap thumbnails.
+   3. Share and revoke: in the same item, "Share with..." a contact, then "Revoke".
+   4. Active sharing: Settings > Active sharing. Revoke one item, then "Stop all".
+   5. Notification settings: turn a toggle off, change tabs, come back - still off.
+   6. Edit profile: change your name and save. Your QR code is on this screen.
+   7. Live messages: Messages > Dr. Anitha Rao, send a message. A reply appears
+      about 1.5 seconds later without refreshing.
+   8. Search: search HL-3K8M1, tap "Add". It now shows as connected.
+   9. Upload: attach several images and PDFs, reorder, upload, open the new item.
+      (To put test files on the emulator, drag them onto its window; they go to
+       Downloads.)
+  10. Lab flow: Settings > Log out, sign in as City Diagnostics. Open Lakshmi's
+      page, use "Upload for Lakshmi". The Share section is hidden.
+  11. Log out, sign in as Lakshmi: the lab's upload is on Home.
+  12. Doctor view: sign in as Dr. Anitha Rao. Items shared with her or her
+      hospital appear; the item button reads "Message patient".
+  13. App icon: on the emulator's home screen and app drawer the Healoo icon
+      (stethoscope clock) shows; long-press > App info shows it too.
+
+Against the trial server (7b), repeat 1-12 using developer sign-in. Two
+emulators signed in as Lakshmi and Dr. Anitha Rao show live messages both
+ways. Create a second emulator with:
+    avdmanager create avd -n healoo2 -k "system-images;android-35;google_apis_playstore;x86_64" -d pixel_7
+    emulator -avd healoo2
+and install to a specific one with:  adb -s emulator-5556 install -r app\build\outputs\apk\debug\app-debug.apk
+
+Emulator tips:
+  - Rotate: Ctrl+Left / Ctrl+Right.  Back: Esc.  Home: Ctrl+H.
+  - Dark mode: Settings > Display > Dark theme (check the Night screens).
+  - Large text: Settings > Display > Font size (check nothing overlaps).
+  - Offline test: the emulator's "..." menu > Cellular > Data status: Denied,
+    and turn Wi-Fi off in the emulator.
+
+
+9. iOS: WHAT IS AND ISN'T POSSIBLE ON WINDOWS
+---------------------------------------------
+
+  The iOS app (ios folder) needs Xcode, which runs only on macOS. On Windows
+  you cannot build it or run the iOS Simulator. Options:
+    - A Mac (any Apple silicon Mac with macOS 14+ is enough): follow
+      TestingReadMe.txt section 3.
+    - A rented cloud Mac (for example MacinCloud or AWS EC2 Mac instances),
+      used over remote desktop.
+    - A cloud build service with macOS machines (for example GitHub Actions
+      macOS runners or Codemagic) to compile and send test builds to
+      TestFlight - needs an Apple Developer account.
+  You can still edit the Swift files on Windows in VS Code.
+
+
+10. COMPILE APKs FOR PHONES
+---------------------------
+
+10A. Debug APK (for testers)
+      cd D:\Gurudatha\ElevateSystems\Srikanth\healoo-wui\android
+      .\gradlew.bat assembleDebug
+  Output: app\build\outputs\apk\debug\app-debug.apk
+  Install on a phone:
+    - USB: turn on Developer options > USB debugging on the phone, connect, then
+          adb install -r app\build\outputs\apk\debug\app-debug.apk
+    - Or send the file to the phone and open it (allow "install unknown apps").
+  For the trial server, set healoo.apiBaseUrl to https://<LAN IP>:8443/ before
+  building, and install healoo-local-ca.crt on the phone.
+
+10B. Release APK (signed)
+  1. Create a signing key once (keep the file and passwords safe - every future
+     update must use the same key):
+         mkdir C:\keys
+         keytool -genkeypair -v -keystore C:\keys\healoo-release.jks -alias healoo -keyalg RSA -keysize 2048 -validity 10000
+  2. Add to C:\Users\<you>\.gradle\gradle.properties (not the project file):
+         healoo.signing.storeFile=C:/keys/healoo-release.jks
+         healoo.signing.storePassword=<password>
+         healoo.signing.keyAlias=healoo
+         healoo.signing.keyPassword=<password>
+  3. Build:
+         .\gradlew.bat assembleRelease
+     Output: app\build\outputs\apk\release\app-release.apk
+     For Google Play, build an app bundle instead:  .\gradlew.bat bundleRelease
+     (app\build\outputs\bundle\release\app-release.aab)
+  Release builds leave out developer sign-in and don't trust local
+  certificates, so they work with demo data or an internet server with a real
+  certificate and Auth0 - not with the LAN trial server.
+
+  Before sharing a new version, raise versionCode (and versionName) in
+  app\build.gradle.kts; Android won't install an update with an equal or lower
+  versionCode.
+
+10C. Clean build
+      .\gradlew.bat clean
+      .\gradlew.bat --stop          (stops Gradle's background process)
+
+
+11. TROUBLESHOOTING
+-------------------
+
+  "Gradle requires JVM 17 or later" / Launcher JVM shows 11
+      Section 2: make JDK 17 the default, or set org.gradle.java.home. Open a
+      new terminal (and restart VS Code) after changing variables.
+      Then:  .\gradlew.bat --stop  and build again.
+
+  "SDK location not found"
+      local.properties is missing or wrong (section 5.2). Use forward slashes.
+
+  "Failed to find target with hash string 'android-36'" or build-tools 36 missing
+      sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+  Errors mentioning R.font, fraunces or figtree
+      The four font files are missing or misnamed (section 5.3).
+
+  "sdkmanager is not recognized" / "adb is not recognized"
+      Path entries from 3C are missing; open a new PowerShell after adding them.
+
+  Emulator: "x86_64 emulation currently requires hardware acceleration"
+      Turn on virtualization in BIOS and Windows Hypervisor Platform (section 1),
+      restart. Check with: emulator -accel-check
+
+  Emulator is black or very slow
+      Close other heavy programs; start it with: emulator -avd healoo -gpu host
+      (or -gpu swiftshader_indirect if the screen stays black).
+
+  "INSTALL_FAILED_UPDATE_INCOMPATIBLE"
+      An older build signed differently is installed:
+          adb uninstall com.healoo.app
+      then install again.
+
+  QR scanner says Google Play services are missing
+      The emulator must use a google_apis_playstore image (section 6).
+
+  "Can't reach the trial server" in developer sign-in
+      The message says whether it's the certificate or the connection.
+      Certificate: check the build output lists "trusts bundled certificate"
+      (7b step 3), then reinstall with .\gradlew.bat installDebug.
+      Connection: backend running? Emulator can use https://10.0.2.2:8443/ ;
+      check https://<address>:8443/healthz in the emulator's Chrome.
+
+  Gradle runs out of memory / very slow
+      org.gradle.jvmargs=-Xmx4g is set in gradle.properties; close the emulator
+      during the first build on 8 GB machines.
+
+  Build fails with Kotlin or plugin errors
+      Expected for this first, untested version. Copy the first 20-30 error
+      lines (from the first "e:" or "What went wrong") and send them back.
+
+  Test data only. Never enter real patient information in trial builds.

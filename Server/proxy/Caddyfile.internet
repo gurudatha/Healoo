@@ -1,0 +1,48 @@
+# Internet profile (design doc 9, public certificates via Let's Encrypt).
+# API and files live on separate hostnames: S3/MinIO presigned URLs are signed for the exact
+# host and path, so they can't sit under an /files/ prefix on the API host.
+{
+	email {$ACME_EMAIL}
+}
+
+{$API_DOMAIN} {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+	request_body /v1/* {
+		max_size 20MB
+	}
+	@ws path /ws /v1/ws
+	handle @ws {
+		reverse_proxy care-api:8080 {
+			stream_timeout 1h
+		}
+	}
+	handle /v1/* {
+		reverse_proxy care-api:8080 {
+			header_up X-Request-ID {http.request.uuid}
+		}
+	}
+	handle /healthz {
+		reverse_proxy care-api:8080
+	}
+	handle {
+		respond 404
+	}
+	log {
+		output stdout
+		format json
+	}
+}
+
+{$FILES_DOMAIN} {
+	request_body {
+		max_size 26MB
+	}
+	# Host header is passed through unchanged, which the presigned signature requires.
+	reverse_proxy minio:9000
+}

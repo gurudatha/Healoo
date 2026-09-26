@@ -1,0 +1,37 @@
+# ---- Server (Rust) ----
+Server/care-api/target/
+target/
+Server/**/data/
+**/.env
+*.key
+
+# Trial-server certificates are generated per machine
+Server/deploy/**/*.crt
+WUI/android/certs/*.crt
+WUI/android/certs/*.pem
+WUI/android/certs/*.cer
+
+# ---- Android ----
+WUI/android/local.properties
+WUI/android/.gradle/
+WUI/android/**/build/
+WUI/android/.kotlin/
+WUI/android/app/google-services.json
+*.jks
+*.keystore
+*.apk
+*.aab
+
+# ---- iOS ----
+WUI/ios/*.xcodeproj/
+WUI/ios/DerivedData/
+WUI/ios/Healoo/GoogleService-Info.plist
+xcuserdata/
+
+# ---- Editors / OS ----
+.idea/
+*.iml
+.vscode/*
+!.vscode/tasks.json
+.DS_Store
+Thumbs.db

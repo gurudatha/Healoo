@@ -1,0 +1,80 @@
+[package]
+name = "care-api"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+default-run = "care-api"
+description = "Healoo backend: REST + WebSocket (doc 4), Auth0 (5), Kafka (6), Cassandra (7)"
+
+[dependencies]
+# Runtime + HTTP/WS (doc 4.1). axum's WebSocket is built on tokio-tungstenite.
+tokio = { version = "1.40", features = ["full"] }
+tokio-util = "0.7"
+axum = { version = "0.7", features = ["ws", "macros"] }
+axum-server = { version = "0.7", features = ["tls-rustls"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace", "limit", "request-id", "set-header", "timeout"] }
+futures = "0.3"
+
+# Serialisation
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1.10", features = ["v1", "v4", "serde", "std"] }
+chrono = { version = "0.4", features = ["serde"] }
+ulid = "1"
+
+# Auth (doc 5)
+jsonwebtoken = "9"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# Cassandra (doc 7) — scylla driver speaks CQL to Cassandra 5
+scylla = "0.13"
+
+# Kafka (doc 6)
+rdkafka = { version = "0.36", features = ["cmake-build"] }
+
+# Files (doc 7.4): local disk (LAN) or S3/MinIO (internet)
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-sdk-s3 = "1"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+lopdf = "0.33"
+
+# Network profile: LAN certificates + discovery, client IPs behind proxies
+rcgen = { version = "0.13", features = ["x509-parser"] }
+local-ip-address = "0.6"
+mdns-sd = "0.11"
+ipnet = "2"
+url = "2"
+
+# Utilities
+async-trait = "0.1"
+dashmap = "6"
+thiserror = "1"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+base64 = "0.22"
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+rand = "0.8"
+bytes = "1"
+
+[[bin]]
+name = "care-api"
+path = "src/bin/care-api.rs"
+
+[[bin]]
+name = "care-worker"
+path = "src/bin/care-worker.rs"
+
+[[bin]]
+name = "care-seed"
+path = "src/bin/care-seed.rs"
+
+[[bin]]
+name = "devtoken"
+path = "src/bin/devtoken.rs"
+
+[profile.release]
+lto = "thin"

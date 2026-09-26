@@ -1,0 +1,532 @@
+HEALOO REST API - DEVELOPER DOCUMENTATION: AUTHENTICATION AND USER API
+=====================================================================
+
+Applies to: care-api v0.1 (healoo-backend.zip), design document sections 4 and 5.
+Note: the server code has not been compiled yet. This document describes the
+behaviour written in the source; confirm it against a running server.
+
+Contents
+  1. Basics (base URL, formats, errors, limits)
+  2. Authentication
+  3. Add user
+  4. Query users
+  5. Upload document
+  6. List data items
+  7. Quick reference
+  Appendix: trial accounts
+
+
+1. BASICS
+---------
+
+Base URL
+  LAN trial:   https://<computer's LAN IP>:8443
+               (Android emulator: https://10.0.2.2:8443)
+  Internet:    https://api.<your domain>
+
+  All API paths start with /v1. GET /v1/config (no token needed) returns the
+  API base, the WebSocket URL and which sign-in mode the server uses.
+
+TLS on the LAN
+  The trial server uses its own certificate authority. Pass its certificate
+  to curl instead of turning checks off:
+      curl --cacert healoo-local-ca.crt https://192.168.1.20:8443/healthz
+  Get the file with:
+      docker compose cp care-api:/data/tls/healoo-local-ca.crt .
+
+Formats
+  - Requests and responses are JSON (Content-Type: application/json),
+    except file uploads, which send the raw file.
+  - IDs are UUID strings. Item, thread and message IDs are time-based UUIDs.
+  - Every user also has a short Healoo ID such as HL-2M9P4 ("public_id").
+  - Item dates are "YYYY-MM-DD". Message times are ISO-8601.
+  - Optional fields that have no value are left out of responses, not
+    sent as null.
+  - Lists come wrapped as:  { "data": [ ... ], "page_state": null }
+    (paging cursors are not implemented yet; page_state is always null).
+
+Errors
+  Every error has the same shape:
+      {
+        "error": {
+          "code": "ACCESS_DENIED",
+          "message": "no grant for this user",
+          "request_id": "01J9..."
+        }
+      }
+
+  HTTP  code             Meaning
+  400   BAD_REQUEST      Invalid input; message says what to fix
+  401   UNAUTHORIZED     Missing, invalid or expired token
+  403   ACCESS_DENIED    Signed in, but not allowed (message gives the reason)
+  404   NOT_FOUND        No such user, item, thread or grant
+  409   CONFLICT         Conflicting change
+  429   RATE_LIMITED     Too many requests
+  500   INTERNAL         Server error; quote request_id when reporting it
+
+Limits
+  - 20 requests per second per user (bursts up to 40), then 429.
+  - Request bodies up to 20 MB (files go through upload URLs, section 5).
+  - Up to 20 attachments per item; images up to 10 MB, PDFs up to 25 MB.
+
+
+2. AUTHENTICATION
+-----------------
+
+Every /v1 endpoint except /v1/config needs a bearer token:
+
+    Authorization: Bearer <access_token>
+
+The server accepts one of two token types, chosen by the server setting
+AUTH_MODE. Check which one with GET /v1/config ("auth": {"mode": ...}).
+
+2.1 Auth0 tokens (AUTH_MODE=auth0; required on the internet)
+  - Issued by your Auth0 tenant for the API audience (default
+    https://api.careconnect.local). Algorithm RS256.
+  - The server checks the signature against the tenant's public keys
+    (cached 10 minutes, refreshed when a new key ID appears), and checks
+    "iss" (https://<AUTH0_DOMAIN>/), "aud" and "exp".
+  - The mobile apps get tokens through Auth0 Universal Login with PKCE.
+    For scripts, get a user token the same way, or with the Password grant
+    if your tenant has it enabled:
+        curl https://<AUTH0_DOMAIN>/oauth/token -H 'content-type: application/json' -d '{
+          "grant_type": "password", "username": "<email>", "password": "<password>",
+          "audience": "https://api.careconnect.local", "client_id": "<client id>",
+          "scope": "openid profile email"
+        }'
+  - Custom claims (added by the Auth0 post-login Action, design doc 5.3):
+        https://careconnect.local/roles   array of role names
+        https://careconnect.local/uid     Healoo user_id, once provisioned
+    The namespace is the server setting CLAIMS_NAMESPACE.
+  - Access tokens last 15 minutes; renew them with the refresh token.
+
+2.2 Developer tokens (AUTH_MODE=dev; LAN trial only)
+  For offline testing. Refused by the server in internet mode.
+  - Signed with the server's DEV_JWT_SECRET (HS256), iss and aud
+    "healoo-dev", valid 12 hours. Same custom claims as Auth0 tokens.
+
+  List the trial accounts (no token needed):
+      GET /dev/users
+      Response 200:
+      { "data": [ { "public_id": "HL-2M9P4", "display_name": "Lakshmi K.", "role": "PATIENT" }, ... ] }
+
+  Get a token for a trial account (no token needed):
+      POST /dev/token
+      { "public_id": "HL-2M9P4" }
+
+      Response 200:
+      {
+        "access_token": "eyJhbGciOiJIUzI1NiIs...",
+        "token_type": "Bearer",
+        "expires_in": 43200,
+        "user_id": "5eed0000-0000-4000-8000-000000000001"
+      }
+      404 if no user has that Healoo ID, or if the server isn't in LAN +
+      dev mode (then /dev/* doesn't exist).
+
+  From the command line (same DEV_JWT_SECRET as the server):
+      devtoken <user_uuid> [role ...]
+
+  Example:
+      BASE=https://192.168.1.20:8443
+      TOKEN=$(curl -s --cacert healoo-local-ca.crt -X POST $BASE/dev/token \
+        -H 'content-type: application/json' -d '{"public_id":"HL-2M9P4"}' \
+        | sed -E 's/.*"access_token":"([^"]+)".*/\1/')
+
+2.3 What happens on every request
+  1. The token is verified (2.1 or 2.2). Failure -> 401.
+  2. The token subject ("sub") is mapped to a Healoo user. If none exists,
+     one is created (section 3.1).
+  3. The per-user rate limit is applied.
+  4. The endpoint runs. What the user may see is decided by the server's
+     access rules (design doc 2.3), using the database, not token roles.
+     So a doctor who leaves a hospital loses access at once, even with a
+     token issued earlier.
+
+  Check your token:
+      curl --cacert healoo-local-ca.crt $BASE/v1/me -H "authorization: Bearer $TOKEN"
+
+2.4 WebSocket
+  wss://<host>/v1/ws (or /ws). Send the token as the Authorization header,
+  as ?token=<token>, or as the first frame {"type":"auth","token":"..."}
+  within 10 seconds. The server closes the socket with code 4001 when the
+  token expires; reconnect with a fresh token.
+
+
+3. ADD USER
+-----------
+
+3.1 Create an account (self sign-up)
+  There is no separate "create user" call. A user is created automatically
+  the first time a valid token with a new "sub" calls any /v1 endpoint.
+  New accounts always get the PATIENT role and a new Healoo ID.
+
+  With Auth0: the person signs up on the Auth0 login page, then the app
+  calls GET /v1/me.
+
+  With developer tokens: make a token for a new UUID, then call /v1/me:
+      NEW=$(uuidgen | tr A-Z a-z)
+      TOKEN=$(devtoken $NEW patient)
+      curl --cacert healoo-local-ca.crt $BASE/v1/me -H "authorization: Bearer $TOKEN"
+
+  Response 200 (UserProfile):
+      {
+        "user_id": "3f6c...e21",
+        "public_id": "HL-7QK4M",
+        "display_name": "Dev user",
+        "roles": ["PATIENT"],
+        "headline": "Patient",
+        "connected": true
+      }
+
+  If the token carries a "uid" claim for an existing user, the new "sub" is
+  linked to that user instead of creating a new one.
+
+  Other roles (DOCTOR, LAB, HOSPITAL, ASSISTANT, ADMINISTRATOR) are set up
+  by administrators; there is no public API for that in v0.1. On the trial
+  server they come from the seed data (care-seed).
+
+3.2 Set the new user's profile
+      PATCH /v1/me
+      { "display_name": "Ravi Kumar", "location": "Kurnool" }
+
+  - display_name: required, 1 to 80 characters.
+  - location: optional; empty or missing clears it.
+  Response 200: the updated UserProfile. 400 if the name is empty or too long.
+
+3.3 Add a user to your contacts
+  Adding a contact lets you message each other and see shared items. It
+  does not give access to any records by itself; the owner still has to
+  share items.
+
+      POST /v1/connections
+      { "user_id": "5eed0000-0000-4000-8000-000000000002" }
+
+  Response 200: that user's UserProfile with "connected": true.
+  400 if you try to add yourself; 404 if the user doesn't exist.
+  Adding someone twice is harmless.
+
+  Remove a contact:
+      DELETE /v1/connections/{user_id}      -> 204 No Content
+
+  Example:
+      curl --cacert healoo-local-ca.crt -X POST $BASE/v1/connections \
+        -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+        -d '{"user_id":"5eed0000-0000-4000-8000-000000000002"}'
+
+
+4. QUERY USERS
+--------------
+
+Searches return profile fields only, never records or data items.
+
+4.1 Search
+      GET /v1/search?q=<text>&type=<role>
+
+  q
+    - A Healoo ID such as HL-7R2C9: exact match (case doesn't matter).
+    - Otherwise name words: every word must appear in the name
+      ("anitha rao" finds "Dr. Anitha Rao"). Titles such as "Dr" are ignored.
+    - Empty: returns your contacts.
+  type (optional)
+    ALL (default), USER or PATIENT, DOCTOR, HOSPITAL, LAB, ASSISTANT,
+    ADMINISTRATOR, APP_ADMINISTRATOR. Filters on the user's main role.
+
+  You never appear in your own results. Up to 50 matches.
+
+  Response 200:
+      {
+        "data": [
+          {
+            "user_id": "5eed0000-0000-4000-8000-000000000002",
+            "public_id": "HL-7R2C9",
+            "display_name": "Dr. Anitha Rao",
+            "roles": ["DOCTOR"],
+            "headline": "Doctor · General Medicine",
+            "location": "[City]",
+            "hospital": "Test Hospital A",
+            "official_number": "REG-TEST-001",
+            "connected": true
+          }
+        ],
+        "page_state": null
+      }
+
+  Examples:
+      curl --cacert healoo-local-ca.crt "$BASE/v1/search?q=HL-7R2C9" -H "authorization: Bearer $TOKEN"
+      curl --cacert healoo-local-ca.crt "$BASE/v1/search?q=rao&type=DOCTOR" -H "authorization: Bearer $TOKEN"
+
+4.2 One user's profile
+      GET /v1/users/{user_id}
+  Response 200: UserProfile ("connected" says whether they're in your
+  contacts). 404 if not found.
+
+4.3 Your contacts
+      GET /v1/connections
+  Response 200: { "data": [UserProfile, ...], "page_state": null }
+
+4.4 Yourself
+      GET /v1/me
+  Response 200: your UserProfile.
+
+UserProfile fields
+  user_id          UUID
+  public_id        Healoo ID, e.g. HL-2M9P4
+  display_name     name shown to others
+  roles            array; the main role comes first
+  headline         e.g. "Patient", "Doctor · Test Hospital A"
+  photo_uri        optional
+  location         optional
+  hospital         optional; current hospital of a doctor or administrator
+  official_number  optional; doctor's registration number
+  connected        true if this user is in your contacts
+
+
+5. UPLOAD DOCUMENT
+------------------
+
+A document is a data item (for example a REPORT) with one or more images
+or PDFs attached. Uploading takes three steps:
+
+  Step 1  Ask for upload URLs          POST /v1/uploads/presign
+  Step 2  Upload each file             PUT <upload_url>
+  Step 3  Create the item              POST /v1/items
+
+5.1 Step 1: ask for upload URLs
+      POST /v1/uploads/presign
+      {
+        "files": [
+          { "name": "cbc_page1.jpg", "mime": "image/jpeg",      "size": 482113 },
+          { "name": "cbc_report.pdf", "mime": "application/pdf", "size": 1203344 }
+        ]
+      }
+
+  - 1 to 20 files per call.
+  - mime must be image/... (up to 10 MB) or application/pdf (up to 25 MB).
+  - size is the file size in bytes.
+
+  Response 200 (same order as the request):
+      {
+        "uploads": [
+          { "upload_url": "https://192.168.1.20:8443/files/uploads/5eed.../01J9...-cbc_page1.jpg?m=PUT&exp=...&ct=image%2Fjpeg&sig=...",
+            "uri": "obj:uploads/5eed0000-0000-4000-8000-000000000001/01J9...-cbc_page1.jpg" },
+          { "upload_url": "https://...", "uri": "obj:uploads/.../01J9...-cbc_report.pdf" }
+        ]
+      }
+
+  Keep each "uri"; you need it in step 3. Upload URLs expire after 10
+  minutes. On the internet profile upload_url points at the files host
+  (S3/MinIO) instead.
+
+5.2 Step 2: upload each file
+      PUT <upload_url>
+      Content-Type: <the same mime as in step 1>
+      Body: the raw file bytes (no JSON, no form encoding)
+
+      curl --cacert healoo-local-ca.crt -X PUT "<upload_url>" \
+        -H 'content-type: image/jpeg' --data-binary @cbc_page1.jpg
+
+  200 on success. 403 if the URL has expired or was changed; 400 if the
+  Content-Type doesn't match or the file is too large. No bearer token is
+  needed: the URL itself carries a signature.
+
+5.3 Step 3: create the item
+      POST /v1/items
+      {
+        "core_item_type": "REPORT",
+        "title": "CBC - Complete blood count",
+        "date": "2026-09-20",
+        "keywords": ["CBC", "Haemoglobin"],
+        "core_item_data": [
+          { "kind": "IMAGE", "uri": "obj:uploads/.../01J9...-cbc_page1.jpg",
+            "mime": "image/jpeg", "size": 482113, "position": 0, "name": "cbc_page1.jpg" },
+          { "kind": "PDF", "uri": "obj:uploads/.../01J9...-cbc_report.pdf",
+            "mime": "application/pdf", "size": 1203344, "position": 1, "name": "cbc_report.pdf" }
+        ],
+        "links": ["https://example.com/lab-result/123"],
+        "share_with": ["5eed0000-0000-4000-8000-000000000002"]
+      }
+
+  Fields
+    core_item_type   required: REPORT, ALERT, BOOKING, FEEDBACK, PAYMENT, MESSAGE
+    owner_id         optional; defaults to you. Set it to a patient's user_id
+                     to upload for that patient (see rules below).
+    title            optional; defaults to the type name; max 120 characters
+    date             optional "YYYY-MM-DD"; defaults to now
+    keywords         optional; up to 20
+    core_item_data   the files from step 2, in the order they should be shown.
+                     kind is IMAGE or PDF. The server numbers "position" from
+                     this order and ignores the values you send.
+    links            optional web links; only https:// links are kept (max 20)
+    status           optional OPEN (default) or CLOSED
+    share_with       optional user IDs to share with at once. Sharing with a
+                     hospital account creates a hospital-wide share.
+                     Only used when you are the owner.
+    pointer_to_message, pointer_item_id   optional links to a thread or item
+
+  Rules
+    - Attachments must be files you uploaded yourself through step 1
+      (otherwise 403). kind must match mime, and sizes must be within the
+      limits (otherwise 400).
+    - A REPORT needs at least one file or link.
+    - Uploading for someone else: only DOCTOR, ASSISTANT and LAB users can,
+      the owner must be a PATIENT in your contacts, and you get access to
+      that item automatically. The patient decides any further sharing.
+    - A LAB must set owner_id when creating a REPORT.
+
+  Response 200: the new data item (fields in section 6.5), with short-lived
+  view URLs in core_item_data. Image thumbnails, PDF page counts and SHA-256
+  hashes are added a moment later by the media worker; connected apps then
+  receive an "item.updated" WebSocket event.
+
+  Common errors
+    400  "a report needs at least one file or link"
+    400  "<name> is not an allowed IMAGE (type or size)"
+    403  "attachments must be files you uploaded"
+    403  "you can upload only for patients in your contacts"
+
+
+6. LIST DATA ITEMS
+------------------
+
+6.1 List items you can see
+      GET /v1/items?status=OPEN&type=REPORT&limit=20
+
+  status   OPEN (default) or CLOSED
+  type     optional: REPORT, ALERT, BOOKING, FEEDBACK, PAYMENT, MESSAGE
+  limit    1 to 100, default 20
+
+  Includes, newest first:
+    - items you own;
+    - items shared directly with you;
+    - for doctors: items shared with a hospital where you currently work;
+    - for assistants: items of patients your doctor delegated to you.
+
+  The list returns short summaries: keywords, core_item_data, links,
+  access_list and created_by_name are empty. Use GET /v1/items/{id} for
+  the full item. The type filter is applied after the limit, so a filtered
+  list can be shorter than "limit".
+
+  Response 200:
+      {
+        "data": [
+          {
+            "item_id": "8a4b1c20-7f2e-11f1-9c3d-2b1f5e7a9d01",
+            "date": "2026-09-20",
+            "core_item_type": "REPORT",
+            "title": "CBC - Complete blood count",
+            "subtitle": "City Diagnostics · Lab report",
+            "keywords": [],
+            "core_item_data": [],
+            "links": [],
+            "owner_id": "5eed0000-0000-4000-8000-000000000001",
+            "created_by_name": "",
+            "access_list": [],
+            "status": "OPEN",
+            "allowed_actions": ["read", "share", "status"]
+          }
+        ],
+        "page_state": null
+      }
+
+  Example:
+      curl --cacert healoo-local-ca.crt "$BASE/v1/items?status=OPEN&limit=50" \
+        -H "authorization: Bearer $TOKEN"
+
+6.2 One item
+      GET /v1/items/{item_id}
+
+  The access rules decide what you get:
+    - Full access: the whole item, with view URLs valid for 10 minutes.
+    - Metadata only (for example an assistant without delegation, or a
+      REPORT shared with someone who isn't a doctor): type, date, title,
+      status and keywords, but no files or links; allowed_actions is ["meta"].
+    - No access: 403 with the reason, e.g. "no grant for this user" or
+      "hospital grant, but no active affiliation with that hospital".
+  Every decision is recorded in the audit log.
+
+6.3 An item's attachments
+      GET /v1/items/{item_id}/attachments
+  Response 200: { "data": [Attachment, ...], "page_state": null }, in
+  display order, with fresh view and thumbnail URLs. Full access only
+  (otherwise 403).
+
+6.4 Other item lists
+      GET /v1/users/{user_id}/shared-items
+        Open items shared between you and that user, both ways. Empty
+        unless the user is in your contacts.
+      GET /v1/dashboard
+        { "open_reports": 1, "unread_messages": 2, "upcoming_appointments": 1 }
+
+6.5 Data item fields
+  item_id             time-based UUID
+  date                "YYYY-MM-DD"
+  core_item_type      REPORT, ALERT, BOOKING, FEEDBACK, PAYMENT, MESSAGE
+  title, subtitle     text shown in lists
+  keywords            array of text
+  core_item_data      array of Attachment, in display order
+  links               array of https links
+  owner_id            the patient who owns the item
+  created_by_name     who created it (lab, doctor or patient)
+  access_list         who it is shared with; only shown to the owner.
+                      Each: grant_id, grantee_type (USER or HOSPITAL),
+                      grantee_id, grantee_name, via_hospital_id (optional)
+  pointer_to_message  optional thread ID
+  pointer_item_id     optional linked item ID
+  rating              optional 1-5
+  status              OPEN or CLOSED
+  allowed_actions     what you may do: read, share, revoke, status, rate,
+                      comment, or meta (metadata only)
+
+  Attachment fields
+  kind          IMAGE or PDF
+  uri           short-lived view URL (10 minutes); fetch a new one by
+                reading the item again
+  mime, size    type and size in bytes
+  position      display order, starting at 0
+  name          original file name
+  page_count    PDFs, once processed
+  thumb_uri     images, once processed
+  sha256        once processed
+
+
+7. QUICK REFERENCE
+------------------
+
+  Method  Path                              Token  Purpose
+  GET     /v1/config                        no     Server mode, URLs, sign-in mode
+  GET     /dev/users                        no     Trial accounts (LAN + dev only)
+  POST    /dev/token                        no     Trial token (LAN + dev only)
+  GET     /v1/me                            yes    Your profile; creates the account on first call
+  PATCH   /v1/me                            yes    Update your name and location
+  POST    /v1/connections                   yes    Add a user to contacts
+  DELETE  /v1/connections/{user_id}         yes    Remove a contact
+  GET     /v1/connections                   yes    Your contacts
+  GET     /v1/search?q=&type=               yes    Find users by Healoo ID or name
+  GET     /v1/users/{user_id}               yes    One user's profile
+  POST    /v1/uploads/presign               yes    Upload URLs for 1-20 files
+  PUT     <upload_url>                      no*    Upload one file (*signed URL)
+  POST    /v1/items                         yes    Create a data item
+  GET     /v1/items?status=&type=&limit=    yes    List visible items
+  GET     /v1/items/{item_id}               yes    Read one item
+  GET     /v1/items/{item_id}/attachments   yes    Attachments with view URLs
+  GET     /v1/users/{user_id}/shared-items  yes    Items shared with a contact
+  GET     /v1/dashboard                     yes    Counts for the home screen
+
+
+APPENDIX: TRIAL ACCOUNTS (care-seed)
+------------------------------------
+
+  Healoo ID  Name                  Role                user_id
+  HL-2M9P4   Lakshmi K.            PATIENT             5eed0000-0000-4000-8000-000000000001
+  HL-7R2C9   Dr. Anitha Rao        DOCTOR (Hospital A) 5eed0000-0000-4000-8000-000000000002
+  HL-1H0A1   Test Hospital A       HOSPITAL            5eed0000-0000-4000-8000-000000000003
+  HL-6L3D2   City Diagnostics      LAB                 5eed0000-0000-4000-8000-000000000004
+  HL-3K8M1   Dr. Srinivas Rao      DOCTOR (independent)5eed0000-0000-4000-8000-000000000005
+  HL-9P4T6   Rao Heart Clinic      HOSPITAL            5eed0000-0000-4000-8000-000000000006
+  HL-5W1Q3   Rao Diagnostics       LAB                 5eed0000-0000-4000-8000-000000000007
+  HL-4K7Q2   Priya Rao             PATIENT             5eed0000-0000-4000-8000-000000000008
+  HL-8A2D4   Hospital A Admin      ADMINISTRATOR       5eed0000-0000-4000-8000-000000000009
+  HL-8S5T7   Meena S. (assistant)  ASSISTANT           5eed0000-0000-4000-8000-00000000000a
+
+  Test data only. Never put real patient information on the trial server.

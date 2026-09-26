@@ -1,0 +1,26 @@
+# Optional LAN variant (LAN_TLS=proxy): Caddy on this machine terminates TLS with its internal
+# CA (doc 9.2) and forwards to care-api on 127.0.0.1:8080. Replace 192.168.1.20 with your LAN IP.
+# Run care-api with: NETWORK_MODE=lan LAN_TLS=proxy BIND=127.0.0.1:8080 PUBLIC_BASE_URL=https://192.168.1.20/
+{
+	local_certs
+}
+
+https://192.168.1.20, https://localhost {
+	tls internal
+	encode zstd gzip
+	request_body /v1/* {
+		max_size 20MB
+	}
+	request_body /files/* {
+		max_size 26MB
+	}
+	@ws path /ws /v1/ws
+	handle @ws {
+		reverse_proxy 127.0.0.1:8080 {
+			stream_timeout 1h
+		}
+	}
+	handle {
+		reverse_proxy 127.0.0.1:8080
+	}
+}

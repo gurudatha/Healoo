@@ -1,0 +1,1672 @@
+RUST LIBRARIES IN THE HEALOO BACKEND (care-api) BUILD
+=====================================================
+
+Source: libraries.txt (cargo build --release; 323 libraries, plus care-api itself).
+Each entry: what the library is / what it does here / who needs it.
+Libraries marked "build time" only run while compiling and are not part of
+the finished program. Where two versions appear, different libraries depend
+on different major versions; Cargo builds both. "Pulled in indirectly" means
+another library depends on it and the exact chain isn't worth tracing here.
+
+
+1. LIBRARIES CARE-API USES DIRECTLY (listed in Cargo.toml)
+----------------------------------------------------------
+
+tokio (1.53.1)
+  Asynchronous runtime for Rust: schedules tasks, timers, sockets and files.
+  Everything in the server runs on it: HTTP, WebSocket, Cassandra, Kafka calls.
+  Direct dependency ("full" features); the heart of care-api.
+
+tokio-util (0.7.19)
+  Extra utilities for tokio, such as codecs and cancellation tokens.
+  care-api uses CancellationToken to stop the server and consumers cleanly.
+  Direct dependency; also used by hyper, h2 and tower.
+
+axum (0.7.9)
+  Web framework built on hyper and tower: routes, extractors, JSON, WebSocket.
+  Defines all /v1 routes, the Principal extractor and the /v1/ws upgrade.
+  Direct dependency (features ws, macros).
+
+axum-server (0.7.3)
+  Server runner for axum that adds TLS via rustls.
+  Serves HTTPS directly in the LAN profile (LAN_TLS=builtin).
+  Direct dependency (feature tls-rustls).
+
+tower (0.5.3, 0.4.13)
+  Middleware abstraction: Service and Layer traits, timeouts, limits.
+  axum is built on it; care-api stacks its layers on the router.
+  Direct dependency 0.4; 0.5 comes in through reqwest/hyper-util.
+
+tower-http (0.6.11, 0.5.2)
+  Ready-made HTTP middleware: CORS, tracing, body limits, request IDs.
+  Provides the CORS, request-id, trace and security-header layers.
+  Direct dependency 0.5; 0.6 comes in through reqwest.
+
+futures (0.3.34)
+  Core future/stream traits and combinators (StreamExt, SinkExt, select).
+  Used to split the WebSocket into sender and receiver halves.
+  Direct dependency; umbrella over the futures-* crates.
+
+serde (1.0.229)
+  Framework for serialising and deserialising Rust data.
+  Every JSON request, response, event envelope and config shape uses it.
+  Direct dependency; derive macros come from serde_derive.
+
+serde_json (1.0.151)
+  JSON reader and writer built on serde.
+  Parses API bodies, builds responses, and encodes Kafka event payloads.
+  Direct dependency.
+
+uuid (1.26.1)
+  Generates, parses and formats UUIDs (v1 time-based, v4 random).
+  User IDs are v4; item, thread and message IDs are v1 (Cassandra timeuuid).
+  Direct dependency (features v1, v4, serde).
+
+chrono (0.4.45)
+  Date and time types, formatting and parsing.
+  Item dates, message timestamps, token expiry and event times.
+  Direct dependency.
+
+ulid (1.2.1)
+  Sortable unique identifiers (time + randomness, 26 characters).
+  Event IDs, request IDs and uploaded file names.
+  Direct dependency.
+
+jsonwebtoken (9.3.1)
+  Creates and verifies JSON Web Tokens (JWT).
+  Verifies Auth0 RS256 tokens and signs/verifies the HS256 dev tokens.
+  Direct dependency; uses ring for the cryptography.
+
+reqwest (0.12.28)
+  High-level HTTP client.
+  Downloads Auth0's public signing keys (JWKS).
+  Direct dependency (rustls TLS, JSON).
+
+scylla (0.13.2)
+  Async CQL driver for ScyllaDB and Apache Cassandra.
+  All database access in src/store goes through its Session.
+  Direct dependency 0.13.
+
+rdkafka (0.36.2)
+  Rust wrapper around librdkafka, the standard C Kafka client.
+  Producer and consumers for the event topics (doc section 6).
+  Direct dependency (feature cmake-build).
+
+aws-config (1.12.0)
+  Loads AWS settings: region, credentials from environment or files.
+  Configures the S3 client when FILE_STORE=s3 (MinIO or AWS S3).
+  Direct dependency.
+
+aws-sdk-s3 (1.149.0)
+  Official AWS SDK client for Amazon S3 (also works with MinIO).
+  Presigned upload/download URLs and file reads/writes in S3Store.
+  Direct dependency.
+
+image (0.25.10)
+  Decodes, edits and encodes images (JPEG, PNG, WebP).
+  Makes attachment thumbnails in the media worker and seed sample images.
+  Direct dependency (jpeg, png, webp only).
+
+lopdf (0.33.0)
+  Reads, edits and writes PDF files.
+  Counts PDF pages in the media worker and builds seed sample PDFs.
+  Direct dependency.
+
+rcgen (0.13.2)
+  Generates X.509 certificates and keys.
+  Creates the local trial CA and the LAN server certificate.
+  Direct dependency (feature x509-parser to reload the CA).
+
+local-ip-address (0.6.13)
+  Finds this machine's local network IP address.
+  The LAN profile uses it to build the default public URL.
+  Direct dependency.
+
+mdns-sd (0.11.5)
+  Multicast DNS service discovery (Bonjour/Zeroconf).
+  Announces _healoo._tcp on the local network when run natively.
+  Direct dependency.
+
+ipnet (2.12.2)
+  IP network (CIDR) types such as 10.0.0.0/8.
+  Parses TRUSTED_PROXIES to decide which X-Forwarded-For to trust.
+  Direct dependency; also used by reqwest.
+
+url (2.5.8)
+  Parses and builds URLs (WHATWG standard).
+  Public base URL, WebSocket URL and signed file links.
+  Direct dependency; also used by reqwest and the AWS SDK.
+
+async-trait (0.1.92)
+  Macro that allows async functions in traits.
+  Used by the Exposure, TokenVerifier, ObjectStore and EventBus traits.
+  Direct dependency.
+
+dashmap (5.5.3, 6.2.1)
+  Concurrent hash map that many threads can use at once.
+  Prepared-statement cache, WebSocket registry, token and rate-limit caches.
+  Direct dependency 6.x; 5.x comes in through scylla.
+
+thiserror (1.0.69, 2.0.20)
+  Derive macro for writing error types.
+  Defines AuthError in the auth module.
+  Direct dependency 1.x; 2.x is used by other libraries.
+
+anyhow (1.0.104)
+  Easy error type for applications, with context messages.
+  Most internal functions return anyhow::Result.
+  Direct dependency.
+
+tracing (0.1.44)
+  Structured, levelled logging and spans.
+  All log lines in care-api (info!, warn!, error!).
+  Direct dependency.
+
+tracing-subscriber (0.3.23)
+  Collects tracing events and prints them.
+  Text logs on the LAN, JSON logs on the internet; RUST_LOG filtering.
+  Direct dependency (env-filter, json).
+
+base64 (0.22.1)
+  Base64 encoding and decoding.
+  Listed in Cargo.toml; also used by jsonwebtoken, rustls and others.
+  Direct dependency.
+
+hmac (0.12.1, 0.13.0)
+  HMAC message authentication codes (RustCrypto).
+  Signs and checks the /files URLs of the disk store.
+  Direct dependency 0.12; 0.13 is a newer release used elsewhere.
+
+sha2 (0.11.0, 0.10.9)
+  SHA-224/256/384/512 hash functions (RustCrypto).
+  SHA-256 of attachments and the HMAC for signed file URLs.
+  Direct dependency 0.10; 0.11 is a newer release used elsewhere.
+
+hex (0.4.3)
+  Hexadecimal encoding and decoding.
+  Formats SHA-256 hashes and URL signatures as text.
+  Direct dependency.
+
+rand (0.8.8, 0.9.5)
+  Random number generation.
+  Random Healoo IDs (HL-xxxxx) and the v1 UUID node id.
+  Direct dependency 0.8; 0.9 is used by other libraries.
+
+bytes (1.12.1)
+  Efficient byte buffers that can be shared without copying.
+  File contents passed between the API, object store and worker.
+  Direct dependency; also core to hyper, tokio and the AWS SDK.
+
+
+2. ASYNC RUNTIME AND CONCURRENCY
+--------------------------------
+
+tokio-macros (2.7.2)
+  Procedural macros for tokio, mainly #[tokio::main] and #[tokio::test].
+  Turns care-api's async main function into a program entry point.
+  Used by tokio.
+
+mio (1.2.3)
+  Low-level, non-blocking I/O (epoll on Linux, kqueue on macOS, IOCP on Windows).
+  The layer under tokio that waits for sockets to become ready.
+  Used by tokio.
+
+socket2 (0.6.5, 0.5.10)
+  Cross-platform access to low-level socket options.
+  Lets networking code set options std::net doesn't expose.
+  Used by tokio, hyper-util and mdns-sd (two versions).
+
+signal-hook-registry (1.4.8)
+  Registers operating-system signal handlers safely.
+  Lets tokio react to Ctrl-C and SIGTERM (docker stop).
+  Used by tokio.
+
+pin-project-lite (0.2.17)
+  Lightweight macro for safe pinned fields in futures.
+  Needed for hand-written futures and streams.
+  Used by tokio, hyper, tower, tracing and others.
+
+pin-utils (0.1.0)
+  Small helpers for pinning values.
+  Legacy helper for futures code.
+  Used by futures-util.
+
+futures-core (0.3.34)
+  Core Future and Stream traits for the futures ecosystem.
+  The minimal shared definitions other async crates depend on.
+  Used by futures, tokio-util, hyper, axum.
+
+futures-sink (0.3.34)
+  The Sink trait (something you can send values into).
+  Used for sending WebSocket messages.
+  Part of the futures family.
+
+futures-channel (0.3.34)
+  Async channels (oneshot, mpsc) for futures.
+  Passing values between async tasks.
+  Part of the futures family; used by hyper.
+
+futures-task (0.3.34)
+  Tools for building task wakers.
+  Low-level support for executors.
+  Part of the futures family.
+
+futures-io (0.3.34)
+  Async versions of Read and Write traits.
+  Common I/O traits for non-tokio code.
+  Part of the futures family.
+
+futures-util (0.3.34)
+  Combinators and helpers for futures and streams.
+  StreamExt/SinkExt methods such as next() and split().
+  Part of the futures family.
+
+futures-macro (0.3.34)
+  Macros such as join! and select! for futures.
+  Generates code for waiting on several futures at once.
+  Part of the futures family.
+
+futures-executor (0.3.34)
+  Simple executors that run futures to completion.
+  Rarely used on its own in tokio programs.
+  Part of the futures family.
+
+slab (0.4.12)
+  Pre-allocated storage with reusable slots.
+  Efficient storage for tasks and connections.
+  Used by futures-util and h2.
+
+parking_lot (0.12.5)
+  Faster, smaller Mutex and RwLock implementations.
+  Locks used inside tokio and the drivers.
+  Used by tokio, dashmap and others.
+
+parking_lot_core (0.9.12)
+  Core thread-parking logic behind parking_lot.
+  Puts threads to sleep and wakes them.
+  Used by parking_lot and dashmap.
+
+lock_api (0.4.14)
+  Common traits for building lock types.
+  Foundation that parking_lot and spin build on.
+  Used by parking_lot and spin.
+
+scopeguard (1.2.0)
+  Runs cleanup code when a scope ends (defer).
+  Ensures locks and state are restored on early exit.
+  Used by lock_api.
+
+atomic-waker (1.1.2)
+  Stores a task waker that can be updated atomically.
+  Wakes a waiting task when data arrives.
+  Used by h2 and hyper.
+
+sync_wrapper (1.0.2)
+  Makes a non-Sync value safe to share by allowing only exclusive access.
+  Lets bodies and futures be used across threads.
+  Used by axum and reqwest.
+
+try-lock (0.2.5)
+  Very small lock that never blocks, it only tries.
+  Coordinates hyper's client connections.
+  Used by want.
+
+want (0.3.1)
+  Signals when a consumer wants the next value.
+  Flow control between hyper's client and its connections.
+  Used by hyper.
+
+polling (2.8.0)
+  Portable interface to epoll/kqueue/IOCP.
+  Waits for network events without tokio.
+  Used by mdns-sd.
+
+flume (0.11.1)
+  Fast multi-producer, multi-consumer channel.
+  Sends messages between mdns-sd's threads.
+  Used by mdns-sd.
+
+spin (0.10.1, 0.9.9)
+  Spin-based locks and lazy values that need no operating system.
+  Simple locks in low-level crates.
+  Used by flume and others (two versions).
+
+crossbeam-utils (0.8.23)
+  Utilities for concurrent programming (cache padding, scoped threads).
+  Building block for rayon's work-stealing queues.
+  Used by rayon via crossbeam-deque/epoch.
+
+crossbeam-epoch (0.9.21)
+  Memory reclamation for lock-free data structures.
+  Lets rayon's queues free memory safely.
+  Used by crossbeam-deque.
+
+crossbeam-deque (0.8.8)
+  Work-stealing queues.
+  Balances work across rayon's threads.
+  Used by rayon-core.
+
+rayon (1.12.0)
+  Easy data parallelism (parallel iterators).
+  Speeds up image and PDF processing on several CPU cores.
+  Used by image and lopdf.
+
+rayon-core (1.13.0)
+  Thread pool behind rayon.
+  Runs rayon's parallel jobs.
+  Used by rayon.
+
+arc-swap (1.9.2)
+  Atomically swappable shared pointer.
+  Lets code replace shared configuration without locks.
+  Used by scylla.
+
+thread_local (1.1.10)
+  Per-object thread-local storage.
+  Keeps per-thread state in the log filter.
+  Used by tracing-subscriber.
+
+sharded-slab (0.1.7)
+  Lock-free concurrent slab allocator.
+  Stores span data for the tracing subscriber.
+  Used by tracing-subscriber.
+
+once_cell (1.21.4)
+  Values that are initialised once, lazily.
+  Global values created on first use.
+  Used by many crates (tracing, regex, AWS SDK).
+
+lazy_static (1.5.0)
+  Older macro for lazily initialised globals.
+  Same idea as once_cell, older style.
+  Used by tracing-subscriber and others.
+
+
+3. HTTP, WEB SERVER AND WEBSOCKET
+---------------------------------
+
+http (1.5.0, 0.2.12)
+  Standard HTTP types: Request, Response, headers, methods, status codes.
+  Shared vocabulary for axum, hyper, reqwest and tower.
+  Used everywhere; 0.2 is also present for the older AWS SDK TLS stack.
+
+http-body (1.1.0, 0.4.6)
+  Trait describing an HTTP body that arrives in chunks.
+  Lets servers and clients stream bodies.
+  Used by hyper, axum and the AWS SDK (two versions).
+
+http-body-util (0.1.5)
+  Helpers for http-body (collect a body, empty and full bodies).
+  Reads whole request bodies such as uploads.
+  Used by axum, reqwest and hyper-util.
+
+httparse (1.10.1)
+  Fast, zero-copy HTTP/1 request and response parser.
+  Parses incoming HTTP requests for hyper.
+  Used by hyper.
+
+httpdate (1.0.3)
+  Formats and parses HTTP dates.
+  Writes the Date header.
+  Used by hyper.
+
+hyper (1.11.1, 0.14.32)
+  Fast, correct HTTP/1 and HTTP/2 implementation.
+  The HTTP engine under axum, axum-server and reqwest.
+  Used by axum and reqwest (1.x); 0.14 by the AWS SDK's older TLS stack.
+
+hyper-util (0.1.20)
+  Utilities around hyper 1.x: connection pools, server helpers.
+  Connects hyper to tokio sockets.
+  Used by axum, axum-server and reqwest.
+
+h2 (0.4.19, 0.3.27)
+  HTTP/2 protocol implementation.
+  Allows HTTP/2 connections.
+  Used by hyper (two versions).
+
+tower-service (0.3.3)
+  The Service trait: request in, response future out.
+  Defines what a handler or middleware looks like.
+  Used by tower, axum and hyper.
+
+tower-layer (0.3.3)
+  The Layer trait for wrapping services with middleware.
+  Lets layers such as CORS wrap the router.
+  Used by tower and axum.
+
+axum-core (0.4.5)
+  Core types and traits of axum (extractors, responses).
+  Stable base shared by axum and its add-ons.
+  Used by axum.
+
+axum-macros (0.4.2)
+  Macros for axum, such as #[debug_handler].
+  Better compile errors for handlers.
+  Used by axum (feature macros).
+
+matchit (0.7.3)
+  Fast URL router (radix tree).
+  Matches paths such as /v1/items/:id to handlers.
+  Used by axum.
+
+mime (0.3.17)
+  MIME types such as application/json.
+  Content-type handling.
+  Used by axum and reqwest.
+
+serde_urlencoded (0.7.1)
+  Reads and writes URL-encoded form data with serde.
+  Decodes query strings like ?status=OPEN&limit=20.
+  Used by axum (Query extractor) and reqwest.
+
+serde_path_to_error (0.1.20)
+  Reports which field failed when deserialising.
+  Clearer JSON error messages from axum.
+  Used by axum.
+
+form_urlencoded (1.2.2)
+  Parses and builds application/x-www-form-urlencoded strings.
+  Query parameters in signed file URLs.
+  Used by url.
+
+percent-encoding (2.3.2)
+  Percent-encodes and decodes text for URLs.
+  Escapes characters in URL paths and queries.
+  Used by url and the AWS SDK.
+
+urlencoding (2.1.3)
+  Simple URL percent-encoding functions.
+  Escapes values in request URLs.
+  Used by the AWS SDK.
+
+tungstenite (0.24.0)
+  WebSocket protocol implementation (framing, handshake).
+  Speaks the WebSocket protocol for /v1/ws.
+  Used by tokio-tungstenite.
+
+tokio-tungstenite (0.24.0)
+  Runs tungstenite WebSockets on tokio.
+  The engine behind axum's WebSocket support.
+  Used by axum (feature ws).
+
+utf-8 (0.7.6)
+  Incremental UTF-8 decoder.
+  Checks that WebSocket text frames are valid UTF-8.
+  Used by tungstenite.
+
+data-encoding (2.11.1)
+  Encodings such as base64 and hex.
+  Builds the WebSocket handshake accept key.
+  Used by tungstenite.
+
+sha1 (0.10.7, 0.11.0)
+  SHA-1 hash function (RustCrypto).
+  Required by the WebSocket handshake; also used by S3 checksums.
+  Used by tungstenite and the AWS SDK (two versions).
+
+encoding_rs (0.8.41)
+  Character-set conversion (Windows-1252, UTF-16 and others).
+  Decodes text in web responses and PDF strings.
+  Used by reqwest and lopdf.
+
+idna (1.1.0)
+  Internationalised domain names (Unicode host names).
+  Converts host names to ASCII for URLs.
+  Used by url.
+
+idna_adapter (1.2.2)
+  Chooses the Unicode back end for idna.
+  Connects idna to the ICU4X libraries.
+  Used by idna.
+
+icu_normalizer (2.3.0)
+  Unicode normalisation (ICU4X).
+  Normalises domain names.
+  Used by idna via idna_adapter.
+
+icu_normalizer_data (2.3.0)
+  Built-in Unicode normalisation data.
+  Data tables for icu_normalizer.
+  Used by icu_normalizer.
+
+icu_properties (2.3.0)
+  Unicode character properties (ICU4X).
+  Classifies characters in domain names.
+  Used by idna via idna_adapter.
+
+icu_properties_data (2.3.0)
+  Built-in Unicode property data.
+  Data tables for icu_properties.
+  Used by icu_properties.
+
+icu_collections (2.3.0)
+  Compact collections used by ICU4X.
+  Efficient lookup tables for Unicode data.
+  Used by the icu_* crates.
+
+icu_locale_core (2.3.0)
+  Locale identifiers (ICU4X).
+  Language/region codes used by ICU4X data.
+  Used by the icu_* crates.
+
+icu_provider (2.3.1)
+  Data-loading framework for ICU4X.
+  Supplies Unicode data to the icu_* crates.
+  Used by the icu_* crates.
+
+utf8_iter (1.0.4)
+  Iterates over characters of possibly invalid UTF-8.
+  Safe text scanning in Unicode code.
+  Used by idna.
+
+potential_utf (0.1.6)
+  Types for strings that may or may not be valid UTF-8.
+  Helper for ICU4X data.
+  Used by the icu_* crates.
+
+tinystr (0.8.4)
+  Small strings stored inline (no heap).
+  Compact locale and script codes.
+  Used by the icu_* crates.
+
+writeable (0.6.4)
+  Efficient writing of formatted text.
+  Formatting support for ICU4X types.
+  Used by the icu_* crates.
+
+litemap (0.8.3)
+  Compact sorted map.
+  Small lookup tables in ICU4X.
+  Used by the icu_* crates.
+
+zerotrie (0.2.5)
+  Compact, zero-copy trie (prefix tree).
+  Fast lookups in ICU4X data.
+  Used by the icu_* crates.
+
+zerovec (0.11.8)
+  Vectors that can be read directly from bytes without copying.
+  Lets ICU4X use built-in data tables as-is.
+  Used by the icu_* crates.
+
+zerovec-derive (0.11.6)
+  Derive macros for zerovec.
+  Generates zero-copy code for data structs.
+  Used by zerovec.
+
+zerofrom (0.1.8)
+  Trait for creating zero-copy views of data.
+  Supports borrowed data in ICU4X.
+  Used by yoke and zerovec.
+
+zerofrom-derive (0.1.8)
+  Derive macro for zerofrom.
+  Generates zerofrom implementations.
+  Used by zerofrom.
+
+yoke (0.8.3)
+  Keeps borrowed data together with its owner.
+  Lets ICU4X hold data that borrows from a buffer.
+  Used by the icu_* crates.
+
+yoke-derive (0.8.3)
+  Derive macro for yoke.
+  Generates yoke implementations.
+  Used by yoke.
+
+stable_deref_trait (1.2.1)
+  Marks pointers whose target never moves.
+  Safety guarantee needed by yoke.
+  Used by yoke.
+
+
+4. TLS (HTTPS) AND CRYPTOGRAPHY
+-------------------------------
+
+rustls (0.23.45, 0.21.12)
+  TLS library written in Rust (no OpenSSL).
+  Encrypts HTTPS: the LAN server, reqwest to Auth0, and the AWS SDK.
+  Used by axum-server and reqwest (0.23); 0.21 by the AWS SDK's older stack.
+
+rustls-pki-types (1.15.1)
+  Shared types for certificates and private keys.
+  Passes certificates between rustls crates.
+  Used by rustls and related crates.
+
+rustls-webpki (0.101.7, 0.103.15)
+  Checks certificate chains for rustls.
+  Verifies Auth0's and S3's certificates.
+  Used by rustls (two versions).
+
+rustls-pemfile (2.2.0)
+  Reads certificates and keys from PEM files.
+  Loads the LAN server certificate and key.
+  Used by axum-server.
+
+rustls-native-certs (0.8.4)
+  Loads the operating system's trusted root certificates.
+  Lets HTTPS clients trust what the OS trusts.
+  Used by the AWS SDK HTTP client.
+
+openssl-probe (0.2.1)
+  Finds where the system keeps its CA certificate files.
+  Helps rustls-native-certs on Linux.
+  Used by rustls-native-certs.
+
+webpki-roots (1.0.9)
+  Mozilla's trusted root certificates, built into the program.
+  Trust anchors for reqwest when calling Auth0.
+  Used by reqwest (rustls-tls).
+
+tokio-rustls (0.24.1, 0.26.5)
+  Runs rustls TLS connections on tokio.
+  TLS for the LAN server and HTTPS clients.
+  Used by axum-server and hyper-rustls (two versions).
+
+hyper-rustls (0.24.2, 0.27.10)
+  Connects hyper's client with rustls.
+  HTTPS for reqwest and the AWS SDK.
+  Used by reqwest and the AWS SDK (two versions).
+
+sct (0.7.1)
+  Certificate Transparency checks (older rustls).
+  Part of rustls 0.21's certificate checks.
+  Used by rustls 0.21.
+
+ring (0.17.14)
+  Fast, audited cryptography primitives.
+  RSA signature checks for Auth0 tokens; crypto for older rustls.
+  Used by jsonwebtoken and rustls 0.21.
+
+untrusted (0.9.0)
+  Safe parsing of untrusted input bytes.
+  Used when ring reads keys and signatures.
+  Used by ring and rustls-webpki.
+
+aws-lc-rs (1.18.1)
+  Rust bindings to AWS-LC, Amazon's fork of BoringSSL crypto.
+  Default crypto provider for rustls 0.23 and the AWS SDK.
+  Used by rustls and the AWS SDK.
+
+aws-lc-sys (0.45.0)
+  Builds the AWS-LC C library during compilation.
+  Needs cmake and a C compiler; one of the slowest parts of the build.
+  Used by aws-lc-rs.
+
+digest (0.10.7, 0.11.3)
+  Common traits for hash functions (RustCrypto).
+  Lets SHA-1, SHA-256 and MD5 share one interface.
+  Used by sha1, sha2, md-5 and hmac (two versions).
+
+crypto-common (0.1.7, 0.2.2)
+  Shared traits for RustCrypto algorithms.
+  Base definitions for digest and hmac.
+  Used by digest (two versions).
+
+block-buffer (0.10.4, 0.12.1)
+  Buffers data into fixed-size blocks for hashing.
+  Feeds input to block-based hashes like SHA-256.
+  Used by digest (two versions).
+
+generic-array (0.14.7)
+  Arrays whose length is set by a type.
+  Fixed-size hash outputs in RustCrypto 0.10.
+  Used by digest 0.10.
+
+typenum (1.20.1)
+  Numbers represented as types, checked at compile time.
+  Gives generic-array its lengths.
+  Used by generic-array.
+
+hybrid-array (0.4.15)
+  Newer fixed-size array type for RustCrypto.
+  Replaces generic-array in the newer RustCrypto releases.
+  Used by digest 0.11 and related crates.
+
+md-5 (0.11.0, 0.10.6)
+  MD5 hash function (RustCrypto).
+  Content-MD5 checks for S3; PDF encryption support in lopdf.
+  Used by the AWS SDK and lopdf (two versions).
+
+subtle (2.6.1)
+  Constant-time operations for cryptography.
+  Compares secrets without leaking timing information.
+  Used by RustCrypto crates.
+
+zeroize (1.9.0)
+  Securely wipes secrets from memory.
+  Clears keys when they are no longer needed.
+  Used by rustls, aws-lc-rs and RustCrypto crates.
+
+cpufeatures (0.2.17, 0.3.1)
+  Detects CPU features such as SHA or AES instructions at runtime.
+  Chooses the fastest hash implementation for the CPU.
+  Used by sha1 and sha2 (two versions).
+
+cmov (0.5.4)
+  Constant-time conditional move.
+  Selects values without timing leaks.
+  Used by newer RustCrypto crates.
+
+ctutils (0.4.2)
+  Constant-time helper utilities.
+  Support for timing-safe cryptography.
+  Used by newer RustCrypto crates.
+
+const-oid (0.9.6, 0.10.2)
+  Object identifiers (OIDs) usable at compile time.
+  Names algorithms inside certificates.
+  Used by der and x509 crates (two versions).
+
+der (0.7.10)
+  Reads and writes DER, the binary encoding of certificates.
+  Parses key and certificate structures.
+  Used by pkcs8, spki and sec1.
+
+spki (0.7.3)
+  Public-key info structures from X.509.
+  Describes public keys inside certificates.
+  Used by pkcs8 and elliptic-curve.
+
+pkcs8 (0.10.2)
+  PKCS#8 private-key format.
+  Reads and writes private keys.
+  Used by elliptic-curve and ecdsa.
+
+pem-rfc7468 (0.7.0)
+  Strict PEM text encoding.
+  Reads PEM keys in RustCrypto crates.
+  Used by der.
+
+base64ct (1.8.3)
+  Constant-time Base64.
+  Encodes key material without timing leaks.
+  Used by pem-rfc7468.
+
+sec1 (0.7.3)
+  SEC1 elliptic-curve key formats.
+  Encodes elliptic-curve keys and points.
+  Used by elliptic-curve.
+
+base16ct (0.2.0)
+  Constant-time hexadecimal encoding.
+  Encodes secret values safely.
+  Used by sec1.
+
+elliptic-curve (0.13.8)
+  General elliptic-curve cryptography traits.
+  Foundation for the P-256 curve.
+  Used by p256 and ecdsa.
+
+ff (0.13.1)
+  Finite-field arithmetic traits.
+  Mathematics under elliptic curves.
+  Used by elliptic-curve.
+
+group (0.13.0)
+  Elliptic-curve group traits.
+  Point operations on curves.
+  Used by elliptic-curve.
+
+crypto-bigint (0.5.5)
+  Constant-time big integers.
+  Large-number maths for curve cryptography.
+  Used by elliptic-curve.
+
+p256 (0.13.2)
+  NIST P-256 elliptic curve.
+  ECDSA signatures on P-256 (used in AWS request signing).
+  Used by aws-sigv4.
+
+ecdsa (0.16.9)
+  ECDSA digital signatures.
+  Signs and verifies with elliptic-curve keys.
+  Used by p256.
+
+primeorder (0.13.6)
+  Formulas for prime-order elliptic curves.
+  Point arithmetic for P-256.
+  Used by p256.
+
+rfc6979 (0.4.0)
+  Deterministic nonces for ECDSA (RFC 6979).
+  Makes signatures safe without a random-number source.
+  Used by ecdsa.
+
+signature (2.2.0)
+  Generic traits for digital signatures.
+  Common interface for signing algorithms.
+  Used by ecdsa.
+
+pem (3.0.6)
+  Simple PEM encoding and decoding.
+  Reads and writes PEM for tokens and certificates.
+  Used by jsonwebtoken and rcgen.
+
+simple_asn1 (0.6.4)
+  Simple ASN.1 DER encoding and decoding.
+  Handles key formats for JWT.
+  Used by jsonwebtoken.
+
+yasna (0.5.2)
+  ASN.1 reader and writer.
+  Builds certificate structures.
+  Used by rcgen.
+
+x509-parser (0.16.0)
+  Parses X.509 certificates.
+  Reloads the local CA certificate from PEM.
+  Used by rcgen (feature x509-parser).
+
+asn1-rs (0.6.2)
+  ASN.1 parsing and encoding.
+  Decodes certificate fields.
+  Used by x509-parser.
+
+asn1-rs-derive (0.5.1)
+  Derive macros for asn1-rs.
+  Generates ASN.1 parsing code.
+  Used by asn1-rs.
+
+asn1-rs-impl (0.2.0)
+  Internal macros for asn1-rs.
+  Helper code generation.
+  Used by asn1-rs.
+
+der-parser (9.0.0)
+  DER/BER parser built on nom.
+  Low-level certificate decoding.
+  Used by x509-parser.
+
+oid-registry (0.7.1)
+  Named registry of known object identifiers.
+  Turns algorithm OIDs into names.
+  Used by x509-parser.
+
+rusticata-macros (4.1.0)
+  Parsing helper macros.
+  Shortcuts for nom-based parsers.
+  Used by x509-parser and der-parser.
+
+num-bigint (0.4.8)
+  Arbitrary-size integers.
+  Large numbers in ASN.1 and JWT key handling.
+  Used by simple_asn1 and asn1-rs.
+
+num-integer (0.1.47)
+  Integer traits (gcd, division helpers).
+  Support for num-bigint.
+  Used by num-bigint.
+
+num-traits (0.2.19)
+  Generic numeric traits.
+  Lets code work with many number types.
+  Used by chrono, num-bigint and image.
+
+rand_core (0.6.4, 0.9.5)
+  Core traits for random number generators.
+  Base for rand and cryptographic RNGs.
+  Used by rand and RustCrypto (two versions).
+
+rand_chacha (0.3.1, 0.9.0)
+  ChaCha-based random number generator.
+  Default secure RNG behind rand.
+  Used by rand (two versions).
+
+rand_pcg (0.3.1)
+  PCG random number generators (fast, not cryptographic).
+  Fast randomness for non-security uses.
+  Pulled in indirectly by another library.
+
+ppv-lite86 (0.2.21)
+  SIMD helpers for ChaCha.
+  Speeds up rand_chacha.
+  Used by rand_chacha.
+
+getrandom (0.2.17, 0.4.3, 0.3.4)
+  Gets secure random bytes from the operating system.
+  Seeds every random generator.
+  Used by rand, ring, uuid and others (three versions).
+
+
+5. AWS SDK (S3 FILE STORAGE)
+----------------------------
+
+aws-sdk-sts (1.117.0)
+  AWS Security Token Service client.
+  Used by aws-config for role-based credentials.
+  Used by aws-config.
+
+aws-sdk-sso (1.112.0)
+  AWS Single Sign-On client.
+  Used by aws-config for SSO login profiles.
+  Used by aws-config.
+
+aws-sdk-ssooidc (1.114.0)
+  AWS SSO OIDC client.
+  Refreshes SSO tokens for aws-config.
+  Used by aws-config.
+
+aws-types (1.6.0)
+  Shared AWS types (region, SDK config).
+  Holds settings shared by all AWS clients.
+  Used by aws-config and aws-sdk-s3.
+
+aws-credential-types (1.3.0)
+  Types for AWS access keys and credential providers.
+  Carries AWS_ACCESS_KEY_ID/SECRET for MinIO or S3.
+  Used by the AWS SDK.
+
+aws-sigv4 (1.6.0)
+  AWS Signature Version 4 request signing.
+  Signs S3 requests and presigned URLs.
+  Used by aws-runtime.
+
+aws-runtime (1.10.0)
+  AWS-specific runtime pieces (signing, user agent, retries).
+  Glue between the generic Smithy runtime and AWS services.
+  Used by aws-sdk-s3.
+
+aws-smithy-runtime (1.15.0)
+  Generic runtime for Smithy-generated SDKs.
+  Runs requests with retries, timeouts and interceptors.
+  Used by the AWS SDK.
+
+aws-smithy-runtime-api (1.17.0)
+  Interfaces for the Smithy runtime.
+  Stable API between the SDK and its runtime.
+  Used by the AWS SDK.
+
+aws-smithy-runtime-api-macros (1.1.0)
+  Macros for aws-smithy-runtime-api.
+  Generates runtime boilerplate.
+  Used by aws-smithy-runtime-api.
+
+aws-smithy-types (1.8.0)
+  Core Smithy data types (blobs, dates, documents).
+  Represents S3 request and response values.
+  Used by the AWS SDK.
+
+aws-smithy-async (1.3.0)
+  Async utilities for the SDK (sleep, time sources).
+  Timers used for retries and timeouts.
+  Used by the AWS SDK.
+
+aws-smithy-http (0.64.0)
+  HTTP helpers for Smithy SDKs.
+  Builds and reads HTTP messages for S3.
+  Used by the AWS SDK.
+
+aws-smithy-http-client (1.4.2)
+  HTTP client used by the AWS SDK.
+  Sends S3 requests over hyper and rustls.
+  Used by the AWS SDK.
+
+aws-smithy-json (0.63.1)
+  JSON handling for Smithy SDKs.
+  Reads JSON responses (STS, SSO).
+  Used by the AWS SDK.
+
+aws-smithy-xml (0.62.1)
+  XML handling for Smithy SDKs.
+  Reads S3's XML responses.
+  Used by aws-sdk-s3.
+
+aws-smithy-query (0.62.1)
+  AWS Query protocol encoding.
+  Builds STS requests.
+  Used by aws-sdk-sts.
+
+aws-smithy-eventstream (0.61.4)
+  AWS event-stream message format.
+  Streaming responses such as S3 Select.
+  Used by aws-sdk-s3.
+
+aws-smithy-checksums (0.65.0)
+  Request/response checksums (CRC32, CRC64, SHA, MD5).
+  Verifies S3 uploads and downloads.
+  Used by aws-sdk-s3.
+
+aws-smithy-observability (0.3.0)
+  Metrics and tracing hooks for the SDK.
+  Reports SDK timing and errors.
+  Used by the AWS SDK.
+
+aws-smithy-schema (0.2.1)
+  Schema descriptions for Smithy shapes.
+  Describes request and response structures.
+  Used by the AWS SDK.
+
+xmlparser (0.13.6)
+  Fast, low-level XML tokenizer.
+  Reads S3 XML responses.
+  Used by aws-smithy-xml.
+
+bytes-utils (0.1.4)
+  Extra helpers for the bytes crate.
+  Byte-string types used by the SDK.
+  Used by aws-smithy-types.
+
+base64-simd (0.8.0)
+  Base64 encoding accelerated with SIMD.
+  Fast Base64 in the SDK (checksums, signing).
+  Used by aws-smithy-types.
+
+vsimd (0.8.0)
+  Portable SIMD helpers.
+  Speeds up base64-simd.
+  Used by base64-simd.
+
+outref (0.5.2)
+  Safe writing into uninitialised memory.
+  Lets base64-simd fill buffers directly.
+  Used by base64-simd.
+
+crc32fast (1.5.2)
+  Fast CRC32 checksums.
+  Checksums for zlib/PNG and S3.
+  Used by flate2, png and the AWS SDK.
+
+crc-fast (1.10.0)
+  Hardware-accelerated CRC checksums (CRC32, CRC64).
+  Fast upload/download checksums for S3.
+  Used by aws-smithy-checksums.
+
+regex-lite (0.1.9)
+  Small, simple regular-expression engine.
+  Pattern matching inside the SDK (e.g. endpoint rules).
+  Used by the AWS SDK.
+
+fastrand (2.5.0)
+  Simple, fast random numbers (not cryptographic).
+  Retry jitter and similar small randomness.
+  Used by the AWS SDK and others.
+
+fs_extra (1.3.0)
+  Extra file-system operations (copy folders).
+  Copies source files during the AWS-LC build.
+  Used by aws-lc-sys (build time).
+
+dunce (1.0.5)
+  Normalises Windows paths.
+  Cleans file paths in build scripts.
+  Used by aws-lc-sys (build time).
+
+fs-err (3.3.1)
+  std::fs wrapper with clearer error messages.
+  Better errors when build scripts touch files.
+  Used by a build script (build time).
+
+
+6. CASSANDRA DRIVER (SCYLLA)
+----------------------------
+
+scylla-cql (0.2.2)
+  CQL protocol types and (de)serialisation for the scylla driver.
+  Converts Rust values to Cassandra columns and back.
+  Used by scylla.
+
+scylla-macros (0.5.2)
+  Derive macros for scylla (FromRow, FromUserType, SerializeCql).
+  Generates the row and UDT code in model.rs and store/items.rs.
+  Used by scylla.
+
+lz4_flex (0.11.6)
+  Pure-Rust LZ4 compression.
+  Optional compression of CQL traffic.
+  Used by scylla-cql.
+
+snap (1.1.2)
+  Snappy compression.
+  Optional compression of CQL traffic.
+  Used by scylla-cql.
+
+twox-hash (2.1.4)
+  xxHash hash functions.
+  Checksums for LZ4 frames.
+  Used by lz4_flex.
+
+histogram (0.6.9)
+  Fast histogram for measuring values.
+  Records query latencies in the driver's metrics.
+  Used by scylla.
+
+lru (0.18.5)
+  Least-recently-used cache.
+  Caches data inside the driver.
+  Used by scylla.
+
+itertools (0.11.0)
+  Extra iterator adaptors.
+  Convenience iterator methods.
+  Used by scylla.
+
+either (1.18.0)
+  A value that is one of two types (Left or Right).
+  Generic helper in iterator code.
+  Used by itertools, rayon and others.
+
+num_enum (0.7.6)
+  Converts between enums and numbers.
+  Maps protocol codes to Rust enums.
+  Used by scylla-cql and rdkafka-sys.
+
+num_enum_derive (0.7.6)
+  Derive macros for num_enum.
+  Generates the enum conversions.
+  Used by num_enum.
+
+hashbrown (0.17.1, 0.14.5)
+  Fast hash-table implementation (the one inside std).
+  High-performance maps inside other libraries.
+  Used by indexmap, dashmap and others (two versions).
+
+ahash (0.8.12)
+  Fast, DoS-resistant hash function.
+  Default hasher for hashbrown 0.14.
+  Used by hashbrown 0.14.
+
+allocator-api2 (0.2.21)
+  Stable version of Rust's allocator API.
+  Lets hashbrown use custom allocators.
+  Used by hashbrown.
+
+foldhash (0.2.0)
+  Fast, small hash function.
+  Default hasher in newer hashbrown releases.
+  Used by hashbrown 0.17.
+
+
+7. KAFKA CLIENT (LIBRDKAFKA) AND NATIVE BUILD TOOLS
+---------------------------------------------------
+
+rdkafka-sys (4.10.0+2.12.1)
+  Builds librdkafka (the C Kafka client) and exposes its functions.
+  Compiled with cmake during the build; needs libcurl and zlib headers.
+  Used by rdkafka.
+
+libz-sys (1.1.29)
+  Links to zlib, building it if needed.
+  Kafka message compression.
+  Used by rdkafka-sys.
+
+cmake (0.1.58)
+  Runs CMake from a Rust build script.
+  Builds librdkafka and AWS-LC.
+  Used by rdkafka-sys and aws-lc-sys (build time).
+
+cc (1.4.7)
+  Compiles C and C++ code from a build script.
+  Builds ring, zlib and other native parts.
+  Used by several -sys crates (build time).
+
+jobserver (0.1.35)
+  Shares the parallel-job limit with make.
+  Stops cargo and make from overloading the CPU.
+  Used by cc (build time).
+
+shlex (2.0.1)
+  Splits shell-style command strings.
+  Parses compiler flags in build scripts.
+  Used by cc (build time).
+
+find-msvc-tools (0.1.13)
+  Locates Microsoft's C compiler on Windows.
+  Lets cc find MSVC; unused on Linux.
+  Used by cc (build time).
+
+pkg-config (0.3.34)
+  Finds installed system libraries with pkg-config.
+  Looks for zlib, curl and other native libraries.
+  Used by libz-sys and others (build time).
+
+vcpkg (0.2.15)
+  Finds libraries installed with vcpkg (Windows).
+  Alternative library lookup on Windows.
+  Used by libz-sys (build time).
+
+log (0.4.34)
+  The classic Rust logging facade.
+  Many libraries log through it; tracing-log forwards it.
+  Used by rdkafka, mdns-sd and many others.
+
+
+8. IMAGES AND PDF
+-----------------
+
+image-webp (0.2.4)
+  WebP image decoder and encoder.
+  Reads WebP photos uploaded as attachments.
+  Used by image.
+
+zune-jpeg (0.5.15)
+  Fast JPEG decoder.
+  Decodes JPEG photos before making thumbnails.
+  Used by image.
+
+zune-core (0.5.3)
+  Shared types for the zune image crates.
+  Common options and colour spaces.
+  Used by zune-jpeg.
+
+png (0.18.1)
+  PNG decoder and encoder.
+  Reads PNG attachments.
+  Used by image.
+
+fdeflate (0.3.7)
+  Fast deflate decoder tuned for PNG.
+  Speeds up PNG decoding.
+  Used by png.
+
+moxcms (0.8.1)
+  Colour management (ICC profiles).
+  Converts colours correctly when decoding images.
+  Used by image.
+
+pxfm (0.1.30)
+  Fast maths functions (pow, exp, log).
+  Supports moxcms colour calculations.
+  Used by moxcms.
+
+flate2 (1.1.10)
+  Deflate/zlib/gzip compression.
+  Reads and writes compressed PDF streams.
+  Used by lopdf and others.
+
+miniz_oxide (0.9.1, 0.8.9)
+  Pure-Rust deflate implementation.
+  The back end behind flate2 and png.
+  Used by flate2 and png (two versions).
+
+adler2 (2.0.1)
+  Adler-32 checksum.
+  Checksum inside zlib streams.
+  Used by miniz_oxide.
+
+simd-adler32 (0.3.10)
+  SIMD-accelerated Adler-32.
+  Faster zlib checksums for PNG.
+  Used by fdeflate.
+
+weezl (0.1.12)
+  LZW compression and decompression.
+  Decodes LZW-compressed PDF streams.
+  Used by lopdf.
+
+linked-hash-map (0.5.6)
+  Hash map that remembers insertion order.
+  Keeps PDF dictionary keys in order.
+  Used by lopdf.
+
+bytemuck (1.25.2)
+  Safe casting between plain-data types and bytes.
+  Reinterprets pixel buffers without copying.
+  Used by image.
+
+byteorder (1.5.0)
+  Reads and writes numbers in big- or little-endian order.
+  Binary formats in images and protocols.
+  Used by several crates.
+
+byteorder-lite (0.1.0)
+  Smaller version of byteorder.
+  Binary parsing in image crates.
+  Used by image.
+
+quick-error (2.0.1)
+  Macro for defining error types.
+  Error types in an image-related crate.
+  Pulled in indirectly by another library.
+
+
+9. LOGGING
+----------
+
+tracing-core (0.1.36)
+  Core types of tracing (events, spans, subscribers).
+  Shared base so all crates log to one subscriber.
+  Used by tracing and tracing-subscriber.
+
+tracing-attributes (0.1.31)
+  The #[instrument] macro for tracing.
+  Adds spans to functions automatically.
+  Used by tracing.
+
+tracing-log (0.2.0)
+  Bridges the log crate into tracing.
+  Shows logs from rdkafka, mdns-sd and others.
+  Used by tracing-subscriber.
+
+tracing-serde (0.2.0)
+  Serialises tracing data with serde.
+  Produces JSON log lines in internet mode.
+  Used by tracing-subscriber (feature json).
+
+matchers (0.2.0)
+  Regex matching for log filters.
+  Supports RUST_LOG filters on field values.
+  Used by tracing-subscriber (env-filter).
+
+regex-automata (0.4.18)
+  Regex engine internals.
+  Runs the RUST_LOG filter patterns.
+  Used by matchers.
+
+regex-syntax (0.8.11)
+  Regex parser.
+  Parses the filter patterns.
+  Used by regex-automata.
+
+nu-ansi-term (0.50.3)
+  Coloured text in the terminal.
+  Colours log levels in the LAN text logs.
+  Used by tracing-subscriber.
+
+
+10. SERIALISATION, TEXT AND GENERAL HELPERS
+-------------------------------------------
+
+serde_core (1.0.229)
+  Core traits of serde, split out in recent versions.
+  Lets crates depend on serde without the derive macros.
+  Used by serde.
+
+serde_derive (1.0.229)
+  The #[derive(Serialize, Deserialize)] macros.
+  Generates JSON code for every request/response struct.
+  Used by serde.
+
+ryu (1.0.23)
+  Fast float-to-text conversion.
+  Writes floating-point numbers in JSON.
+  Used by serde_json.
+
+zmij (1.0.23)
+  Fast float-to-text formatting (newer algorithm).
+  Number formatting in recent serde_json releases.
+  Used by serde_json.
+
+itoa (1.0.18)
+  Fast integer-to-text conversion.
+  Writes integers in JSON and HTTP headers.
+  Used by serde_json, http and others.
+
+memchr (2.8.3)
+  Very fast byte searching.
+  Finds characters quickly while parsing text.
+  Used by serde_json, nom, regex and others.
+
+bitflags (2.13.2)
+  Macro for sets of bit flags.
+  Compact option sets in system and image code.
+  Used by many crates.
+
+equivalent (1.0.2)
+  Trait for comparing keys of different types.
+  Flexible map lookups.
+  Used by indexmap and hashbrown.
+
+indexmap (2.14.2)
+  Hash map that keeps insertion order.
+  Ordered JSON objects and headers.
+  Used by h2, toml_edit and others.
+
+smallvec (1.16.1)
+  Vector that stores a few items without heap allocation.
+  Saves allocations in hot code paths.
+  Used by parking_lot_core, tracing-subscriber and others.
+
+cfg-if (1.0.5)
+  Macro for platform-specific code.
+  Picks code per operating system.
+  Used by many crates.
+
+libc (0.2.189)
+  Raw bindings to the C standard library.
+  System calls for sockets, files and signals.
+  Used by tokio, mio and most system crates.
+
+errno (0.3.14)
+  Reads the system error number.
+  Reports why a system call failed.
+  Used by signal-hook-registry and others.
+
+fnv (1.0.7)
+  Fowler-Noll-Vo hash function.
+  Fast hashing for small keys.
+  Used by http and h2.
+
+atomic (0.6.1)
+  Generic atomic type for any Copy value.
+  Thread-safe counter for v1 UUID generation.
+  Used by uuid (feature v1).
+
+zerocopy (0.8.57)
+  Safe zero-copy conversions between types and bytes.
+  Fast parsing of binary data.
+  Used by ahash and ppv-lite86.
+
+iana-time-zone (0.1.65)
+  Finds the system's local time zone.
+  Lets chrono know the local time zone.
+  Used by chrono.
+
+nom (7.1.3)
+  Parser-combinator library.
+  Parses certificates (ASN.1) and PDF syntax.
+  Used by der-parser and lopdf.
+
+minimal-lexical (0.2.1)
+  Fast float parsing.
+  Number parsing in nom.
+  Used by nom.
+
+time (0.3.55)
+  Date and time library.
+  Certificate validity dates and PDF dates.
+  Used by rcgen, x509-parser and lopdf.
+
+time-core (0.1.9)
+  Internal core of the time crate.
+  Shared types for time and its macros.
+  Used by time.
+
+time-macros (0.2.32)
+  Macros for writing time and date literals.
+  Compile-time dates for the time crate.
+  Used by time.
+
+deranged (0.5.8)
+  Integers limited to a range.
+  Checked ranges for time values.
+  Used by time.
+
+powerfmt (0.2.0)
+  Formatting helpers.
+  Padding and alignment for time output.
+  Used by time.
+
+num-conv (0.2.2)
+  Explicit integer conversions.
+  Safe number casts in time.
+  Used by time.
+
+winnow (1.0.4)
+  Parser-combinator library.
+  Parses TOML files.
+  Used by toml_parser and toml_edit.
+
+toml_edit (0.25.15+spec-1.1.0)
+  Reads and edits TOML while keeping formatting.
+  Reads Cargo.toml for proc-macro-crate.
+  Used by proc-macro-crate (build time).
+
+toml_parser (1.1.3+spec-1.1.0)
+  Low-level TOML parser.
+  Tokenises TOML for toml_edit.
+  Used by toml_edit (build time).
+
+toml_datetime (1.1.1+spec-1.1.0)
+  TOML date/time values.
+  Date values in TOML files.
+  Used by toml_edit (build time).
+
+thiserror-impl (1.0.69, 2.0.20)
+  The derive macro behind thiserror.
+  Generates Display and Error code.
+  Used by thiserror (two versions).
+
+displaydoc (0.2.7)
+  Derive Display from doc comments.
+  Error messages in ICU4X crates.
+  Used by the icu_* crates.
+
+simdutf8 (0.1.5)
+  SIMD-accelerated UTF-8 validation.
+  Checks that incoming bytes are valid text, faster than the standard library.
+  Pulled in indirectly by another library.
+
+getset (0.1.7)
+  Derive macros for getter and setter methods.
+  Generates accessor methods on structs.
+  Used by neli.
+
+
+11. LOCAL NETWORK DISCOVERY
+---------------------------
+
+if-addrs (0.13.4)
+  Lists the machine's network interfaces and addresses.
+  Lets mdns-sd announce on each interface.
+  Used by mdns-sd.
+
+neli (0.7.4)
+  Linux netlink library (talks to the kernel's network stack).
+  Reads interface addresses on Linux.
+  Used by local-ip-address.
+
+neli-proc-macros (0.2.2)
+  Macros for neli.
+  Generates netlink message code.
+  Used by neli.
+
+derive_builder (0.20.2)
+  Derive macro that creates builder types.
+  Builds netlink messages.
+  Used by neli.
+
+derive_builder_core (0.20.2)
+  Internals of derive_builder.
+  Code generation for builders.
+  Used by derive_builder.
+
+derive_builder_macro (0.20.2)
+  The procedural macro entry point of derive_builder.
+  Connects the derive to derive_builder_core.
+  Used by derive_builder.
+
+
+12. COMPILE-TIME TOOLS (MACROS AND BUILD SCRIPTS)
+-------------------------------------------------
+
+proc-macro2 (1.0.107)
+  Wrapper around the compiler's token streams.
+  Every derive and attribute macro is built on it.
+  Used by all procedural macros.
+
+quote (1.0.47)
+  Turns Rust-like templates into token streams.
+  Lets macros write the code they generate.
+  Used by all procedural macros.
+
+syn (3.0.6, 2.0.119)
+  Parses Rust source code inside macros.
+  Reads structs so derives (serde, scylla) can generate code.
+  Used by all procedural macros (versions 2 and 3).
+
+unicode-ident (1.0.26)
+  Checks which characters are allowed in identifiers.
+  Needed to tokenise Rust code correctly.
+  Used by proc-macro2.
+
+synstructure (0.14.0, 0.13.2)
+  Helpers for writing derive macros.
+  Simplifies derive code in ICU4X and asn1 crates.
+  Used by several derive crates (two versions).
+
+darling (0.20.11)
+  Parses attributes in derive macros.
+  Reads options like #[builder(...)].
+  Used by derive_builder.
+
+darling_core (0.20.11)
+  Internals of darling.
+  Attribute-parsing logic.
+  Used by darling.
+
+darling_macro (0.20.11)
+  Macro entry point of darling.
+  Connects darling's derives.
+  Used by darling.
+
+ident_case (1.0.1)
+  Converts identifiers between naming styles.
+  snake_case/camelCase conversions in macros.
+  Used by darling.
+
+strsim (0.11.1)
+  String similarity measures.
+  Suggests the right name for a mistyped attribute.
+  Used by darling.
+
+proc-macro-crate (3.5.0)
+  Finds a crate's real name from Cargo.toml.
+  Lets macros refer to a renamed dependency.
+  Used by num_enum_derive (build time).
+
+autocfg (1.5.1)
+  Detects compiler features in build scripts.
+  Enables code only when the compiler supports it.
+  Used by num-traits and others (build time).
+
+version_check (0.9.5)
+  Checks the rustc version in build scripts.
+  Turns features on for newer compilers.
+  Used by generic-array and ahash (build time).
+
+rustversion (1.0.23)
+  Conditional code based on the compiler version.
+  Selects code for stable or newer Rust.
+  Used by several crates.
+
+rustc_version (0.4.1)
+  Reads the rustc version from build scripts.
+  Decides build options by compiler version.
+  Used by some build scripts.
+
+semver (1.0.28)
+  Semantic version numbers.
+  Compares compiler and crate versions.
+  Used by rustc_version.
+
+core_detect (1.0.0)
+  Detects CPU features in no_std code.
+  Picks accelerated code paths at runtime.
+  Pulled in indirectly by another library.
+
+multiversion (0.9.0)
+  Compiles one function for several CPU feature sets.
+  Chooses the fastest version on the running CPU.
+  Pulled in indirectly by another library.
+
+multiversion-macros (0.9.0)
+  Macros behind multiversion.
+  Generates the per-CPU copies.
+  Used by multiversion.
+
+multiversion_no_op (1.0.0)
+  Placeholder version of multiversion that does nothing.
+  Used when runtime CPU dispatch is turned off.
+  Pulled in indirectly by another library.

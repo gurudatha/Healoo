@@ -1,0 +1,112 @@
+# Internet profile: Caddy terminates TLS with Let's Encrypt for API_DOMAIN and FILES_DOMAIN.
+#   cp .env.internet.example .env   (fill in domains, Auth0, secrets)
+#   docker compose up -d --build
+# Only Caddy publishes ports (80/443). Everything else stays on the private network.
+
+name: healoo-internet
+
+x-app-env: &app-env
+  NETWORK_MODE: internet
+  PUBLIC_BASE_URL: https://${API_DOMAIN:?set API_DOMAIN}/
+  BIND: 0.0.0.0:8080
+  TRUSTED_PROXIES: 172.16.0.0/12,10.0.0.0/8
+  CASSANDRA_NODES: cassandra:9042
+  KAFKA_BROKERS: kafka:9092
+  EVENT_BUS: kafka
+  AUTH_MODE: auth0
+  AUTH0_DOMAIN: ${AUTH0_DOMAIN:?set AUTH0_DOMAIN}
+  AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:-https://api.careconnect.local}
+  CLAIMS_NAMESPACE: ${CLAIMS_NAMESPACE:-https://careconnect.local/}
+  FILE_STORE: s3
+  S3_BUCKET: careconnect
+  S3_ENDPOINT: http://minio:9000
+  S3_PUBLIC_ENDPOINT: https://${FILES_DOMAIN:?set FILES_DOMAIN}
+  AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+  AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+  DEBUG_ROUTES: "false"
+  RUST_LOG: ${RUST_LOG:-info}
+
+services:
+  cassandra:
+    image: cassandra:5.0
+    environment: { MAX_HEAP_SIZE: 1G, HEAP_NEWSIZE: 256M, CASSANDRA_CLUSTER_NAME: careconnect }
+    volumes: [cassandra_data:/var/lib/cassandra]
+    healthcheck: { test: ["CMD", "cqlsh", "-e", "describe keyspaces"], interval: 15s, timeout: 10s, retries: 20 }
+    restart: unless-stopped
+
+  cassandra-init:
+    image: cassandra:5.0
+    depends_on: { cassandra: { condition: service_healthy } }
+    volumes: [../../db/schema.cql:/schema.cql:ro]
+    entrypoint: ["sh", "-c", "until cqlsh cassandra -f /schema.cql; do sleep 5; done"]
+    restart: "no"
+
+  kafka:
+    image: apache/kafka:3.8.0
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_HEAP_OPTS: "-Xmx1G -Xms512M"
+    volumes: [kafka_data:/var/lib/kafka/data]
+    restart: unless-stopped
+
+  kafka-init:
+    image: apache/kafka:3.8.0
+    depends_on: [kafka]
+    volumes: [../../kafka/create-topics.sh:/create-topics.sh:ro]
+    entrypoint: ["sh", "/create-topics.sh"]
+    restart: "no"
+
+  minio:
+    image: minio/minio:latest
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes: [minio_data:/data]
+    restart: unless-stopped
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on: [minio]
+    entrypoint: ["sh", "-c", "until mc alias set local http://minio:9000 \"$$MINIO_ROOT_USER\" \"$$MINIO_ROOT_PASSWORD\"; do sleep 2; done; mc mb --ignore-existing local/careconnect && mc anonymous set none local/careconnect"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    restart: "no"
+
+  care-api:
+    build: { context: ../.., target: api }
+    environment: { <<: *app-env, INSTANCE_ID: api-1 }
+    depends_on:
+      cassandra-init: { condition: service_completed_successfully }
+      kafka-init: { condition: service_completed_successfully }
+      minio-init: { condition: service_completed_successfully }
+    restart: unless-stopped
+
+  care-worker:
+    build: { context: ../.., target: worker }
+    environment: *app-env
+    depends_on:
+      cassandra-init: { condition: service_completed_successfully }
+      kafka-init: { condition: service_completed_successfully }
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    ports: ["80:80", "443:443"]
+    environment: { API_DOMAIN: "${API_DOMAIN}", FILES_DOMAIN: "${FILES_DOMAIN}", ACME_EMAIL: "${ACME_EMAIL}" }
+    volumes: [../../proxy/Caddyfile.internet:/etc/caddy/Caddyfile:ro, caddy_data:/data, caddy_config:/config]
+    depends_on: [care-api, minio]
+    restart: unless-stopped
+
+volumes: { cassandra_data: {}, kafka_data: {}, minio_data: {}, caddy_data: {}, caddy_config: {} }

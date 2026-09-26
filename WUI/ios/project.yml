@@ -1,0 +1,68 @@
+# Generate the Xcode project with XcodeGen:  brew install xcodegen && xcodegen generate
+name: Healoo
+options:
+  bundleIdPrefix: com.healoo
+  deploymentTarget:
+    iOS: "17.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+    MARKETING_VERSION: "0.3"
+    CURRENT_PROJECT_VERSION: "3"
+packages:
+  Auth0:
+    url: https://github.com/auth0/Auth0.swift
+    from: 2.10.0
+  Firebase:
+    url: https://github.com/firebase/firebase-ios-sdk
+    from: 11.2.0
+targets:
+  Healoo:
+    type: application
+    platform: iOS
+    sources:
+      - path: Healoo
+    dependencies:
+      - package: Auth0
+      - package: Firebase
+        product: FirebaseMessaging
+    entitlements:
+      path: Healoo/Healoo.entitlements
+      properties:
+        aps-environment: development
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.healoo.app
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "1"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+    info:
+      path: Healoo/Info.plist
+      properties:
+        CFBundleDisplayName: Healoo
+        UILaunchScreen:
+          UIColorName: ""
+        UIAppFonts:
+          - Fraunces-SemiBold.ttf
+          - Figtree-Regular.ttf
+          - Figtree-Medium.ttf
+          - Figtree-SemiBold.ttf
+        NSCameraUsageDescription: Healoo uses the camera to photograph reports and to scan Healoo ID QR codes.
+        UIBackgroundModes: [remote-notification]
+        # Firebase: we set the APNs token ourselves
+        FirebaseAppDelegateProxyEnabled: false
+        # Auth0 callback: com.healoo.app://<domain>/ios/com.healoo.app/callback
+        CFBundleURLTypes:
+          - CFBundleURLName: auth0
+            CFBundleURLSchemes: [$(PRODUCT_BUNDLE_IDENTIFIER)]
+        # ---- Healoo settings ----
+        # true = demo data + demo account picker; no backend or Auth0 needed
+        HealooUseFakeData: true
+        # Trial server from healoo-backend (LAN profile): https://<computer's LAN IP>:8443/
+        HealooAPIBaseURL: https://localhost:8443/
+        # Debug builds only: sign in as the trial server's test accounts (backend AUTH_MODE=dev)
+        HealooDevSignIn: true
+        # Auth0 (design doc 5). Leave empty to stay in demo mode.
+        HealooAuth0Domain: ""
+        HealooAuth0ClientId: ""
+        HealooAuth0Audience: https://api.healoo.local
