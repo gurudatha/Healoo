@@ -403,7 +403,7 @@ struct DataItemView: View {
                 item = try await env.repo.visitAction(itemId, appointmentId: a.id, visitDate: v.originalDate, action: "MOVED", newDate: d, newTime: t)
             }
         case .addFiles:
-            NavigationStack { UploadView(targetUserId: nil, addToItemId: itemId) { _ in sheet = nil; Task { await refresh() } } }
+            NavigationStack { UploadView(request: nil, addToItemId: itemId) { _ in sheet = nil; Task { await refresh() } } }
         }
     }
 

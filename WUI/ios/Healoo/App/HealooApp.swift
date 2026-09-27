@@ -28,7 +28,19 @@ struct HealooApp: App {
     }
 }
 
-enum AppTab: Hashable { case home, search, upload, messages, settings }
+/// The global screens; each is the operation of the same id in page-operations.json.
+enum AppTab: String, Hashable, CaseIterable {
+    case home, search, upload, messages, settings
+    var opId: String { rawValue }
+}
+
+/// Upload screen opened from a person's page (see UploadView).
+struct UploadRequest: Hashable {
+    var to: String?
+    var mode: PrimaryKind? = nil
+    var doctorId: String? = nil
+    var hospitalId: String? = nil
+}
 
 enum Route: Hashable {
     case item(String)
@@ -37,6 +49,7 @@ enum Route: Hashable {
     case search(query: String, role: Role?)
     case editProfile
     case activeSharing
+    case administration
 }
 
 /// Chooses between splash, sign-in and the app, based on the Auth0 / demo session.
@@ -69,7 +82,10 @@ final class Router {
     var search = NavigationPath()
     var messages = NavigationPath()
     var settings = NavigationPath()
-    var uploadTarget: String? = nil     // doctor/lab flow: the patient the upload is for
+    /// What the Upload tab opens with (from a person's page); nil = a plain new item.
+    var uploadRequest: UploadRequest? = nil
+    /// Person pages showing; while one is, it draws its own operation bar instead of the global one.
+    var personPages = 0
 
     func openTab(_ t: AppTab) { tab = t }
 
@@ -84,8 +100,8 @@ final class Router {
         }
     }
 
-    /// "Upload for <patient>" from a user page.
-    func upload(for patientId: String) { uploadTarget = patientId; tab = .upload }
+    /// Upload or Book from a person's page: that person always receives the item.
+    func upload(_ request: UploadRequest) { uploadRequest = request; tab = .upload }
 
     /// Opened from a notification.
     func open(_ link: DeepLink) {
@@ -100,35 +116,47 @@ final class Router {
 
 struct RootView: View {
     @State private var router = Router()
+    private let globalOps = PageOperations.resolve(.global, facts: [])
 
     var body: some View {
+        // The system tab bar is hidden: the bottom bar comes from the "global" page in
+        // page-operations.json (at most four, the rest behind the three-dot menu).
         TabView(selection: $router.tab) {
             NavigationStack(path: $router.home) {
                 LandingView().withRoutes()
             }
-            .tabItem { Label("Home", systemImage: "house") }.tag(AppTab.home)
+            .toolbar(.hidden, for: .tabBar).tag(AppTab.home)
 
             NavigationStack(path: $router.search) {
                 SearchView(initialQuery: "", initialRole: nil).withRoutes()
             }
-            .tabItem { Label("Search", systemImage: "magnifyingglass") }.tag(AppTab.search)
+            .toolbar(.hidden, for: .tabBar).tag(AppTab.search)
 
             NavigationStack {
-                UploadView(targetUserId: router.uploadTarget, addToItemId: nil) { id in router.tab = .home; router.home.append(Route.item(id)) }
-                    .id(router.uploadTarget ?? "self")
-                    .navigationDestination(for: Route.self) { $0.destination.toolbar(.hidden, for: .navigationBar) }
+                UploadView(request: router.uploadRequest, addToItemId: nil) { id in
+                    router.uploadRequest = nil; router.tab = .home; router.home.append(Route.item(id))
+                }
+                .id(router.uploadRequest)
+                .navigationDestination(for: Route.self) { $0.destination.toolbar(.hidden, for: .navigationBar).toolbar(.hidden, for: .tabBar) }
             }
-            .tabItem { Label("Upload", systemImage: "square.and.arrow.up") }.tag(AppTab.upload)
+            .toolbar(.hidden, for: .tabBar).tag(AppTab.upload)
 
             NavigationStack(path: $router.messages) {
                 ConversationsView().withRoutes()
             }
-            .tabItem { Label("Messages", systemImage: "bubble.left") }.tag(AppTab.messages)
+            .toolbar(.hidden, for: .tabBar).tag(AppTab.messages)
 
             NavigationStack(path: $router.settings) {
                 SettingsView().withRoutes()
             }
-            .tabItem { Label("Settings", systemImage: "gearshape") }.tag(AppTab.settings)
+            .toolbar(.hidden, for: .tabBar).tag(AppTab.settings)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if router.personPages == 0 {
+                OperationBar(ops: globalOps, selected: router.tab.opId) { id in
+                    if let t = AppTab.allCases.first(where: { $0.opId == id }) { router.openTab(t) }
+                }
+            }
         }
         .environment(router)
         .onChange(of: PushManager.shared.pendingLink, initial: true) { _, link in
@@ -146,6 +174,7 @@ extension Route {
         case .search(let q, let role): SearchView(initialQuery: q, initialRole: role)
         case .editProfile: EditProfileView()
         case .activeSharing: ActiveSharingView()
+        case .administration: AdminView()
         }
     }
 }
@@ -153,6 +182,6 @@ extension Route {
 extension View {
     func withRoutes() -> some View {
         toolbar(.hidden, for: .navigationBar)
-            .navigationDestination(for: Route.self) { $0.destination.toolbar(.hidden, for: .navigationBar) }
+            .navigationDestination(for: Route.self) { $0.destination.toolbar(.hidden, for: .navigationBar).toolbar(.hidden, for: .tabBar) }
     }
 }

@@ -286,7 +286,8 @@ In demo mode, go through these in order:
       (To put test files on the emulator, drag them onto its window; they go to
        Downloads.)
   10. Lab flow: Settings > Log out, sign in as City Diagnostics. Open Lakshmi's
-      page, use "Upload for Lakshmi". The Share section is hidden.
+      page, tap Upload in the bottom bar. Lakshmi is locked in; Share offers
+      doctors only.
   11. Log out, sign in as Lakshmi: the lab's upload is on Home.
   12. Doctor view: sign in as Dr. Anitha Rao. Items shared with her or her
       hospital appear; the item button reads "Message patient".

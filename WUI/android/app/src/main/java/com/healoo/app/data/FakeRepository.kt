@@ -36,15 +36,21 @@ class FakeRepository : HealooRepository {
         UserProfile("h-raoheart", "HL-9P4T6", "Rao Heart Clinic", listOf(Role.HOSPITAL), "Hospital"),
         UserProfile("l-rao", "HL-5W1Q3", "Rao Diagnostics", listOf(Role.LAB), "Lab"),
         UserProfile("u-priya", "HL-4K7Q2", "Priya Rao", listOf(Role.PATIENT), "Patient"),
+        UserProfile("u-menon", "HL-2D5M8", "Dr. Kavya Menon", listOf(Role.DOCTOR), "Doctor · Cardiology", hospital = "Test Hospital A"),
+        UserProfile("a-admin", "HL-8A2D4", "Hospital A Admin", listOf(Role.ADMINISTRATOR), "Hospital administrator", hospital = "Test Hospital A"),
     )
 
     /** Accounts offered on the demo sign-in screen. */
-    val demoAccounts: List<UserProfile> get() = users.filter { it.id in listOf("u-lakshmi", "u-rao", "l-city") }
+    val demoAccounts: List<UserProfile> get() = users.filter { it.id in listOf("u-lakshmi", "u-rao", "l-city", "h-a", "a-admin") }
 
     private var meId = "u-lakshmi"
     fun signInAs(userId: String) { meId = userId }
 
-    private val affiliation = mapOf("u-rao" to "h-a")                       // doctor -> current hospital
+    private val affiliation = mutableMapOf("u-rao" to "h-a", "u-menon" to "h-a")   // doctor -> current hospital
+    private val adminHospital = mapOf("a-admin" to "h-a")                              // administrator -> hospital
+    private val deactivated = mutableSetOf<String>()
+    private val emails = mutableMapOf<String, String>()                                // user -> email (admin-created)
+    private val homeHospital = mutableMapOf("u-rao" to "h-a", "u-menon" to "h-a")
     private val connections = mutableSetOf(
         setOf("u-lakshmi", "u-rao"), setOf("u-lakshmi", "h-a"), setOf("u-lakshmi", "l-city"), setOf("u-lakshmi", "u-srao"),
         setOf("u-rao", "h-a"), setOf("u-rao", "l-city"), setOf("u-priya", "l-city"),
@@ -154,7 +160,7 @@ class FakeRepository : HealooRepository {
         val it = s.item
         if (it.ownerId == userId) return Access.FULL
         val role = raw(userId).primaryRole
-        if (role == Role.LAB && s.createdBy == userId) return Access.FULL
+        if ((role == Role.LAB || role == Role.HOSPITAL) && s.createdBy == userId) return Access.FULL
         val direct = it.accessList.any { g -> g.granteeType == GranteeType.USER && g.granteeId == userId }
         val viaHospital = role == Role.DOCTOR && it.accessList.any { g -> g.granteeType == GranteeType.HOSPITAL && affiliation[userId] == g.granteeId }
         if (!direct && !viaHospital) return Access.DENY
@@ -194,7 +200,7 @@ class FakeRepository : HealooRepository {
                 base.status == ItemStatus.OPEN -> addAll(listOf("read", "message", "attach", "book", "alert", "close"))
                 else -> add("read")
             }
-            if (full && owner) { add("share"); add("revoke") }
+            if (full && owner) { add("share"); add("revoke") } else if (full && raw(meId).canRefer) add("share")
             if (full && owner && base.status == ItemStatus.OPEN) add("rate")
             if (full && base.status == ItemStatus.CLOSED && (owner || raw(meId).primaryRole == Role.DOCTOR)) add("reopen")
         }
@@ -250,13 +256,17 @@ class FakeRepository : HealooRepository {
 
     override suspend fun search(query: String, role: Role?) = latency {
         val q = query.trim().lowercase()
-        users.filter { it.id != meId }
+        users.filter { it.id != meId && it.id !in deactivated }
             .filter { role == null || it.primaryRole == role }
             .filter { q.isEmpty() || it.displayName.lowercase().contains(q) || it.publicId.lowercase().contains(q) }
             .map(::view)
     }
 
     override suspend fun connections() = latency { users.filter { it.id != meId && connected(meId, it.id) }.map(::view) }
+
+    override suspend fun hospitalDoctors(hospitalId: String) = latency {
+        users.filter { it.primaryRole == Role.DOCTOR && affiliation[it.id] == hospitalId && it.id !in deactivated }.sortedBy { it.displayName }.map(::view)
+    }
 
     override suspend fun conversations(withUser: String?) = latency {
         store.filter { access(it, meId) == Access.FULL && it.item.messages.isNotEmpty() && meId in participants(it.item) }
@@ -297,12 +307,15 @@ class FakeRepository : HealooRepository {
         ), createdBy = meId).also { store.add(0, it) }
     }
 
+    /** Creating for a patient, the uploader may also refer the item to doctors only. */
+    private fun doctorsOnly(ids: List<String>) = ids.filter { raw(it).primaryRole == Role.DOCTOR }
+
     private fun toAttachments(files: List<PendingAttachment>, startAt: Int, isReport: Boolean) =
         files.mapIndexed { i, f -> Attachment(id(), f.kind, f.localUri.toString(), f.mime, f.size, startAt + i, f.name, addedBy = meId, isReport = isReport) }
 
     override suspend fun createReport(draft: ReportDraft, files: List<PendingAttachment>): DataItem = latency(600) {
         require(files.isNotEmpty() || draft.links.isNotEmpty()) { "A report needs at least one file or link" }
-        val s = newItem(draft.ownerId, PrimaryKind.REPORT, draft.title, draft.keywords, if (draft.ownerId == meId) draft.shareWith else emptyList())
+        val s = newItem(draft.ownerId, PrimaryKind.REPORT, draft.title, draft.keywords, if (draft.ownerId == meId) draft.shareWith else doctorsOnly(draft.shareWith))
         s.item = s.item.copy(attachments = toAttachments(files, 0, true), links = draft.links)
         _events.tryEmit(RealtimeEvent.ItemChanged(s.item.id))
         present(s)
@@ -313,7 +326,7 @@ class FakeRepository : HealooRepository {
         val owner = ownerId ?: appointment.patientId
         val doctor = raw(appointment.doctorId)
         val s = newItem(owner, PrimaryKind.APPOINTMENT, "Appointment with ${doctor.displayName}", emptyList(), shareWith + appointment.doctorId)
-        s.item = s.item.copy(appointments = listOf(Appointment(id(), s.item.id, appointment.patientId, doctor.id, doctor.displayName, null,
+        s.item = s.item.copy(appointments = listOf(Appointment(id(), s.item.id, appointment.patientId, doctor.id, doctor.displayName, appointment.hospitalId,
             appointment.date, appointment.time, appointment.timezone, appointment.durationMin, appointment.notes, appointment.recurrence)))
         present(s)
     }
@@ -325,11 +338,11 @@ class FakeRepository : HealooRepository {
         present(s)
     }
 
-    override suspend fun startConversation(userId: String, body: String): DataItem {
+    override suspend fun startConversation(userId: String, body: String, alsoWith: List<String>): DataItem {
         val other = raw(userId)
         val me = raw(meId)
         val owner = if (other.primaryRole == Role.PATIENT && me.isClinical) other.id else meId
-        val s = latency { newItem(owner, PrimaryKind.MESSAGE, body.lineSequence().first().take(60), emptyList(), if (owner == meId) listOf(userId) else emptyList()) }
+        val s = latency { newItem(owner, PrimaryKind.MESSAGE, body.lineSequence().first().take(60), emptyList(), if (owner == meId) listOf(userId) + alsoWith else doctorsOnly(alsoWith)) }
         sendItemMessage(s.item.id, body)
         return item(s.item.id)
     }
@@ -363,7 +376,7 @@ class FakeRepository : HealooRepository {
         RecurrenceRules.problem(LocalDate.parse(appointment.date), appointment.recurrence)?.let { error(it) }
         val doctor = raw(appointment.doctorId)
         s.item = s.item.copy(
-            appointments = s.item.appointments + Appointment(id(), itemId, s.item.ownerId, doctor.id, doctor.displayName, null,
+            appointments = s.item.appointments + Appointment(id(), itemId, s.item.ownerId, doctor.id, doctor.displayName, appointment.hospitalId,
                 appointment.date, appointment.time, appointment.timezone, appointment.durationMin, appointment.notes, appointment.recurrence),
             accessList = if (s.item.accessList.any { it.granteeId == doctor.id } || doctor.id == s.item.ownerId) s.item.accessList else s.item.accessList + grantFor(doctor),
         )
@@ -414,7 +427,64 @@ class FakeRepository : HealooRepository {
     }
 
     override suspend fun share(itemId: String, granteeId: String) = change(itemId) { s ->
+        // The owner shares with anyone; a doctor, lab or hospital may pass it on to a doctor.
+        check(s.item.ownerId == meId || (raw(meId).canRefer && raw(granteeId).primaryRole == Role.DOCTOR)) {
+            "Only the owner can share this with ${raw(granteeId).displayName}; you can pass it on to doctors"
+        }
         if (s.item.accessList.none { it.granteeId == granteeId }) s.item = s.item.copy(accessList = s.item.accessList + grantFor(raw(granteeId)))
+    }
+
+    // ---- administration (rule 10: create users and doctors, deactivate doctors only) ----
+    private fun myHospital(): String = adminHospital[meId] ?: error("Only hospital administrators can manage accounts")
+
+    private fun adminView(u: UserProfile) =
+        AdminAccount(u.id, u.publicId, u.displayName, u.roles, u.headline, u.hospital, u.officialNumber, emails[u.id], u.id !in deactivated)
+
+    override suspend fun adminDoctors(): List<AdminAccount> = latency {
+        val h = myHospital()
+        users.filter { it.primaryRole == Role.DOCTOR && (affiliation[it.id] == h || (it.id in deactivated && homeHospital[it.id] == h)) }
+            .sortedWith(compareBy({ it.id in deactivated }, { it.displayName })).map(::adminView)
+    }
+
+    private fun newAccount(a: NewAccount, role: Role): AdminAccount {
+        val h = myHospital()
+        val email = a.email.trim().lowercase()
+        require(a.displayName.isNotBlank()) { "Enter a name" }
+        require(Regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$").matches(email)) { "Enter a valid email address" }
+        require(email !in emails.values) { "An account with that email already exists" }
+        val doctor = role == Role.DOCTOR
+        val alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+        val publicId = generateSequence { "HL-" + (1..5).map { alphabet.random() }.joinToString("") }.first { p -> users.none { it.publicId == p } }
+        val u = UserProfile(
+            "n-" + id().take(8), publicId, a.displayName.trim(), listOf(role),
+            headline = if (doctor) a.designation?.trim()?.takeIf { it.isNotEmpty() }?.let { "Doctor · $it" } ?: "Doctor" else "Patient",
+            hospital = if (doctor) raw(h).displayName else null,
+            officialNumber = if (doctor) a.officialNumber?.trim()?.ifEmpty { null } else null,
+        )
+        users += u
+        emails[u.id] = email
+        if (doctor) { affiliation[u.id] = h; homeHospital[u.id] = h; connections += setOf(u.id, h) }
+        return adminView(u)
+    }
+
+    override suspend fun adminCreateUser(account: NewAccount) = latency { newAccount(account, Role.PATIENT) }
+    override suspend fun adminCreateDoctor(account: NewAccount) = latency { newAccount(account, Role.DOCTOR) }
+
+    override suspend fun adminDeactivateDoctor(doctorId: String) = latency {
+        val h = myHospital()
+        val d = raw(doctorId)
+        check(d.primaryRole == Role.DOCTOR) { "Users can't be deleted; administrators can delete (deactivate) doctors only" }
+        check(affiliation[doctorId] == h || homeHospital[doctorId] == h) { "You can delete only doctors of your own hospital" }
+        affiliation.remove(doctorId)
+        deactivated += doctorId
+    }
+
+    override suspend fun adminReactivateDoctor(doctorId: String) = latency {
+        val h = myHospital()
+        check(homeHospital[doctorId] == h) { "You can reactivate only doctors of your own hospital" }
+        deactivated -= doctorId
+        affiliation[doctorId] = h
+        adminView(raw(doctorId))
     }
 
     // ---- account ----

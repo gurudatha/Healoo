@@ -5,7 +5,9 @@ private struct ScrollOffsetKey: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
-// MARK: - User page (header collapses 25% → 10%, then stays pinned)
+// MARK: - Person page (user, doctor or hospital; header collapses 25% → 10%, then stays pinned)
+
+private enum PageSheet: String, Identifiable { case message, share, bookAtHospital; var id: String { rawValue } }
 
 struct UserPageView: View {
     let userId: String
@@ -18,11 +20,17 @@ struct UserPageView: View {
     @State private var user: UserProfile?
     @State private var shared: [DataItem] = []
     @State private var conversations: [Conversation] = []
-    @State private var starting = false
+    @State private var contacts: [UserProfile] = []
+    @State private var doctors: [UserProfile] = []          // hospital page
     @State private var tab = 0
-    @State private var draft = ""
     @State private var error: String?
+    @State private var notice: String?
     @State private var offset: CGFloat = 0
+    @State private var sheet: PageSheet?
+    @FocusState private var doctorSearchFocused: Bool
+
+    private var page: PageKind { user.map(PageOperations.page(for:)) ?? .user }
+    private var operations: ResolvedOperations { PageOperations.resolve(page, facts: OpFact.of(viewer: me, subject: user)) }
 
     var body: some View {
         GeometryReader { geo in
@@ -32,25 +40,25 @@ struct UserPageView: View {
             let progress = (maxH - current) / max(maxH - minH, 1)
 
             ZStack(alignment: .top) {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Color.clear.frame(height: maxH)
-                                .background(GeometryReader { g in
-                                    Color.clear.preference(key: ScrollOffsetKey.self, value: g.frame(in: .named("userScroll")).minY)
-                                })
-                            content(proxy: proxy).padding(.horizontal, 20)
-                        }
-                        .padding(.bottom, 24)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Color.clear.frame(height: maxH)
+                            .background(GeometryReader { g in
+                                Color.clear.preference(key: ScrollOffsetKey.self, value: g.frame(in: .named("userScroll")).minY)
+                            })
+                        content.padding(.horizontal, 20)
                     }
-                    .coordinateSpace(name: "userScroll")
-                    .onPreferenceChange(ScrollOffsetKey.self) { offset = $0 }
+                    .padding(.bottom, 24)
                 }
+                .coordinateSpace(name: "userScroll")
+                .onPreferenceChange(ScrollOffsetKey.self) { offset = $0 }
                 if let user { ProfileHeader(user: user, progress: progress) { dismiss() }.frame(height: current) }
             }
         }
         .background(Sage.background)
-        .safeAreaInset(edge: .bottom, spacing: 0) { if tab == 1 && user?.connected == true { composer } }
+        .safeAreaInset(edge: .bottom, spacing: 0) { if user != nil { OperationBar(ops: operations, perform: perform) } }
+        .onAppear { router.personPages += 1 }
+        .onDisappear { router.personPages -= 1 }
         .task { if user == nil { await load() } }
         // Live messages from the WebSocket (doc 4.4): refresh the conversation list.
         .onReceive(env.repo.events) { event in
@@ -58,25 +66,75 @@ struct UserPageView: View {
                 Task { conversations = (try? await env.repo.conversations(with: userId)) ?? conversations }
             }
         }
+        .sheet(item: $sheet) { which in
+            if let user {
+                NavigationStack {
+                    switch which {
+                    case .message:
+                        MessageSheet(user: user, me: me, contacts: contacts) { id in
+                            sheet = nil
+                            Task { conversations = (try? await env.repo.conversations(with: userId)) ?? conversations }
+                            router.push(.discussion(id))
+                        }
+                    case .share:
+                        ShareSheet(user: user, me: me, contacts: contacts) { text in
+                            sheet = nil; notice = text; tab = 0
+                            Task { shared = (try? await env.repo.sharedItems(with: userId)) ?? shared }
+                        }
+                    case .bookAtHospital:
+                        BookAtHospitalSheet(hospital: user, doctors: doctors) { d in
+                            sheet = nil; router.upload(UploadRequest(to: nil, mode: .appointment, doctorId: d.id, hospitalId: user.id))
+                        }
+                    }
+                }
+                .environment(env)
+                .presentationDetents([.large])
+            }
+        }
+    }
+
+    private func perform(_ op: String) {
+        guard let user else { return }
+        switch op {
+        case OpId.connect: Task { _ = try? await env.repo.connect(user.id); await load() }
+        case OpId.message: sheet = .message
+        case OpId.history: tab = 0
+        case OpId.shareDocument: sheet = .share
+        case OpId.uploadFor: router.upload(UploadRequest(to: user.id))
+        case OpId.bookAppointment:
+            if page == .hospital { sheet = .bookAtHospital }
+            else { router.upload(UploadRequest(to: user.id, mode: .appointment, doctorId: user.id)) }
+        case OpId.searchDoctors: doctorSearchFocused = true
+        default: break
+        }
     }
 
     @ViewBuilder
-    private func content(proxy: ScrollViewProxy) -> some View {
+    private var content: some View {
         if let error { ErrorView(message: error) { Task { await load() } } }
         else if let user {
-            if !user.connected {
-                Text("You can see \(user.displayName)'s profile. Add them to your contacts to message them; records appear only after the owner shares them.")
-                    .font(HFont.body).foregroundStyle(Sage.inkSoft).padding(.top, 16)
-                Button("Add to contacts") { Task { _ = try? await env.repo.connect(user.id); await load() } }
-                    .buttonStyle(PrimaryButtonStyle())
-            } else {
-                // Doctors, assistants and labs can upload a record the patient will own (doc 2.3).
-                if me?.isClinical == true && user.primaryRole == .patient {
-                    Button("Upload for \(user.displayName.split(separator: " ").first.map(String.init) ?? user.displayName)") {
-                        router.upload(for: user.id)
-                    }
-                    .buttonStyle(PrimaryButtonStyle()).padding(.top, 16)
+            if let notice {
+                HStack {
+                    Text(notice).font(HFont.caption).foregroundStyle(Sage.primary)
+                    Spacer()
+                    Button("OK") { self.notice = nil }.font(HFont.captionStrong).foregroundStyle(Sage.primary)
                 }
+                .padding(12).background(Sage.sageTint, in: RoundedRectangle(cornerRadius: 12)).padding(.top, 12)
+            }
+            if page == .hospital {
+                SectionHeader(title: "Doctors · \(doctors.count)").padding(.top, 16)
+                FilteredSearchBar(
+                    placeholder: "Search doctors by name or Healoo ID", candidates: doctors,
+                    matches: { $0.matches($1) || $0.headline.lowercased().contains($1) },
+                    onPick: { router.push(.user($0.id, messages: false)) },
+                    showAllWhenBlank: true, maxResults: 100, focused: $doctorSearchFocused,
+                    emptyText: doctors.isEmpty ? "No doctors are listed for this hospital yet." : "No doctor matches."
+                ) { UserResultRow(user: $0) }
+            } else if !user.connected {
+                Text("You can see \(user.displayName)'s profile. Add them to your contacts (below) to message them; records appear only after the owner shares them.")
+                    .font(HFont.body).foregroundStyle(Sage.inkSoft).padding(.top, 16)
+            } else {
+                // History with this person: what is shared between you, and your discussions.
                 Segmented(options: ["Shared items · \(shared.count)", "Messages · \(conversations.count)"], selection: $tab).padding(.top, 16)
                 if tab == 0 {
                     if shared.isEmpty { Text("Nothing shared between you yet.").font(HFont.body).foregroundStyle(Sage.muted) }
@@ -86,7 +144,7 @@ struct UserPageView: View {
                 } else {
                     // Every message belongs to an item (design D5): one row per discussion with this person.
                     if conversations.isEmpty {
-                        Text("No discussions with \(user.displayName) yet. Write below to start one, or use Start discussion on any shared item.")
+                        Text("No discussions with \(user.displayName) yet. Tap Message below to start one.")
                             .font(HFont.body).foregroundStyle(Sage.muted)
                     }
                     ForEach(conversations) { c in
@@ -97,37 +155,164 @@ struct UserPageView: View {
         } else { LoadingView().padding(.top, 40) }
     }
 
-    private var composer: some View {
-        Composer(draft: $draft, placeholder: "Start a new discussion", busy: starting, send: start)
-    }
-
-    /// Creates a MESSAGE item with this person and opens its discussion.
-    private func start() {
-        let body = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !body.isEmpty else { return }
-        starting = true
-        Task {
-            if let item = try? await env.repo.startConversation(with: userId, body: body) {
-                draft = ""
-                conversations = (try? await env.repo.conversations(with: userId)) ?? conversations
-                router.push(.discussion(item.id))
-            }
-            starting = false
-        }
-    }
-
     private func load() async {
         error = nil
         do {
             me = try await env.repo.me()
             let u = try await env.repo.user(userId)
             user = u
+            if PageOperations.page(for: u) == .hospital { doctors = try await env.repo.hospitalDoctors(u.id) }
             if u.connected {
                 shared = try await env.repo.sharedItems(with: userId)
                 conversations = try await env.repo.conversations(with: userId)
                 if startOnMessages { tab = 1 }
             }
+            contacts = (try? await env.repo.connections()) ?? []
         } catch { self.error = "Couldn't load this profile. Try again." }
+    }
+}
+
+// MARK: - Operation sheets
+
+/// Message: a new discussion item; the page's person is always a recipient.
+private struct MessageSheet: View {
+    let user: UserProfile
+    let me: UserProfile?
+    let contacts: [UserProfile]
+    let onStarted: (String) -> Void
+    @Environment(AppEnvironment.self) private var env
+    @Environment(\.dismiss) private var dismiss
+    @State private var extras: [UserProfile] = []
+    @State private var draft = ""
+    @State private var busy = false
+    @State private var error: String?
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                // A clinician writing to a patient starts it on the patient's behalf; only doctors can be added.
+                RecipientField(fixed: user, extras: $extras, contacts: contacts,
+                               doctorsOnly: me?.isClinical == true && user.primaryRole == .patient, exclude: Set([me?.id].compactMap { $0 }))
+                VStack(alignment: .leading, spacing: 6) {
+                    FieldLabel("Message")
+                    TextField("Write to \(user.displayName)", text: $draft, axis: .vertical)
+                        .lineLimit(3...8).font(HFont.body).padding(12)
+                        .background(Sage.surface, in: RoundedRectangle(cornerRadius: 12))
+                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Sage.border))
+                    Text("This starts a new discussion item that everyone above can read and add to.").font(HFont.small).foregroundStyle(Sage.muted)
+                }
+                if let error { Text(error).font(HFont.small).foregroundStyle(Sage.clay) }
+                Button(busy ? "Sending…" : "Send", action: send).buttonStyle(PrimaryButtonStyle()).disabled(busy)
+            }
+            .padding(20)
+        }
+        .background(Sage.background)
+        .navigationTitle("New message").navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+    }
+
+    private func send() {
+        let body = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else { error = "Write a message first."; return }
+        busy = true
+        Task {
+            do { onStarted(try await env.repo.startConversation(with: user.id, body: body, alsoWith: extras.map(\.id)).id) }
+            catch { self.error = "That didn't send: \(error.localizedDescription). Try again." }
+            busy = false
+        }
+    }
+}
+
+/// Share a document: one of the viewer's existing items, to the page's person (and anyone added).
+private struct ShareSheet: View {
+    let user: UserProfile
+    let me: UserProfile?
+    let contacts: [UserProfile]
+    let onShared: (String) -> Void
+    @Environment(AppEnvironment.self) private var env
+    @Environment(\.dismiss) private var dismiss
+    @State private var items: [DataItem] = []
+    @State private var picked: DataItem?
+    @State private var extras: [UserProfile] = []
+    @State private var busy = false
+    @State private var error: String?
+
+    /// Passing on an item the viewer doesn't own is allowed to doctors only (server rule 9).
+    private var referral: Bool { picked.map { $0.ownerId != me?.id } ?? false }
+    private let kinds = PrimaryKind.allCases.map { k in SearchFilter<DataItem>(label: k.label + "s") { $0.primaryKind == k } }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
+                    FieldLabel("Document")
+                    if let picked { PickedRow(content: { ItemResultRow(item: picked) }, onChange: { self.picked = nil }) }
+                    else {
+                        FilteredSearchBar(
+                            placeholder: "Search your items", candidates: items,
+                            matches: { i, q in i.title.lowercased().contains(q) || i.keywords.contains { $0.lowercased().contains(q) } },
+                            onPick: { picked = $0; error = nil }, filters: kinds, showAllWhenBlank: true, maxResults: 6,
+                            emptyText: items.isEmpty ? "You have no open items to share yet. New documents come in through Upload." : "No item matches."
+                        ) { ItemResultRow(item: $0) }
+                    }
+                    if referral {
+                        Text("You don't own this item, so it can be passed on to doctors only. The owner sees who has it.")
+                            .font(HFont.small).foregroundStyle(Sage.sandInk)
+                    }
+                }
+                RecipientField(fixed: user, extras: $extras, contacts: contacts, doctorsOnly: referral,
+                               exclude: Set([me?.id].compactMap { $0 }), label: "Share with")
+                if let error { Text(error).font(HFont.small).foregroundStyle(Sage.clay) }
+                Button(busy ? "Sharing…" : "Share", action: share).buttonStyle(PrimaryButtonStyle()).disabled(busy || picked == nil)
+            }
+            .padding(20)
+        }
+        .background(Sage.background)
+        .navigationTitle("Share a document").navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+        .task { items = ((try? await env.repo.items(status: .open, limit: 100)) ?? []).filter { $0.can("share") && $0.ownerId != user.id } }
+    }
+
+    private func share() {
+        guard let item = picked else { error = "Choose a document to share."; return }
+        let people = [user] + extras
+        if referral && people.contains(where: { $0.primaryRole != .doctor }) {
+            error = "You don't own \"\(item.title)\", so you can pass it on to doctors only."; return
+        }
+        busy = true
+        Task {
+            do {
+                for p in people { _ = try await env.repo.share(item.id, with: p.id) }
+                onShared("Shared \"\(item.title)\" with \(people.map(\.displayName).joined(separator: ", ")).")
+            } catch { self.error = "That didn't share: \(error.localizedDescription)." }
+            busy = false
+        }
+    }
+}
+
+/// Book on a hospital's page: choose one of its doctors, then the appointment form.
+private struct BookAtHospitalSheet: View {
+    let hospital: UserProfile
+    let doctors: [UserProfile]
+    let onPick: (UserProfile) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Choose a doctor; you pick the date and time next.").font(HFont.caption).foregroundStyle(Sage.muted)
+                FilteredSearchBar(
+                    placeholder: "Search doctors by name or Healoo ID", candidates: doctors,
+                    matches: { $0.matches($1) || $0.headline.lowercased().contains($1) },
+                    onPick: onPick, showAllWhenBlank: true, maxResults: 100,
+                    emptyText: doctors.isEmpty ? "No doctors are listed for this hospital yet." : "No doctor matches."
+                ) { UserResultRow(user: $0, trailing: "Book") }
+            }
+            .padding(20)
+        }
+        .background(Sage.background)
+        .navigationTitle("Book at \(hospital.displayName)").navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
     }
 }
 

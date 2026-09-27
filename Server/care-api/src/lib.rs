@@ -26,6 +26,13 @@ pub mod worker;
 pub mod ws;
 
 /// Logging: JSON lines on the internet (for log shipping), readable text on the LAN.
+/// Choose rustls's crypto engine once per process, before any TLS is used. Needed because more
+/// than one engine is compiled in, and rustls then refuses to guess (it panics on first use).
+pub fn install_crypto_provider() {
+    // Err only means a provider was already installed, which is fine.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 pub fn init_tracing(json: bool) {
     use tracing_subscriber::{fmt, EnvFilter};
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,care_api=debug,tower_http=info"));

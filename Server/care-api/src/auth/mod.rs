@@ -25,6 +25,9 @@ pub struct VerifiedToken {
     /// Cassandra user_id from the post-login Action (doc 5.3), when present.
     pub uid: Option<Uuid>,
     pub name: Option<String>,
+    /// Verified email (`email` + `email_verified`, plain or namespaced). Links an account an
+    /// administrator created to its first Auth0 sign-in; unverified emails are ignored.
+    pub email: Option<String>,
     pub exp: i64,
 }
 
@@ -67,7 +70,11 @@ fn to_verified(c: RawClaims, ns: &str) -> VerifiedToken {
         .map(|a| a.iter().filter_map(|r| r.as_str().map(str::to_string)).collect())
         .unwrap_or_default();
     let uid = c.extra.get(&format!("{ns}uid")).and_then(|v| v.as_str()).and_then(|s| s.parse().ok());
-    VerifiedToken { sub: c.sub, roles, uid, name: c.name, exp: c.exp }
+    let claim = |k: &str| c.extra.get(&format!("{ns}{k}")).or_else(|| c.extra.get(k));
+    let email = claim("email").and_then(|v| v.as_str())
+        .filter(|_| claim("email_verified").and_then(|v| v.as_bool()) == Some(true))
+        .map(|e| e.trim().to_lowercase());
+    VerifiedToken { sub: c.sub, roles, uid, name: c.name, email, exp: c.exp }
 }
 
 // ---------------- Auth0 ----------------

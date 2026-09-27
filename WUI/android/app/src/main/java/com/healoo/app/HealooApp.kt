@@ -56,6 +56,7 @@ import com.healoo.app.ui.settings.SettingsScreen
 import com.healoo.app.ui.theme.HealooTheme
 import com.healoo.app.ui.conversations.ConversationsScreen
 import com.healoo.app.ui.discussion.DiscussionScreen
+import com.healoo.app.ui.upload.NewItemMode
 import com.healoo.app.ui.upload.UploadScreen
 import com.healoo.app.ui.user.UserPageScreen
 import com.healoo.app.ui.viewer.AttachmentViewer
@@ -133,7 +134,7 @@ fun HealooRoot() {
 object Routes {
     const val HOME = "home"
     const val SEARCH = "search?q={q}&role={role}"
-    const val UPLOAD = "upload?target={target}&item={item}"
+    const val UPLOAD = "upload?to={to}&item={item}&mode={mode}&doctor={doctor}&hospital={hospital}"
     const val MESSAGES = "messages"
     const val SETTINGS = "settings"
     const val USER = "user/{id}?messages={messages}"
@@ -142,11 +143,15 @@ object Routes {
     const val VIEWER = "viewer/{id}/{index}"
     const val EDIT_PROFILE = "profile/edit"
     const val SHARING = "sharing"
+    const val ADMIN = "admin"
 
     fun search(q: String = "", role: Role? = null) = "search?q=${AUri.encode(q)}&role=${role?.name ?: ""}"
-    fun upload(target: String? = null) = "upload?target=${target ?: ""}&item="
+    /** New item; [to] is the person whose page it came from (always a recipient). */
+    fun upload(to: String? = null) = "upload?to=${to ?: ""}&item=&mode=&doctor=&hospital="
     /** Add files to an existing item (UploadScreen in add-files mode). */
-    fun addFiles(itemId: String) = "upload?target=&item=$itemId"
+    fun addFiles(itemId: String) = "upload?to=&item=$itemId&mode=&doctor=&hospital="
+    /** New appointment with [doctorId], optionally through a hospital's page. */
+    fun book(doctorId: String, hospitalId: String?) = "upload?to=${if (hospitalId == null) doctorId else ""}&item=&mode=APPOINTMENT&doctor=$doctorId&hospital=${hospitalId ?: ""}"
     fun discussion(itemId: String) = "discussion/$itemId"
     fun user(id: String, messages: Boolean = false) = "user/$id?messages=$messages"
     fun item(id: String) = "item/$id"
@@ -219,15 +224,18 @@ fun HealooNavHost(onSignOut: () -> Unit) {
         }
         composable(
             Routes.UPLOAD,
-            arguments = listOf(
-                navArgument("target") { type = NavType.StringType; defaultValue = "" },
-                navArgument("item") { type = NavType.StringType; defaultValue = "" },
-            ),
+            arguments = listOf("to", "item", "mode", "doctor", "hospital").map { name ->
+                navArgument(name) { type = NavType.StringType; defaultValue = "" }
+            },
         ) { entry ->
-            val addTo = entry.arguments?.getString("item")?.takeIf { it.isNotBlank() }
+            fun arg(name: String) = entry.arguments?.getString(name)?.takeIf { it.isNotBlank() }
+            val addTo = arg("item")
             UploadScreen(
-                targetUserId = entry.arguments?.getString("target")?.takeIf { it.isNotBlank() },
+                toUserId = arg("to"),
                 addToItemId = addTo,
+                startMode = arg("mode")?.let { m -> NewItemMode.entries.firstOrNull { it.name == m } },
+                doctorId = arg("doctor"),
+                hospitalId = arg("hospital"),
                 onClose = { if (!nav.popBackStack()) nav.openTab(Tab.HOME) },
                 onUploaded = { id ->
                     // Adding files returns to the item already on the stack; a new item opens fresh.
@@ -245,9 +253,11 @@ fun HealooNavHost(onSignOut: () -> Unit) {
                 onActiveSharing = { nav.navigate(Routes.SHARING) },
                 onContacts = { nav.navigate(Routes.search()) },
                 onLogout = onSignOut,
+                onAdministration = { nav.navigate(Routes.ADMIN) },
             )
         }
         composable(Routes.EDIT_PROFILE) { EditProfileScreen(onClose = { nav.popBackStack() }) }
+        composable(Routes.ADMIN) { com.healoo.app.ui.admin.AdminScreen(onBack = { nav.popBackStack() }) }
         composable(Routes.SHARING) {
             ActiveSharingScreen(onBack = { nav.popBackStack() }, onOpenItem = { nav.navigate(Routes.item(it)) })
         }
@@ -264,8 +274,9 @@ fun HealooNavHost(onSignOut: () -> Unit) {
                 onBack = { nav.popBackStack() },
                 onOpenItem = { nav.navigate(Routes.item(it)) },
                 onOpenDiscussion = { nav.navigate(Routes.discussion(it)) },
+                onOpenUser = { nav.navigate(Routes.user(it)) },
                 onUploadFor = { nav.navigate(Routes.upload(it)) },
-                onTab = nav::openTab,
+                onBook = { doctor, hospital -> nav.navigate(Routes.book(doctor, hospital)) },
             )
         }
         composable(Routes.ITEM, arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->

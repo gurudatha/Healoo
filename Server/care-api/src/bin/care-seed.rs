@@ -4,6 +4,7 @@ use care_api::{config::Config, files, store::Db};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    care_api::install_crypto_provider();
     care_api::init_tracing(false);
     let cfg = Config::from_env()?;
     let db = Db::connect(&cfg.cassandra_nodes, &cfg.keyspace).await?;

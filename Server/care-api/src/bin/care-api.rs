@@ -15,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    care_api::install_crypto_provider();
     let json_logs = std::env::var("NETWORK_MODE").map(|m| m.eq_ignore_ascii_case("internet")).unwrap_or(false);
     care_api::init_tracing(json_logs);
     let cfg = Config::from_env()?;

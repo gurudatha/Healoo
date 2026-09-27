@@ -45,7 +45,10 @@ pub fn parse<T: DeserializeOwned>(s: &str) -> Option<T> {
 }
 
 impl Role {
-    pub fn is_clinical(&self) -> bool { matches!(self, Role::Doctor | Role::Assistant | Role::Lab) }
+    /// May create items for a patient in their contacts (the patient owns them).
+    pub fn is_clinical(&self) -> bool { matches!(self, Role::Doctor | Role::Assistant | Role::Lab | Role::Hospital) }
+    /// May pass an item they can fully read on to a doctor without owning it (referral).
+    pub fn can_refer(&self) -> bool { matches!(self, Role::Doctor | Role::Lab | Role::Hospital) }
     /// Auth0 role names (doc 5.2) → internal roles.
     pub fn from_auth0(name: &str) -> Option<Role> {
         Some(match name.to_lowercase().as_str() {

@@ -1,6 +1,7 @@
 //! REST API (design doc 4.3). All responses are JSON; errors use
 //! `{"error": {"code", "message", "request_id"}}` with 400/401/403/404/409/429.
 
+pub mod admin;
 pub mod files;
 pub mod grants;
 pub mod items;
@@ -127,6 +128,12 @@ pub fn router(state: AppState) -> Router {
         .route("/connections/:id", delete(users::disconnect))
         .route("/users/:id", get(users::profile))
         .route("/users/:id/shared-items", get(items::shared_items))
+        .route("/hospitals/:id/doctors", get(users::hospital_doctors))
+        .route("/admin/users", post(admin::create_user))
+        .route("/admin/users/:id", delete(admin::delete_user))
+        .route("/admin/doctors", get(admin::doctors).post(admin::create_doctor))
+        .route("/admin/doctors/:id", delete(admin::deactivate_doctor))
+        .route("/admin/doctors/:id/reactivate", post(admin::reactivate_doctor))
         // DataItem v2 (Documentation/DataItem_Design.md section 4)
         .route("/items", get(items::list).post(items::create))
         .route("/items/:id", get(items::get_one).patch(items::patch))

@@ -286,6 +286,7 @@ data class NewAppointment(
     @SerialName("duration_min") val durationMin: Int = 15,
     val notes: String? = null,
     val recurrence: Recurrence? = null,
+    @SerialName("hospital_id") val hospitalId: String? = null,   // booked through a hospital's page
 )
 
 @Serializable
@@ -376,5 +377,40 @@ sealed interface RealtimeEvent {
     data class ConnectionChanged(val connected: Boolean) : RealtimeEvent
 }
 
+/** Can create items for a patient in their contacts (the patient owns them). */
 val UserProfile.isClinical: Boolean
-    get() = primaryRole == Role.DOCTOR || primaryRole == Role.ASSISTANT || primaryRole == Role.LAB
+    get() = primaryRole == Role.DOCTOR || primaryRole == Role.ASSISTANT || primaryRole == Role.LAB || primaryRole == Role.HOSPITAL
+
+/** Hospital (or platform) administrator: manages users and doctors (Administration_Design.md). */
+val UserProfile.isAdministrator: Boolean
+    get() = primaryRole == Role.ADMINISTRATOR || primaryRole == Role.APP_ADMINISTRATOR
+
+/** An account as an administrator sees it (GET/POST /v1/admin/...): profile plus email and status. */
+@Serializable
+data class AdminAccount(
+    @SerialName("user_id") val id: String,
+    @SerialName("public_id") val publicId: String,
+    @SerialName("display_name") val displayName: String,
+    val roles: List<Role>,
+    val headline: String = "",
+    val hospital: String? = null,
+    @SerialName("official_number") val officialNumber: String? = null,
+    val email: String? = null,
+    val active: Boolean = true,
+) {
+    val profile: UserProfile get() = UserProfile(id, publicId, displayName, roles, headline, hospital = hospital, officialNumber = officialNumber)
+}
+
+/** POST /v1/admin/users and /v1/admin/doctors. Designation and number apply to doctors. */
+@Serializable
+data class NewAccount(
+    @SerialName("display_name") val displayName: String,
+    val email: String,
+    val location: String? = null,
+    val designation: String? = null,
+    @SerialName("official_number") val officialNumber: String? = null,
+)
+
+/** Can pass an item they don't own on to a doctor (referral). */
+val UserProfile.canRefer: Boolean
+    get() = primaryRole == Role.DOCTOR || primaryRole == Role.LAB || primaryRole == Role.HOSPITAL

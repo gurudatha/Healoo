@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1
 # Build: docker build --target api -t healoo/care-api .   (targets: api, worker)
-FROM rust:1.82-bookworm AS build
+FROM rust:1.94-slim AS build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential cmake pkg-config perl clang libclang-dev \
+    && rm -rf /var/lib/apt/lists/*
 RUN apt-get update && apt-get install -y --no-install-recommends cmake pkg-config libssl-dev libsasl2-dev zlib1g-dev libcurl4-openssl-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY care-api/Cargo.toml care-api/Cargo.lock* ./care-api/
@@ -11,7 +14,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --release --locked 2>/dev/null || cargo build --release; \
     mkdir -p /out && cp target/release/care-api target/release/care-worker target/release/care-seed target/release/devtoken /out/
 
-FROM debian:bookworm-slim AS runtime
+FROM debian:trixie-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libsasl2-2 libcurl4 curl && rm -rf /var/lib/apt/lists/* \
     && useradd -r -u 10001 healoo && mkdir -p /data && chown healoo /data
 COPY --from=build /out/ /usr/local/bin/

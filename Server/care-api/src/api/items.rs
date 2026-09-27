@@ -80,6 +80,7 @@ fn allowed_actions(p: &Principal, item: &Item, d: &Decision) -> Vec<String> {
     };
     if d.access == Access::Full {
         if owner { v.extend(["share", "revoke"]); }
+        else if p.user.roles.iter().any(|r| r.can_refer()) { v.push("share"); }   // to doctors only
         if owner && item.status == ItemStatus::Open { v.push("rate"); }
         if item.status == ItemStatus::Closed && (owner || p.has(Role::Doctor)) { v.push("reopen"); }
     }
@@ -171,7 +172,7 @@ fn summary_dto(s: &ItemSummary, p: &Principal) -> ItemDto {
         created_by_name: String::new(),
         created_at: String::new(),
         updated_at: ts_to_dt(s.updated_at).to_rfc3339(),
-        allowed_actions: if s.owner_id == p.id() { vec!["read".into(), "share".into()] } else { vec!["read".into()] },
+        allowed_actions: if s.owner_id == p.id() || p.user.roles.iter().any(|r| r.can_refer()) { vec!["read".into(), "share".into()] } else { vec!["read".into()] },
     }
 }
 
@@ -322,7 +323,7 @@ pub async fn create(State(st): State<AppState>, p: Principal, Json(b): Json<NewI
     }
     if for_someone_else {
         if !p.user.roles.iter().any(|r| r.is_clinical()) {
-            return Err(ApiError::forbidden("only doctors, assistants and labs can create items for someone else"));
+            return Err(ApiError::forbidden("only doctors, assistants, labs and hospitals can create items for someone else"));
         }
         let connected = st.db.is_connected(p.id(), owner_id, Role::Patient).await?
             || (p.has(Role::Assistant) && p.user.employer_doctor_id.is_some()
@@ -355,11 +356,14 @@ pub async fn create(State(st): State<AppState>, p: Principal, Json(b): Json<NewI
     // Access list: owner's shares; uploader keeps access; the appointment's doctor gets access.
     let mut grants: Vec<GrantUdt> = Vec::new();
     let mut add_grant = |g: GrantUdt, grants: &mut Vec<GrantUdt>| { if !grants.iter().any(|x| x.grantee_id == g.grantee_id) { grants.push(g); } };
+    // Creating for a patient, the uploader may also refer the item to fellow doctors.
     if for_someone_else { add_grant(grant_udt(&st, p.id(), p.id()).await?, &mut grants); }
-    else {
-        for g in b.share_with.iter().collect::<HashSet<_>>() {
-            if *g != p.id() { add_grant(grant_udt(&st, *g, p.id()).await?, &mut grants); }
+    for g in b.share_with.iter().collect::<HashSet<_>>() {
+        if *g == p.id() || *g == owner_id { continue; }
+        if for_someone_else && !policy::may_share_on_create(true, &load_user(&st, *g).await?.roles) {
+            return Err(ApiError::forbidden("when creating for a patient you can share only with doctors"));
         }
+        add_grant(grant_udt(&st, *g, p.id()).await?, &mut grants);
     }
     if let Some(a) = &b.appointment {
         if a.doctor_id != owner_id { add_grant(grant_udt(&st, a.doctor_id, p.id()).await?, &mut grants); }

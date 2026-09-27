@@ -8,6 +8,7 @@ use care_api::auth::DevVerifier;
 use std::time::Duration;
 
 fn main() {
+    care_api::install_crypto_provider();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(uid) = args.first().and_then(|a| a.parse::<uuid::Uuid>().ok()) else {
         eprintln!("usage: devtoken <user_uuid> [role ...]");

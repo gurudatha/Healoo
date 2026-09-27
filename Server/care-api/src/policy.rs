@@ -59,9 +59,9 @@ pub fn decide(item: &ItemFacts, who: &Subject, assistant: Option<&AssistantConte
     }
     let is_doctor = who.roles.contains(&Role::Doctor);
 
-    // Rule 2 (labs): a lab sees the reports it uploaded.
-    if who.roles.contains(&Role::Lab) && item.created_by == who.user_id {
-        return Decision::full("lab uploaded this item");
+    // Rule 2 (labs and hospitals): they see the items they uploaded for a patient.
+    if item.created_by == who.user_id && (who.roles.contains(&Role::Lab) || who.roles.contains(&Role::Hospital)) {
+        return Decision::full("lab or hospital uploaded this item");
     }
 
     // Rules 3, 4, 6: direct grant, or hospital grant + active affiliation.
@@ -99,10 +99,85 @@ pub fn decide(item: &ItemFacts, who: &Subject, assistant: Option<&AssistantConte
     Decision::deny("no grant for this user")
 }
 
+/// Rule 9 (Documentation/PageOperations_Design.md 5): who may add a grant to an existing item.
+/// The owner shares with anyone. A doctor, lab or hospital that can fully read the item may pass
+/// it on to a doctor (a referral); the owner still sees that grant and can revoke it.
+pub fn may_share(owner_id: Uuid, who: &Subject, access: Access, grantee_roles: &HashSet<Role>, via_hospital: bool) -> Decision {
+    if owner_id == who.user_id {
+        return Decision::full("owner shares with anyone");
+    }
+    if !who.roles.iter().any(|r| r.can_refer()) {
+        return Decision::deny("only the owner can share an item; doctors, labs and hospitals can pass it to a doctor");
+    }
+    if access != Access::Full {
+        return Decision::deny("you can pass on only items you can fully read");
+    }
+    if via_hospital || !grantee_roles.contains(&Role::Doctor) {
+        return Decision::deny("an item you don't own can be passed on to doctors only");
+    }
+    Decision::full("referral to a doctor")
+}
+
+/// Rule 9 at creation: someone creating an item for a patient may also share it, with doctors only.
+pub fn may_share_on_create(for_someone_else: bool, grantee_roles: &HashSet<Role>) -> bool {
+    !for_someone_else || grantee_roles.contains(&Role::Doctor)
+}
+
+/// Rule 10 (Documentation/Administration_Design.md): the hospital an administrator acts for.
+/// A hospital administrator acts only for their own hospital; a platform administrator for the
+/// hospital they name. Anyone else is refused.
+pub fn admin_hospital(roles: &HashSet<Role>, own_hospital: Option<Uuid>, requested: Option<Uuid>) -> Result<Uuid, &'static str> {
+    if roles.contains(&Role::AppAdministrator) {
+        return requested.or(own_hospital).ok_or("platform administrators must name the hospital (hospital_id)");
+    }
+    if !roles.contains(&Role::Administrator) {
+        return Err("only hospital administrators can manage accounts");
+    }
+    let own = own_hospital.ok_or("this administrator account has no hospital")?;
+    match requested {
+        Some(h) if h != own => Err("you can manage accounts only for your own hospital"),
+        _ => Ok(own),
+    }
+}
+
+/// Rule 10: administrators create patients (users) and doctors, nothing else.
+pub fn may_create_account(admin_roles: &HashSet<Role>, role: Role) -> Decision {
+    if !(admin_roles.contains(&Role::Administrator) || admin_roles.contains(&Role::AppAdministrator)) {
+        return Decision::deny("only administrators can create accounts");
+    }
+    match role {
+        Role::Patient => Decision::full("administrator creates a user"),
+        Role::Doctor => Decision::full("administrator creates a doctor"),
+        _ => Decision::deny("administrators can create users and doctors only"),
+    }
+}
+
+/// Rule 10: "delete" is deactivation, allowed for doctors only — a doctor of the administrator's
+/// hospital (any doctor for a platform administrator). Users (patients) and every other account
+/// can never be deleted by an administrator: they own health records.
+pub fn may_deactivate(admin_roles: &HashSet<Role>, admin_hospital: Option<Uuid>, target_roles: &HashSet<Role>, target_hospitals: &HashSet<Uuid>, target_home_hospital: Option<Uuid>) -> Decision {
+    if !target_roles.contains(&Role::Doctor) {
+        return Decision::deny("users can't be deleted; administrators can delete (deactivate) doctors only");
+    }
+    if admin_roles.contains(&Role::AppAdministrator) {
+        return Decision::full("platform administrator");
+    }
+    if !admin_roles.contains(&Role::Administrator) {
+        return Decision::deny("only hospital administrators can delete doctors");
+    }
+    match admin_hospital {
+        Some(h) if target_hospitals.contains(&h) || target_home_hospital == Some(h) => Decision::full("doctor of the administrator's hospital"),
+        _ => Decision::deny("you can delete only doctors of your own hospital"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    //! Mirrors acceptance tests 2–7 of design doc 10.4.
+    //! Mirrors acceptance tests 2–7 of design doc 10.4, and tests P1–P6 of
+    //! Documentation/PageOperations_Design.md 7 (hospital uploads and referrals).
     use super::*;
+
+    fn roles(r: &[Role]) -> HashSet<Role> { r.iter().copied().collect() }
 
     fn subject(roles: &[Role], hospitals: &[Uuid]) -> Subject {
         Subject { user_id: Uuid::new_v4(), roles: roles.iter().copied().collect(), active_hospitals: hospitals.iter().copied().collect() }
@@ -127,6 +202,124 @@ mod tests {
         assert_eq!(decide(&item, &patient, None).access, Access::Full);
         assert_eq!(decide(&item, &lab, None).access, Access::Full);
         assert_eq!(decide(&item, &doctor, None).access, Access::Deny);
+    }
+
+    #[test]
+    fn p2_owner_shares_with_anyone() {
+        let owner = subject(&[Role::Patient], &[]);
+        for grantee in [Role::Patient, Role::Doctor, Role::Hospital, Role::Lab] {
+            assert_eq!(may_share(owner.user_id, &owner, Access::Full, &roles(&[grantee]), false).access, Access::Full);
+        }
+    }
+
+    #[test]
+    fn p3_doctor_lab_and_hospital_refer_to_a_doctor() {
+        let owner = Uuid::new_v4();
+        for sharer in [Role::Doctor, Role::Lab, Role::Hospital] {
+            let who = subject(&[sharer], &[]);
+            assert_eq!(may_share(owner, &who, Access::Full, &roles(&[Role::Doctor]), false).access, Access::Full, "{sharer:?}");
+        }
+    }
+
+    #[test]
+    fn p4_referral_only_to_doctors_and_only_with_full_access() {
+        let owner = Uuid::new_v4();
+        let doctor = subject(&[Role::Doctor], &[]);
+        for grantee in [Role::Patient, Role::Hospital, Role::Lab] {
+            assert_eq!(may_share(owner, &doctor, Access::Full, &roles(&[grantee]), false).access, Access::Deny, "{grantee:?}");
+        }
+        assert_eq!(may_share(owner, &doctor, Access::Full, &roles(&[Role::Doctor]), true).access, Access::Deny); // as a hospital grant
+        assert_eq!(may_share(owner, &doctor, Access::MetadataOnly, &roles(&[Role::Doctor]), false).access, Access::Deny);
+    }
+
+    #[test]
+    fn p5_patients_and_assistants_cannot_share_what_they_do_not_own() {
+        let owner = Uuid::new_v4();
+        for sharer in [Role::Patient, Role::Assistant] {
+            let who = subject(&[sharer], &[]);
+            assert_eq!(may_share(owner, &who, Access::Full, &roles(&[Role::Doctor]), false).access, Access::Deny, "{sharer:?}");
+        }
+    }
+
+    #[test]
+    fn p6_creating_for_a_patient_shares_with_doctors_only() {
+        assert!(may_share_on_create(true, &roles(&[Role::Doctor])));
+        assert!(!may_share_on_create(true, &roles(&[Role::Patient])));
+        assert!(!may_share_on_create(true, &roles(&[Role::Hospital])));
+        assert!(may_share_on_create(false, &roles(&[Role::Patient])));   // own item: anyone
+    }
+
+    // ---- Rule 10: administrators (Documentation/Administration_Design.md, tests A1–A6) ----
+
+    #[test]
+    fn a1_admin_creates_users_and_doctors_only() {
+        for admin in [Role::Administrator, Role::AppAdministrator] {
+            assert_eq!(may_create_account(&roles(&[admin]), Role::Patient).access, Access::Full);
+            assert_eq!(may_create_account(&roles(&[admin]), Role::Doctor).access, Access::Full);
+            for other in [Role::Lab, Role::Hospital, Role::Assistant, Role::Administrator, Role::AppAdministrator] {
+                assert_eq!(may_create_account(&roles(&[admin]), other).access, Access::Deny, "{other:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a2_non_admins_cannot_create_accounts() {
+        for who in [Role::Patient, Role::Doctor, Role::Hospital, Role::Lab, Role::Assistant] {
+            assert_eq!(may_create_account(&roles(&[who]), Role::Patient).access, Access::Deny, "{who:?}");
+        }
+    }
+
+    #[test]
+    fn a3_admin_deletes_doctor_of_own_hospital() {
+        let h = Uuid::new_v4();
+        let doctor = roles(&[Role::Doctor]);
+        assert_eq!(may_deactivate(&roles(&[Role::Administrator]), Some(h), &doctor, &[h].into(), Some(h)).access, Access::Full);
+        // already off the hospital's list, but it is still their home hospital
+        assert_eq!(may_deactivate(&roles(&[Role::Administrator]), Some(h), &doctor, &HashSet::new(), Some(h)).access, Access::Full);
+    }
+
+    #[test]
+    fn a4_admin_cannot_delete_doctor_of_another_hospital() {
+        let (mine, other) = (Uuid::new_v4(), Uuid::new_v4());
+        let d = may_deactivate(&roles(&[Role::Administrator]), Some(mine), &roles(&[Role::Doctor]), &[other].into(), Some(other));
+        assert_eq!(d.access, Access::Deny);
+        assert_eq!(may_deactivate(&roles(&[Role::AppAdministrator]), None, &roles(&[Role::Doctor]), &[other].into(), Some(other)).access, Access::Full);
+    }
+
+    #[test]
+    fn a5_admin_can_never_delete_a_user() {
+        let h = Uuid::new_v4();
+        for admin in [Role::Administrator, Role::AppAdministrator] {
+            for target in [Role::Patient, Role::Lab, Role::Hospital, Role::Assistant, Role::Administrator] {
+                let d = may_deactivate(&roles(&[admin]), Some(h), &roles(&[target]), &[h].into(), Some(h));
+                assert_eq!(d.access, Access::Deny, "{admin:?} deleting {target:?}");
+            }
+        }
+        for who in [Role::Patient, Role::Doctor, Role::Hospital] {
+            assert_eq!(may_deactivate(&roles(&[who]), Some(h), &roles(&[Role::Doctor]), &[h].into(), Some(h)).access, Access::Deny);
+        }
+    }
+
+    #[test]
+    fn a6_admin_acts_only_for_own_hospital() {
+        let (mine, other) = (Uuid::new_v4(), Uuid::new_v4());
+        let admin = roles(&[Role::Administrator]);
+        assert_eq!(admin_hospital(&admin, Some(mine), None), Ok(mine));
+        assert_eq!(admin_hospital(&admin, Some(mine), Some(mine)), Ok(mine));
+        assert!(admin_hospital(&admin, Some(mine), Some(other)).is_err());
+        assert!(admin_hospital(&admin, None, None).is_err());
+        assert!(admin_hospital(&roles(&[Role::Doctor]), Some(mine), None).is_err());
+        assert_eq!(admin_hospital(&roles(&[Role::AppAdministrator]), None, Some(other)), Ok(other));
+        assert!(admin_hospital(&roles(&[Role::AppAdministrator]), None, None).is_err());
+    }
+
+    #[test]
+    fn p1_hospital_upload_visible_to_hospital_and_patient() {
+        let patient = subject(&[Role::Patient], &[]);
+        let hospital = subject(&[Role::Hospital], &[]);
+        let item = report(patient.user_id, hospital.user_id, vec![(GranteeType::Hospital, hospital.user_id)]);
+        assert_eq!(decide(&item, &hospital, None).access, Access::Full);
+        assert_eq!(decide(&item, &patient, None).access, Access::Full);
     }
 
     #[test]

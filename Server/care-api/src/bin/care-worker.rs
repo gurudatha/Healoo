@@ -6,6 +6,7 @@ use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    care_api::install_crypto_provider();
     care_api::init_tracing(std::env::var("NETWORK_MODE").map(|m| m.eq_ignore_ascii_case("internet")).unwrap_or(false));
     let cfg = Config::from_env()?;
     if cfg.bus == BusKind::Memory {

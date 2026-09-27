@@ -170,8 +170,8 @@ in order:
   9. New report: in the Upload tab keep "Report", attach several images and PDFs,
      reorder them, upload, and check the new item opens.
  10. Lab flow: Settings -> Log out, then sign in as City Diagnostics. Open
-     Lakshmi's page and use "Upload for Lakshmi". The Share section should be
-     hidden.
+     Lakshmi's page and tap Upload in the bottom bar. Lakshmi is locked as the
+     patient; "Share with" offers doctors only.
  11. Patient sees the lab upload: log out, sign in as Lakshmi, and check the
      lab's upload is on Home.
  12. Doctor view: sign in as Dr. Anitha Rao. Items shared with her or with her
@@ -194,7 +194,41 @@ in order:
  20. Rating is patient-only: sign in as Dr. Anitha Rao, close an item: the
      sheet has feedback but no stars.
  21. Start a discussion: open Dr. Srinivas Rao's page (Search -> HL-3K8M1),
-     Messages tab, write a message. A new discussion item opens.
+     tap Message in the bottom bar, write a message, Send. A new discussion
+     item opens.
+
+Page operations (Documentation/PageOperations_Design.md, section 7.3). Record
+the result of each step in that section.
+
+ 22. Global bar: on Home the bar shows Home, Search, Upload, Messages and a
+     three-dot More button; More lists Settings.
+ 23. User page: as Dr. Anitha Rao open Lakshmi's page. The bar shows Message,
+     History, Share, Upload and no More button.
+ 24. Doctor page: as Lakshmi open Dr. Anitha Rao's page. The bar shows Message,
+     History, Share, Book; More lists Upload.
+ 25. Not connected: as Lakshmi open Priya Rao's page (Search -> HL-4K7Q2). The
+     bar shows only Add contact.
+ 26. Message with extra people: on Dr. Anitha Rao's page tap Message. She is a
+     locked chip. Type "srin" in the search bar, filter Doctors, add Dr.
+     Srinivas Rao, send. The discussion opens; both doctors can see it.
+ 27. Share a document: on Dr. Srinivas Rao's page tap Share, search "CBC",
+     pick it, Share. The page's Shared items list now shows it.
+ 28. Referral: sign in as Dr. Anitha Rao, open Dr. Srinivas Rao's page (add
+     him first) and tap Share. Pick the CBC item (Lakshmi owns it): the sheet
+     says it can go to doctors only, and the search bar offers only doctors
+     (typing "City" finds nothing). Share it. It works.
+ 29. Upload into an existing item: on Dr. Anitha Rao's page tap More ->
+     Upload, choose "Existing item", pick the CBC item, add a PDF. The file is
+     added to that item.
+ 30. Upload a new item: same screen with "New item": Dr. Anitha Rao is the
+     locked "Share with" chip; the new item is shared with her.
+ 31. Book from a doctor page: tap Book on Dr. Anitha Rao's page. Upload opens
+     in Appointment mode with her selected.
+ 32. Hospital page: open Test Hospital A (HL-1H0A1). The page lists Dr. Anitha
+     Rao and Dr. Kavya Menon with a search bar; Doctors focuses it. Book ->
+     pick Dr. Kavya Menon -> the appointment form opens for her at Hospital A.
+ 33. Hospital upload: sign in as Test Hospital A, open Lakshmi's page, Upload
+     a report. Sign in as Lakshmi: the report is on Home.
 
 Items that need extra setup:
   - QR scanning: on Android it needs the Play Store emulator image; the camera
@@ -242,7 +276,13 @@ This uses the Rust backend (healoo-backend.zip) on your computer, with no Auth0.
       docker compose up -d --build     (the care-seed job reloads the test data)
  6. Extra accounts for access-rule tests: Dr. Srinivas Rao (HL-3K8M1,
     independent doctor), Hospital A Admin (HL-8A2D4), Meena S. (HL-8S5T7,
-    assistant to Dr. Rao).
+    assistant to Dr. Rao). More test accounts (patients, doctors by
+    designation, labs) are listed in Server/README.md.
+ 7. Administration: sign in as Hospital A Admin (HL-8A2D4), Settings ->
+    Administration. Add a user and a doctor (designation chip), note the
+    Healoo IDs. Delete (deactivate) the new doctor: it moves to the Deleted
+    filter and can't sign in; Reactivate it. There is no way to delete a
+    user, and DELETE /v1/admin/users/{id} answers 403.
 
 If the account list shows "Can't reach the trial server", check the address,
 that the certificate is installed, and that the backend is running

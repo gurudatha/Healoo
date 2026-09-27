@@ -22,6 +22,9 @@ targets:
     platform: iOS
     sources:
       - path: Healoo
+      # Bottom-bar operations per page, shared with Android (read by Components/OperationBar.swift).
+      - path: ../page-operations.json
+        buildPhase: resources
     dependencies:
       - package: Auth0
       - package: Firebase

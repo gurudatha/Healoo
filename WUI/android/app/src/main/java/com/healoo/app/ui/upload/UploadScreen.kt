@@ -40,25 +40,46 @@ import java.io.File
 /** What the New item screen creates (DataItem v2: one primary part), or adding files to an item. */
 enum class NewItemMode(val label: String) { REPORT("Report"), APPOINTMENT("Appointment"), ALERT("Alert"), ADD_FILES("Files") }
 
-class UploadViewModel(private val targetUserId: String?, private val addToItemId: String?) : ViewModel() {
+/**
+ * [toUserId]: the person whose page this was opened from. It always receives the item: a patient
+ * becomes its owner when a doctor, assistant, lab or hospital uploads for them; anyone else is
+ * shared with. [doctorId]/[hospitalId] preselect an appointment's doctor (Book on a person's page).
+ */
+class UploadViewModel(
+    private val toUserId: String?,
+    private val addToItemId: String?,
+    startMode: NewItemMode?,
+    private val doctorId: String?,
+    private val hospitalId: String?,
+) : ViewModel() {
     private val repo = ServiceLocator.repository
     var me by mutableStateOf<UserProfile?>(null); private set
     var owner by mutableStateOf<UserProfile?>(null)
-    /** Patients a doctor/assistant/lab can create items for (connected patients). */
+    /** Patients a doctor/assistant/lab/hospital can create items for (connected patients). */
     var patients by mutableStateOf<List<UserProfile>>(emptyList()); private set
     var contacts by mutableStateOf<List<UserProfile>>(emptyList()); private set
     var doctors by mutableStateOf<List<UserProfile>>(emptyList()); private set
-    /** The item files are added to (ADD_FILES mode). */
+    /** The page's person when they receive the item but don't own it (always shared with). */
+    var fixedRecipient by mutableStateOf<UserProfile?>(null); private set
+    /** The page's person is the patient this is uploaded for, so the patient can't be changed. */
+    var ownerLocked by mutableStateOf(false); private set
+    val extraRecipients = mutableStateListOf<UserProfile>()
+    /** The item files are added to (ADD_FILES mode from an item). */
     var target by mutableStateOf<DataItem?>(null); private set
     val uploadingForSomeoneElse get() = owner != null && owner?.id != me?.id
 
-    var mode by mutableStateOf(if (addToItemId != null) NewItemMode.ADD_FILES else NewItemMode.REPORT)
+    var mode by mutableStateOf(startMode ?: if (addToItemId != null) NewItemMode.ADD_FILES else NewItemMode.REPORT)
+    /** Report mode: false = a new item, true = add the files to an existing one. */
+    var intoExisting by mutableStateOf(false)
+    var existingTarget by mutableStateOf<DataItem?>(null)
+    var existingCandidates by mutableStateOf<List<DataItem>>(emptyList()); private set
+    val addingFiles get() = mode == NewItemMode.ADD_FILES || (mode == NewItemMode.REPORT && intoExisting)
+
     var title by mutableStateOf("")
     var keywords by mutableStateOf("")
     var filesAreReport by mutableStateOf(true)
     val links = mutableStateListOf<String>()
     val files = mutableStateListOf<PendingAttachment>()
-    val shareWith = mutableStateListOf<String>()
     val appointment = com.healoo.app.ui.item.AppointmentFormState(null)
     val alert = com.healoo.app.ui.item.AlertFormState()
 
@@ -71,43 +92,54 @@ class UploadViewModel(private val targetUserId: String?, private val addToItemId
                 val self = repo.me()
                 me = self
                 val all = repo.connections()
+                contacts = all
                 patients = all.filter { it.primaryRole == Role.PATIENT }
+                val to = toUserId?.let { repo.user(it) }
+                ownerLocked = to != null && to.primaryRole == Role.PATIENT && self.isClinical
                 owner = when {
-                    targetUserId != null -> repo.user(targetUserId)
+                    ownerLocked -> to
                     self.isClinical -> null            // must pick a patient first
                     else -> self
                 }
-                contacts = all.filter { it.primaryRole == Role.DOCTOR || it.primaryRole == Role.HOSPITAL }
-                doctors = (all + self).filter { it.primaryRole == Role.DOCTOR }.distinctBy { it.id }
-                if (self.primaryRole == Role.DOCTOR) appointment.doctorId = self.id
-                else if (doctors.size == 1) appointment.doctorId = doctors.first().id
+                fixedRecipient = to?.takeIf { !ownerLocked }
+                val preselected = doctorId?.let { id -> if (id == to?.id) to else repo.user(id) }
+                doctors = (all + self + listOfNotNull(preselected)).filter { it.primaryRole == Role.DOCTOR }.distinctBy { it.id }
+                appointment.doctorId = when {
+                    preselected != null -> preselected.id
+                    self.primaryRole == Role.DOCTOR -> self.id
+                    else -> doctors.singleOrNull()?.id
+                }
                 addToItemId?.let { target = repo.item(it); filesAreReport = target?.primaryKind == PrimaryKind.REPORT }
+                // Existing items to add to: those shared with the page's person, otherwise all open ones.
+                existingCandidates = (if (to != null) repo.sharedItems(to.id) else repo.items(ItemStatus.OPEN, 100))
+                    .filter { it.status == ItemStatus.OPEN }
             }
         }
     }
 
     private fun keywordList() = keywords.split(',').map { it.trim() }.filter { it.isNotEmpty() }
-    /** Only the owner decides sharing (doc 2.3); an uploader keeps access automatically. */
-    private fun shares() = if (uploadingForSomeoneElse) emptyList() else shareWith.toList()
+    /** The page's person plus anyone added. Creating for a patient, the uploader can add doctors only. */
+    private fun shares() = (listOfNotNull(fixedRecipient) + extraRecipients).map { it.id }.distinct()
 
     fun submit(onDone: (DataItem) -> Unit) {
-        val o = owner ?: if (mode == NewItemMode.ADD_FILES) me else null
+        val intoItem = if (mode == NewItemMode.ADD_FILES) addToItemId else if (addingFiles) existingTarget?.id else null
+        if (addingFiles && intoItem == null) { message = "Choose the item to add the files to."; return }
+        val o = owner ?: if (addingFiles) me else null
         if (o == null && mode != NewItemMode.ALERT) { message = "Choose the patient this is for."; return }
-        when (mode) {
-            NewItemMode.REPORT, NewItemMode.ADD_FILES -> if (files.isEmpty() && (links.isEmpty() || mode == NewItemMode.ADD_FILES)) {
-                message = if (mode == NewItemMode.ADD_FILES) "Add at least one image or PDF." else "Add at least one image, PDF or link."; return
-            }
-            NewItemMode.APPOINTMENT -> appointment.problem()?.let { message = it; return }
-            NewItemMode.ALERT -> alert.problem()?.let { message = it; return }
+        when {
+            addingFiles -> if (files.isEmpty()) { message = "Add at least one image or PDF."; return }
+            mode == NewItemMode.REPORT -> if (files.isEmpty() && links.isEmpty()) { message = "Add at least one image, PDF or link."; return }
+            mode == NewItemMode.APPOINTMENT -> appointment.problem()?.let { message = it; return }
+            mode == NewItemMode.ALERT -> alert.problem()?.let { message = it; return }
         }
         busy = true
         viewModelScope.launch {
             runCatching {
-                when (mode) {
-                    NewItemMode.REPORT -> repo.createReport(ReportDraft(o!!.id, title.trim(), keywordList(), links.toList(), shares()), files.toList())
-                    NewItemMode.ADD_FILES -> repo.addAttachments(addToItemId!!, files.toList(), filesAreReport)
-                    NewItemMode.APPOINTMENT -> repo.createAppointment(o!!.id, appointment.build(o.id), shares())
-                    NewItemMode.ALERT -> repo.createAlert(title.trim(), alert.build(), shares())
+                when {
+                    addingFiles -> repo.addAttachments(intoItem!!, files.toList(), filesAreReport)
+                    mode == NewItemMode.REPORT -> repo.createReport(ReportDraft(o!!.id, title.trim(), keywordList(), links.toList(), shares()), files.toList())
+                    mode == NewItemMode.APPOINTMENT -> repo.createAppointment(o!!.id, appointment.build(o.id).copy(hospitalId = hospitalId), shares())
+                    else -> repo.createAlert(title.trim(), alert.build(), shares())
                 }
             }.onSuccess(onDone).onFailure { message = "That didn't finish: ${it.message}. Nothing was lost — try again." }
             busy = false
@@ -142,8 +174,18 @@ class UploadViewModel(private val targetUserId: String?, private val addToItemId
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun UploadScreen(targetUserId: String?, addToItemId: String?, onClose: () -> Unit, onUploaded: (String) -> Unit) {
-    val vm: UploadViewModel = viewModel(key = "upload-$targetUserId-$addToItemId") { UploadViewModel(targetUserId, addToItemId) }
+fun UploadScreen(
+    toUserId: String?,
+    addToItemId: String?,
+    startMode: NewItemMode?,
+    doctorId: String?,
+    hospitalId: String?,
+    onClose: () -> Unit,
+    onUploaded: (String) -> Unit,
+) {
+    val vm: UploadViewModel = viewModel(key = "upload-$toUserId-$addToItemId-$startMode-$doctorId-$hospitalId") {
+        UploadViewModel(toUserId, addToItemId, startMode, doctorId, hospitalId)
+    }
     val context = LocalContext.current
     var cameraUri by remember { mutableStateOf<Uri?>(null) }
     var showLinkDialog by remember { mutableStateOf(false) }
@@ -161,15 +203,19 @@ fun UploadScreen(targetUserId: String?, addToItemId: String?, onClose: () -> Uni
         if (ok) cameraUri?.let { vm.addFiles(context, listOf(it), AttachmentKind.IMAGE) }
     }
 
+    val fromItem = vm.mode == NewItemMode.ADD_FILES
     Scaffold(
         containerColor = Sage.Background,
         topBar = {
             PinnedHeader(
-                title = if (vm.mode == NewItemMode.ADD_FILES) "Add files" else "New item",
-                subtitle = if (vm.mode == NewItemMode.ADD_FILES) "To ${vm.target?.title ?: "…"}"
-                           else "For ${vm.owner?.displayName ?: "…"} · ${vm.mode.label}",
+                title = if (vm.addingFiles) "Add files" else "New item",
+                subtitle = when {
+                    fromItem -> "To ${vm.target?.title ?: "…"}"
+                    vm.addingFiles -> "To ${vm.existingTarget?.title ?: "an existing item"}"
+                    else -> "For ${vm.owner?.displayName ?: "…"} · ${vm.mode.label}"
+                },
                 onBack = onClose, backIcon = Icons.Outlined.Close, backLabel = "Cancel",
-                trailing = { vm.owner?.let { Avatar(it.initials, 36.dp) } },
+                trailing = { (vm.fixedRecipient ?: vm.owner)?.let { Avatar(it.initials, 36.dp) } },
             )
         },
         bottomBar = {
@@ -177,7 +223,7 @@ fun UploadScreen(targetUserId: String?, addToItemId: String?, onClose: () -> Uni
                 PrimaryButton(
                     when {
                         vm.busy -> "Saving…"
-                        vm.mode == NewItemMode.ADD_FILES -> "Add ${vm.files.size} file${if (vm.files.size == 1) "" else "s"}"
+                        vm.addingFiles -> "Add ${vm.files.size} file${if (vm.files.size == 1) "" else "s"}"
                         vm.mode == NewItemMode.APPOINTMENT -> "Book appointment"
                         vm.mode == NewItemMode.ALERT -> "Create alert"
                         else -> "Upload report"
@@ -191,10 +237,8 @@ fun UploadScreen(targetUserId: String?, addToItemId: String?, onClose: () -> Uni
             Modifier.fillMaxSize().padding(padding),
             contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            val adding = vm.mode == NewItemMode.ADD_FILES
-            if (vm.me?.isClinical == true && !adding && vm.mode != NewItemMode.ALERT)
-                item { PatientPicker(vm.patients, vm.owner, lockedTo = targetUserId) { vm.owner = it } }
-            if (!adding) item {
+            val adding = vm.addingFiles
+            if (!fromItem) item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     FieldLabel("Start with")
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -206,6 +250,25 @@ fun UploadScreen(targetUserId: String?, addToItemId: String?, onClose: () -> Uni
                         style = HType.small, color = Sage.Muted)
                 }
             }
+            // New documents go into a new item or into one that already exists.
+            if (vm.mode == NewItemMode.REPORT) item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Segmented(listOf("New item", "Existing item"), if (vm.intoExisting) 1 else 0, { vm.intoExisting = it == 1; vm.message = null },
+                        Modifier.fillMaxWidth())
+                    if (vm.intoExisting) {
+                        val picked = vm.existingTarget
+                        if (picked != null) PickedRow({ Box(Modifier.weight(1f)) { ItemResultRow(picked, selected = true) } }, onChange = { vm.existingTarget = null })
+                        else FilteredSearchBar(
+                            placeholder = "Search open items", candidates = vm.existingCandidates, key = { it.id },
+                            matches = { it, q -> it.title.lowercase().contains(q) || it.keywords.any { k -> k.lowercase().contains(q) } },
+                            onPick = { vm.existingTarget = it; vm.message = null }, showAllWhenBlank = true, maxResults = 6,
+                            emptyText = if (vm.existingCandidates.isEmpty()) "No open items to add to." else "No item matches.",
+                        ) { ItemResultRow(it) }
+                    }
+                }
+            }
+            if (vm.me?.isClinical == true && !adding && vm.mode != NewItemMode.ALERT)
+                item { PatientPicker(vm.patients, vm.owner, locked = vm.ownerLocked) { vm.owner = it } }
             if (vm.mode == NewItemMode.APPOINTMENT) item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     com.healoo.app.ui.item.AppointmentForm(vm.appointment, vm.doctors)
@@ -268,41 +331,29 @@ fun UploadScreen(targetUserId: String?, addToItemId: String?, onClose: () -> Uni
                 }
             }
 
-            if (vm.mode == NewItemMode.REPORT) {
+            if (vm.mode == NewItemMode.REPORT && !adding) {
                 item { SageTextField("Title", vm.title, { vm.title = it }, placeholder = "e.g. Home BP readings, September") }
                 item { SageTextField("Keywords", vm.keywords, { vm.keywords = it }, placeholder = "Separate with commas, e.g. BP, home readings") }
             }
 
-            // Sharing: the owner chooses; someone creating for a patient keeps access automatically.
-            if (adding) Unit
-            else if (vm.uploadingForSomeoneElse) item {
-                Text("${vm.owner?.displayName} will own this item and decide who else sees it. You keep access because you created it.",
-                    style = HType.caption, color = Sage.SandInk,
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Sage.SandTint).padding(12.dp))
-            } else item {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FieldLabel("Share with")
-                    if (vm.contacts.isEmpty()) Text("Connect with a doctor or hospital to share with them.", style = HType.caption, color = Sage.Muted)
-                    else GroupCard {
-                        vm.contacts.forEachIndexed { i, c ->
-                            if (i > 0) RowDivider()
-                            val checked = c.id in vm.shareWith
-                            Row(
-                                Modifier.fillMaxWidth().heightIn(min = 48.dp)
-                                    .clickable(role = SemRole.Checkbox) { if (checked) vm.shareWith.remove(c.id) else vm.shareWith.add(c.id) }
-                                    .padding(horizontal = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Checkbox(checked, null, colors = CheckboxDefaults.colors(checkedColor = Sage.Primary))
-                                Text(c.displayName, style = HType.body, color = Sage.Ink, modifier = Modifier.weight(1f))
-                                Text(if (c.primaryRole == Role.HOSPITAL) "All its doctors" else "Direct", style = HType.small, color = Sage.Muted,
-                                    modifier = Modifier.padding(end = 12.dp))
-                            }
-                        }
-                    }
+            // Recipients: the page's person is always included; more are added with the Filtered Search Bar.
+            // Files added to an existing item keep that item's sharing.
+            if (!adding) {
+                if (vm.uploadingForSomeoneElse) item {
+                    Text("${vm.owner?.displayName} will own this item and decide who else sees it. You keep access because you created it, " +
+                        "and you can pass it on to doctors below.",
+                        style = HType.caption, color = Sage.SandInk,
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Sage.SandTint).padding(12.dp))
+                }
+                item {
+                    RecipientField(
+                        fixed = vm.fixedRecipient, extras = vm.extraRecipients,
+                        onAdd = { vm.extraRecipients += it }, onRemove = { vm.extraRecipients -= it },
+                        contacts = vm.contacts, doctorsOnly = vm.uploadingForSomeoneElse,
+                        exclude = setOfNotNull(vm.me?.id, vm.owner?.id), label = "Share with",
+                    )
                 }
             }
-
         }
     }
 
@@ -310,20 +361,20 @@ fun UploadScreen(targetUserId: String?, addToItemId: String?, onClose: () -> Uni
 }
 
 @Composable
-private fun PatientPicker(patients: List<UserProfile>, selected: UserProfile?, lockedTo: String?, onSelect: (UserProfile) -> Unit) {
+private fun PatientPicker(patients: List<UserProfile>, selected: UserProfile?, locked: Boolean, onSelect: (UserProfile) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         FieldLabel("Upload for")
         Box {
             OutlinedButton(
-                onClick = { if (lockedTo == null) open = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+                onClick = { if (!locked) open = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
                 shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, if (selected == null) Sage.Clay else Sage.Border),
                 colors = ButtonDefaults.outlinedButtonColors(containerColor = Sage.Surface),
             ) {
                 if (selected != null) { Avatar(selected.initials, 28.dp); Spacer(Modifier.width(10.dp)) }
                 Text(selected?.let { "${it.displayName} · ${it.publicId}" } ?: "Choose a patient", style = HType.body,
                     color = if (selected == null) Sage.Placeholder else Sage.Ink, modifier = Modifier.weight(1f))
-                if (lockedTo == null) Icon(Icons.Outlined.ArrowDropDown, null, tint = Sage.Muted)
+                if (!locked) Icon(Icons.Outlined.ArrowDropDown, null, tint = Sage.Muted)
             }
             DropdownMenu(open, { open = false }) {
                 if (patients.isEmpty()) DropdownMenuItem({ Text("No connected patients yet — add them from Search") }, { open = false })

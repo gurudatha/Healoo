@@ -48,7 +48,13 @@ interface HealooApi {
     @GET("v1/users/{id}") suspend fun user(@Path("id") id: String): UserProfile
     @GET("v1/users/{id}/shared-items") suspend fun shared(@Path("id") id: String): PageResult<DataItem>
     @GET("v1/search") suspend fun search(@Query("q") q: String, @Query("type") type: String?): PageResult<UserProfile>
+    @GET("v1/hospitals/{id}/doctors") suspend fun hospitalDoctors(@Path("id") id: String): PageResult<UserProfile>
     @GET("v1/connections") suspend fun connections(): PageResult<UserProfile>
+    @GET("v1/admin/doctors") suspend fun adminDoctors(): PageResult<AdminAccount>
+    @POST("v1/admin/users") suspend fun adminCreateUser(@Body body: NewAccount): AdminAccount
+    @POST("v1/admin/doctors") suspend fun adminCreateDoctor(@Body body: NewAccount): AdminAccount
+    @DELETE("v1/admin/doctors/{id}") suspend fun adminDeactivateDoctor(@Path("id") id: String)
+    @POST("v1/admin/doctors/{id}/reactivate") suspend fun adminReactivateDoctor(@Path("id") id: String): AdminAccount
     @POST("v1/connections") suspend fun connect(@Body body: ConnectRequest): UserProfile
     @DELETE("v1/grants/{id}") suspend fun revoke(@Path("id") grantId: String)
     @POST("v1/grants") suspend fun grant(@Body body: GrantRequest)
@@ -105,6 +111,7 @@ class RemoteRepository(
     override suspend fun user(id: String) = api.user(id)
     override suspend fun sharedItems(userId: String) = api.shared(userId).data
     override suspend fun search(query: String, role: Role?) = api.search(query, role?.name).data
+    override suspend fun hospitalDoctors(hospitalId: String) = api.hospitalDoctors(hospitalId).data
     override suspend fun connections() = api.connections().data
     override suspend fun connect(userId: String) = api.connect(ConnectRequest(userId))
 
@@ -125,12 +132,12 @@ class RemoteRepository(
     override suspend fun createAlert(title: String, alert: NewAlert, shareWith: List<String>) =
         api.createItem(NewItemRequest(title = title, shareWith = shareWith, alert = alert))
 
-    override suspend fun startConversation(userId: String, body: String): DataItem {
+    override suspend fun startConversation(userId: String, body: String, alsoWith: List<String>): DataItem {
         val me = api.me()
         val other = api.user(userId)
         // The patient in the pair owns the discussion; a clinician starts it on the patient's behalf.
-        val (owner, share) = if (other.primaryRole == Role.PATIENT && me.isClinical) other.id to emptyList() else me.id to listOf(userId)
-        return api.createItem(NewItemRequest(ownerId = owner, shareWith = share, message = NewMessage(body, clientId())))
+        val (owner, share) = if (other.primaryRole == Role.PATIENT && me.isClinical) other.id to alsoWith else me.id to listOf(userId) + alsoWith
+        return api.createItem(NewItemRequest(ownerId = owner, shareWith = share.distinct(), message = NewMessage(body, clientId())))
     }
 
     // ---- add to an item ----
@@ -154,6 +161,14 @@ class RemoteRepository(
 
     override suspend fun conversations(withUser: String?) = api.conversations(withUser).data
     override suspend fun calendar(from: String, to: String) = api.calendar(from, to).data
+
+    // ---- administration ----
+
+    override suspend fun adminDoctors() = api.adminDoctors().data
+    override suspend fun adminCreateUser(account: NewAccount) = api.adminCreateUser(account)
+    override suspend fun adminCreateDoctor(account: NewAccount) = api.adminCreateDoctor(account)
+    override suspend fun adminDeactivateDoctor(doctorId: String) = api.adminDeactivateDoctor(doctorId)
+    override suspend fun adminReactivateDoctor(doctorId: String) = api.adminReactivateDoctor(doctorId)
 
     // ---- account ----
 

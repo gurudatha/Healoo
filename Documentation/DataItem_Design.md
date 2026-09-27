@@ -171,7 +171,10 @@ for the doctor (1 hour before), unless the patient turns them off.
 - Rule 2 (reports readable by doctors only): if the item contains report files
   (`is_report`), a non-doctor grantee gets **metadata only** for the whole item.
 - Booking an appointment grants the doctor (user grant). Uploading for a patient grants the
-  uploader, as today. Only the owner shares further or revokes.
+  uploader, as today; a lab or hospital sees what it uploaded (rule 2 extended).
+- Sharing: the owner shares with anyone. A doctor, lab or hospital with full access may pass
+  the item on to a doctor (rule 9, [`PageOperations_Design.md`](PageOperations_Design.md)
+  section 5). Only the owner revokes.
 - Writing (message, attachment, appointment, alert) needs full access. Closing needs full
   access; rating needs to be the owner.
 
@@ -193,6 +196,8 @@ for the doctor (1 hour before), unless the patient turns them off.
 | GET/POST/DELETE | `/v1/items/{id}/alerts[/{alert_id}]` | |
 | GET | `/v1/appointments?from=&to=` | Calendar across items (patient: own; doctor: theirs) |
 | GET | `/v1/conversations?with=` | Messages tab: items with messages, grouped by the other person (replaces `/v1/threads`) |
+| POST | `/v1/grants` | `{ item_ids[], grantee_id }`: owner to anyone; doctor, lab or hospital to a doctor (rule 9) |
+| GET | `/v1/hospitals/{id}/doctors` | Doctors working at a hospital (profiles only), for its page |
 
 WebSocket frames: `message.new {item_id, message}`, `item.updated {item_id, change}` with
 `change` in `created | message | attachment | appointment | alert | closed | reopened | shared`.
@@ -408,6 +413,9 @@ Kotlin (Android, `data/Models.kt`):
   monthly / every 3 months) and "For" (1 / 2 / 3 / 6 months, or until cancelled). Shows the
   number of visits and rejects the combinations in 3.7.
 - **Messages tab:** conversations grouped by person; each opens the item's discussion.
+- **Person pages and the bottom bar:** operations per page (Message, History, Share, Upload,
+  Book, Doctors) come from `WUI/page-operations.json`; see
+  [`PageOperations_Design.md`](PageOperations_Design.md).
 - **Calendar:** new list of upcoming visits from `/v1/appointments`.
 
 ## 9. Moving from v0.1

@@ -21,6 +21,10 @@ pub struct UserRec {
     /// Assistants: the doctor they work for (doc 2.1).
     pub employer_doctor_id: Option<Uuid>,
     pub headline: Option<String>,
+    /// Set when an administrator created the account (links the first Auth0 sign-in).
+    pub email: Option<String>,
+    /// False once an administrator deactivated the account: no sign-in, hidden from search.
+    pub active: bool,
 }
 
 impl UserRec {
@@ -34,10 +38,10 @@ impl UserRec {
 
 type UserRow = (
     Uuid, Option<String>, Option<String>, Option<HashSet<String>>, Option<String>, Option<String>,
-    Option<String>, Option<Uuid>, Option<Uuid>, Option<String>,
+    Option<String>, Option<Uuid>, Option<Uuid>, Option<String>, Option<String>, Option<String>,
 );
 
-const USER_COLS: &str = "user_id, public_id, display_name, roles, photo_uri, location, official_number, primary_hospital_id, employer_doctor_id, headline";
+pub const DEACTIVATED: &str = "DEACTIVATED";
 
 fn to_rec(r: UserRow) -> UserRec {
     UserRec {
@@ -51,6 +55,8 @@ fn to_rec(r: UserRow) -> UserRec {
         primary_hospital_id: r.7,
         employer_doctor_id: r.8,
         headline: r.9,
+        email: r.10,
+        active: r.11.as_deref() != Some(DEACTIVATED),
     }
 }
 
@@ -73,14 +79,29 @@ pub struct NewUser<'a> {
     pub primary_hospital_id: Option<Uuid>,
     pub employer_doctor_id: Option<Uuid>,
     pub headline: Option<&'a str>,
+    /// Administrator-created accounts: the person's email and who created it.
+    pub email: Option<&'a str>,
+    pub created_by: Option<Uuid>,
 }
 
 impl Db {
     pub async fn user(&self, id: Uuid) -> Result<Option<UserRec>> {
-        // A const string with the column list keeps the SELECTs in one place.
-        const Q: &str = "SELECT user_id, public_id, display_name, roles, photo_uri, location, official_number, primary_hospital_id, employer_doctor_id, headline FROM users WHERE user_id = ?";
-        debug_assert!(Q.contains(USER_COLS));
+        const Q: &str = "SELECT user_id, public_id, display_name, roles, photo_uri, location, official_number, primary_hospital_id, employer_doctor_id, headline, email, status FROM users WHERE user_id = ?";
         Ok(self.one::<UserRow>(Q, (id,)).await?.map(to_rec))
+    }
+
+    pub async fn user_id_by_email(&self, email: &str) -> Result<Option<Uuid>> {
+        Ok(self.one::<(Uuid,)>("SELECT user_id FROM users_by_email WHERE email = ?", (email.trim().to_lowercase(),)).await?.map(|r| r.0))
+    }
+
+    /// Deactivate (administrator "delete") or reactivate an account. Nothing else is removed.
+    pub async fn set_active(&self, user: Uuid, active: bool, by: Uuid) -> Result<()> {
+        if active {
+            self.exec("UPDATE users SET status = null, deactivated_at = null, deactivated_by = null WHERE user_id = ?", (user,)).await?;
+        } else {
+            self.exec("UPDATE users SET status = ?, deactivated_at = ?, deactivated_by = ? WHERE user_id = ?", (DEACTIVATED, now_ts(), by, user)).await?;
+        }
+        Ok(())
     }
 
     pub async fn user_id_by_sub(&self, sub: &str) -> Result<Option<Uuid>> {
@@ -93,7 +114,7 @@ impl Db {
 
     /// Name search via the SAI index on `name_tokens` (doc 7.1). Profiles only.
     pub async fn search_by_name(&self, token: &str) -> Result<Vec<UserRec>> {
-        const Q: &str = "SELECT user_id, public_id, display_name, roles, photo_uri, location, official_number, primary_hospital_id, employer_doctor_id, headline FROM users WHERE name_tokens CONTAINS ? LIMIT 50";
+        const Q: &str = "SELECT user_id, public_id, display_name, roles, photo_uri, location, official_number, primary_hospital_id, employer_doctor_id, headline, email, status FROM users WHERE name_tokens CONTAINS ? LIMIT 50";
         Ok(self.rows::<UserRow>(Q, (token.to_lowercase(),)).await?.into_iter().map(to_rec).collect())
     }
 
@@ -116,10 +137,14 @@ impl Db {
         let public_id = match u.public_id { Some(p) => p.to_string(), None => self.new_public_id().await? };
         let roles: HashSet<String> = u.roles.iter().map(text).collect();
         let tokens = name_tokens(u.display_name);
+        let email = u.email.map(|e| e.trim().to_lowercase());
         self.exec(
-            "INSERT INTO users (user_id, auth0_sub, public_id, roles, display_name, name_tokens, location, official_number, primary_hospital_id, employer_doctor_id, headline, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (u.user_id, u.auth0_sub, &public_id, &roles, u.display_name, &tokens, u.location, u.official_number, u.primary_hospital_id, u.employer_doctor_id, u.headline, now_ts()),
+            "INSERT INTO users (user_id, auth0_sub, public_id, roles, display_name, name_tokens, location, official_number, primary_hospital_id, employer_doctor_id, headline, created_at, email, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (u.user_id, u.auth0_sub, &public_id, &roles, u.display_name, &tokens, u.location, u.official_number, u.primary_hospital_id, u.employer_doctor_id, u.headline, now_ts(), &email, u.created_by),
         ).await?;
+        if let Some(e) = &email {
+            self.exec("INSERT INTO users_by_email (email, user_id) VALUES (?, ?)", (e, u.user_id)).await?;
+        }
         self.exec(
             "INSERT INTO users_by_public_id (public_id, user_id, display_name, roles, location) VALUES (?, ?, ?, ?, ?)",
             (&public_id, u.user_id, u.display_name, &roles, u.location),
@@ -158,6 +183,13 @@ impl Db {
         let rows = self.rows::<(Uuid, Option<CqlTimestamp>)>(
             "SELECT doctor_id, ended_at FROM affiliations_by_hospital WHERE hospital_id = ?", (hospital,)).await?;
         Ok(rows.into_iter().filter(|r| r.1.is_none()).map(|r| r.0).collect())
+    }
+
+    /// Every doctor ever affiliated with the hospital, with whether the affiliation is active.
+    pub async fn hospital_doctors_all(&self, hospital: Uuid) -> Result<Vec<(Uuid, bool)>> {
+        let rows = self.rows::<(Uuid, Option<CqlTimestamp>)>(
+            "SELECT doctor_id, ended_at FROM affiliations_by_hospital WHERE hospital_id = ?", (hospital,)).await?;
+        Ok(rows.into_iter().map(|r| (r.0, r.1.is_none())).collect())
     }
 
     pub async fn add_affiliation(&self, doctor: Uuid, hospital: Uuid) -> Result<()> {

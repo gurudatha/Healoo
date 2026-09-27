@@ -30,7 +30,12 @@ pub async fn create(State(st): State<AppState>, p: Principal, Json(b): Json<Gran
 
     for id in &b.item_ids {
         let item = st.db.item(*id).await?.ok_or_else(|| ApiError::not_found("no such item"))?;
-        if item.owner_id != p.id() { return Err(ApiError::forbidden("only the owner can share an item")); }
+        // Rule 9: the owner shares with anyone; a doctor, lab or hospital may refer it to a doctor.
+        if item.owner_id != p.id() {
+            let access = super::items::decide(&st, &p, &item).await?.access;
+            let d = policy::may_share(item.owner_id, &p.subject, access, &grantee.roles, b.via_hospital_id.is_some());
+            if d.access != policy::Access::Full { return Err(ApiError::forbidden(d.reason)); }
+        }
         if item.grant_list().iter().any(|g| g.grantee_id == grantee.user_id) { continue; }
         let g = GrantUdt {
             grant_id: Some(Uuid::new_v4()),

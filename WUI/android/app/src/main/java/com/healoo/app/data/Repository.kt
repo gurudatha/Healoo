@@ -17,10 +17,12 @@ interface HealooRepository {
     suspend fun sharedItems(userId: String): List<DataItem>
     /** Global search by Healoo ID or name. Returns profiles only, never data. */
     suspend fun search(query: String, role: Role?): List<UserProfile>
+    /** Doctors currently working at a hospital (profiles only). */
+    suspend fun hospitalDoctors(hospitalId: String): List<UserProfile>
     suspend fun connections(): List<UserProfile>
     suspend fun connect(userId: String): UserProfile
     suspend fun revokeGrant(itemId: String, grantId: String): DataItem
-    /** Patient shares an item with a user or hospital (POST /v1/grants). */
+    /** Shares an item (POST /v1/grants): the owner with anyone; a doctor, lab or hospital with doctors. */
     suspend fun share(itemId: String, granteeId: String): DataItem
 
     // ---- DataItem v2: creating items from one primary part ----
@@ -30,8 +32,11 @@ interface HealooRepository {
     suspend fun createAppointment(ownerId: String?, appointment: NewAppointment, shareWith: List<String> = emptyList()): DataItem
     /** New ALERT item. */
     suspend fun createAlert(title: String, alert: NewAlert, shareWith: List<String> = emptyList()): DataItem
-    /** New MESSAGE item: starts a discussion with [userId] (the patient in the pair owns it). */
-    suspend fun startConversation(userId: String, body: String): DataItem
+    /**
+     * New MESSAGE item: starts a discussion with [userId] (the patient in the pair owns it), also
+     * shared with [alsoWith]. A clinician writing to a patient can add doctors only.
+     */
+    suspend fun startConversation(userId: String, body: String, alsoWith: List<String> = emptyList()): DataItem
 
     // ---- DataItem v2: adding to an existing item ----
     suspend fun itemMessages(itemId: String): List<Message>
@@ -51,6 +56,15 @@ interface HealooRepository {
     suspend fun conversations(withUser: String? = null): List<Conversation>
     /** Upcoming visits across items (YYYY-MM-DD, up to 62 days). */
     suspend fun calendar(from: String, to: String): List<CalendarVisit>
+
+    // ---- administration (hospital administrators; users can't be deleted) ----
+    /** The administrator's hospital's doctors, deactivated ones included. */
+    suspend fun adminDoctors(): List<AdminAccount>
+    suspend fun adminCreateUser(account: NewAccount): AdminAccount
+    suspend fun adminCreateDoctor(account: NewAccount): AdminAccount
+    /** "Delete" a doctor: deactivates the account and ends the hospital affiliation. */
+    suspend fun adminDeactivateDoctor(doctorId: String)
+    suspend fun adminReactivateDoctor(doctorId: String): AdminAccount
 
     // ---- account ----
     suspend fun updateProfile(update: ProfileUpdate): UserProfile
@@ -95,6 +109,7 @@ object ServiceLocator {
 
     fun init(context: Context) {
         appContext = context.applicationContext
+        PageOperations.load(appContext)
         auth = com.healoo.app.auth.AuthManager(appContext)
         repository = if (BuildConfig.USE_FAKE_DATA) FakeRepository()
         else RemoteRepository(appContext, BuildConfig.API_BASE_URL, auth)

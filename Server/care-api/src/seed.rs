@@ -29,8 +29,20 @@ pub const PRIYA: Uuid = Uuid::from_u128(0x5eed_0000_0000_4000_8000_000000000008)
 pub const ADMIN_A: Uuid = Uuid::from_u128(0x5eed_0000_0000_4000_8000_000000000009);
 pub const ASSISTANT: Uuid = Uuid::from_u128(0x5eed_0000_0000_4000_8000_00000000000a);
 
-pub const SEED_PUBLIC_IDS: [&str; 10] = [
+// Added for local testing (seeded into an existing trial database too, see `seed_extra`).
+pub const RAVI: Uuid = Uuid::from_u128(0x5eed_0000_0000_4000_8000_00000000000b);
+pub const ANJALI: Uuid = Uuid::from_u128(0x5eed_0000_0000_4000_8000_00000000000c);
+pub const SURESH: Uuid = Uuid::from_u128(0x5eed_0000_0000_4000_8000_00000000000d);
+pub const DR_MEHTA: Uuid = Uuid::from_u128(0x5eed_0000_0000_4000_8000_00000000000e);
+pub const DR_KHAN: Uuid = Uuid::from_u128(0x5eed_0000_0000_4000_8000_00000000000f);
+pub const DR_MENON: Uuid = Uuid::from_u128(0x5eed_0000_0000_4000_8000_000000000010);
+pub const DR_NAIR: Uuid = Uuid::from_u128(0x5eed_0000_0000_4000_8000_000000000011);
+pub const SUNRISE_LAB: Uuid = Uuid::from_u128(0x5eed_0000_0000_4000_8000_000000000012);
+pub const GREEN_VALLEY_LAB: Uuid = Uuid::from_u128(0x5eed_0000_0000_4000_8000_000000000013);
+
+pub const SEED_PUBLIC_IDS: [&str; 19] = [
     "HL-2M9P4", "HL-7R2C9", "HL-1H0A1", "HL-6L3D2", "HL-3K8M1", "HL-9P4T6", "HL-5W1Q3", "HL-4K7Q2", "HL-8A2D4", "HL-8S5T7",
+    "HL-3R7V2", "HL-6A4S9", "HL-9S2Y5", "HL-4M8D3", "HL-7F5K2", "HL-2D5M8", "HL-8N3V6", "HL-5P9L4", "HL-6G2L7",
 ];
 
 struct Person {
@@ -58,6 +70,74 @@ fn people() -> Vec<Person> {
         Person { hospital: Some(HOSPITAL_A), ..p(ADMIN_A, "HL-8A2D4", "Hospital A Admin", Role::Administrator) },
         Person { employer: Some(DR_RAO), headline: Some("Assistant to Dr. Anitha Rao"), ..p(ASSISTANT, "HL-8S5T7", "Meena S. (assistant)", Role::Assistant) },
     ]
+}
+
+/// More people for local testing. The designation (Cardiologist, Urologist, Paediatrician) is only
+/// shown in the headline for now; there is no department field yet.
+fn extra_people() -> Vec<Person> {
+    let p = |id, public_id, name, role| Person { id, public_id, name, role, hospital: None, employer: None, headline: None, reg: None };
+    vec![
+        p(RAVI, "HL-3R7V2", "Ravi Kumar", Role::Patient),
+        p(ANJALI, "HL-6A4S9", "Anjali Sharma", Role::Patient),
+        p(SURESH, "HL-9S2Y5", "Suresh Iyer", Role::Patient),
+        // Independent doctors
+        Person { headline: Some("Doctor · Paediatrician"), reg: Some("REG-TEST-003"), ..p(DR_MEHTA, "HL-4M8D3", "Dr. Arjun Mehta", Role::Doctor) },
+        Person { headline: Some("Doctor · Cardiologist"), reg: Some("REG-TEST-004"), ..p(DR_KHAN, "HL-7F5K2", "Dr. Farah Khan", Role::Doctor) },
+        // Doctors at Test Hospital A
+        Person { hospital: Some(HOSPITAL_A), headline: Some("Doctor · Cardiologist"), reg: Some("REG-TEST-005"),
+                 ..p(DR_MENON, "HL-2D5M8", "Dr. Kavya Menon", Role::Doctor) },
+        Person { hospital: Some(HOSPITAL_A), headline: Some("Doctor · Urologist"), reg: Some("REG-TEST-006"),
+                 ..p(DR_NAIR, "HL-8N3V6", "Dr. Vikram Nair", Role::Doctor) },
+        p(SUNRISE_LAB, "HL-5P9L4", "Sunrise Pathology", Role::Lab),
+        p(GREEN_VALLEY_LAB, "HL-6G2L7", "Green Valley Labs", Role::Lab),
+    ]
+}
+
+/// Contacts for the extra people, so each flow can be tried straight away.
+const EXTRA_CONNECTIONS: [(Uuid, Uuid); 11] = [
+    (RAVI, DR_MENON), (RAVI, HOSPITAL_A), (RAVI, SUNRISE_LAB),
+    (ANJALI, DR_MEHTA), (ANJALI, GREEN_VALLEY_LAB),
+    (SURESH, DR_KHAN), (SURESH, DR_NAIR), (SURESH, SUNRISE_LAB),
+    (DR_MENON, HOSPITAL_A), (DR_NAIR, HOSPITAL_A), (DR_RAO, DR_MENON),
+];
+
+async fn create(db: &Db, p: &Person) -> Result<()> {
+    db.create_user(NewUser {
+        user_id: p.id,
+        public_id: Some(p.public_id),
+        auth0_sub: None,
+        display_name: p.name,
+        roles: &[p.role],
+        location: Some("[City]"),
+        official_number: p.reg,
+        primary_hospital_id: p.hospital,
+        employer_doctor_id: p.employer,
+        headline: p.headline,
+        email: None,
+        created_by: None,
+    }).await?;
+    Ok(())
+}
+
+/// Adds the extra people that aren't in the database yet, with their hospital affiliation and
+/// contacts. Safe to run on an existing trial database: people already present are left alone.
+async fn seed_extra(db: &Db) -> Result<usize> {
+    let mut added = Vec::new();
+    for p in extra_people() {
+        if db.user_id_by_public_id(p.public_id).await?.is_some() { continue; }
+        create(db, &p).await?;
+        if let Some(h) = p.hospital { db.add_affiliation(p.id, h).await?; }
+        added.push(p.id);
+    }
+    let everyone: Vec<Person> = people().into_iter().chain(extra_people()).collect();
+    let who = |id: Uuid| everyone.iter().find(|p| p.id == id).map(|p| (p.role, p.name)).unwrap();
+    for (a, b) in EXTRA_CONNECTIONS {
+        if !added.contains(&a) && !added.contains(&b) { continue; }
+        let ((ra, na), (rb, nb)) = (who(a), who(b));
+        db.connect_users(a, ra, na, b, rb, nb).await?;
+    }
+    if !added.is_empty() { tracing::info!("seeded {} extra users", added.len()); }
+    Ok(added.len())
 }
 
 fn grant(kind: GranteeType, id: Uuid, name: &str, by: Uuid) -> GrantUdt {
@@ -205,26 +285,21 @@ async fn upload(files: &dyn ObjectStore, db: &Db, it: &Item, by: Uuid, name: &st
     }).await
 }
 
+/// Seeds an empty database, and adds any missing extra people to an existing one.
+/// Returns true when anything was added.
 pub async fn run(db: &Db, files: &dyn ObjectStore) -> Result<bool> {
-    if db.user_id_by_public_id("HL-2M9P4").await?.is_some() {
-        tracing::info!("seed data already present — nothing to do");
-        return Ok(false);
-    }
+    let base = if db.user_id_by_public_id("HL-2M9P4").await?.is_some() {
+        tracing::info!("base seed data already present");
+        false
+    } else {
+        seed_base(db, files).await?;
+        true
+    };
+    Ok(seed_extra(db).await? > 0 || base)
+}
 
-    for p in people() {
-        db.create_user(NewUser {
-            user_id: p.id,
-            public_id: Some(p.public_id),
-            auth0_sub: None,
-            display_name: p.name,
-            roles: &[p.role],
-            location: Some("[City]"),
-            official_number: p.reg,
-            primary_hospital_id: p.hospital,
-            employer_doctor_id: p.employer,
-            headline: p.headline,
-        }).await?;
-    }
+async fn seed_base(db: &Db, files: &dyn ObjectStore) -> Result<()> {
+    for p in people() { create(db, &p).await?; }
     db.add_affiliation(DR_RAO, HOSPITAL_A).await?;
 
     let role_of = |id: Uuid| people().into_iter().find(|p| p.id == id).map(|p| (p.role, p.name)).unwrap();
@@ -300,5 +375,38 @@ pub async fn run(db: &Db, files: &dyn ObjectStore) -> Result<bool> {
     count += 1;
 
     tracing::info!("seeded {} users and {} items", people().len(), count);
-    Ok(true)
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn seed_ids_are_unique_and_listed_for_dev_sign_in() {
+        let all: Vec<Person> = people().into_iter().chain(extra_people()).collect();
+        let ids: HashSet<Uuid> = all.iter().map(|p| p.id).collect();
+        let pids: HashSet<&str> = all.iter().map(|p| p.public_id).collect();
+        assert_eq!(ids.len(), all.len());
+        assert_eq!(pids.len(), all.len());
+        assert_eq!(pids, SEED_PUBLIC_IDS.into_iter().collect::<HashSet<_>>());
+        // Generated Healoo IDs never use 0, O, 1 or I (store/users.rs); the new ones follow that
+        // (two of the original seed IDs predate the rule).
+        for p in extra_people().iter().map(|p| p.public_id) { assert!(p.len() == 8 && p[3..].chars().all(|c| "23456789ABCDEFGHJKLMNPQRSTUVWXYZ".contains(c)), "{p}"); }
+        for (a, b) in EXTRA_CONNECTIONS { assert!(ids.contains(&a) && ids.contains(&b)); }
+    }
+
+    #[test]
+    fn extra_people_cover_the_requested_mix() {
+        let extra = extra_people();
+        let count = |f: &dyn Fn(&Person) -> bool| extra.iter().filter(|p| f(p)).count();
+        assert_eq!(count(&|p| p.role == Role::Patient), 3);
+        assert_eq!(count(&|p| p.role == Role::Doctor && p.hospital.is_none()), 2);
+        assert_eq!(count(&|p| p.role == Role::Doctor && p.hospital == Some(HOSPITAL_A)), 2);
+        assert_eq!(count(&|p| p.role == Role::Lab), 2);
+        for d in ["Cardiologist", "Urologist", "Paediatrician"] {
+            assert!(extra.iter().any(|p| p.headline.is_some_and(|h| h.ends_with(d))), "{d}");
+        }
+    }
 }

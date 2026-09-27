@@ -75,9 +75,32 @@ val healooDevNetworkConfig = tasks.register<HealooDevNetworkConfig>("healooDevNe
     outputDir.set(layout.buildDirectory.dir("generated/healoo/devNetworkConfig"))
 }
 
+/** Bundles WUI/page-operations.json (bottom-bar operations, shared with iOS) as an asset. */
+abstract class HealooSharedAssets : DefaultTask() {
+    @get:InputFile @get:PathSensitive(PathSensitivity.NAME_ONLY)
+    abstract val operationsFile: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun copy() {
+        val src = operationsFile.get().asFile
+        src.copyTo(File(outputDir.get().asFile, src.name), overwrite = true)
+    }
+}
+
+val healooSharedAssets = tasks.register<HealooSharedAssets>("healooSharedAssets") {
+    operationsFile.set(rootProject.file("../page-operations.json"))
+    outputDir.set(layout.buildDirectory.dir("generated/healoo/sharedAssets"))
+}
+
 androidComponents {
     onVariants(selector().withBuildType("debug")) { variant ->
         variant.sources.res?.addGeneratedSourceDirectory(healooDevNetworkConfig, HealooDevNetworkConfig::outputDir)
+    }
+    onVariants { variant ->
+        variant.sources.assets?.addGeneratedSourceDirectory(healooSharedAssets, HealooSharedAssets::outputDir)
     }
 }
 
@@ -178,4 +201,6 @@ dependencies {
     // QR: scan with Google code scanner (no camera permission needed), draw with ZXing
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
     implementation("com.google.zxing:core:3.5.3")
+
+    testImplementation("junit:junit:4.13.2")
 }

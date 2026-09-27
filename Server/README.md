@@ -95,6 +95,18 @@ admin (`HL-8A2D4`) and an assistant (`HL-8S5T7`):
 | HL-4K7Q2 | Priya Rao | Patient |
 | HL-8A2D4 | Hospital A Admin | Hospital administrator |
 | HL-8S5T7 | Meena S. | Assistant to Dr. Rao |
+| HL-3R7V2 | Ravi Kumar | Patient (contacts: Dr. Menon, Hospital A, Sunrise) |
+| HL-6A4S9 | Anjali Sharma | Patient (contacts: Dr. Mehta, Green Valley) |
+| HL-9S2Y5 | Suresh Iyer | Patient (contacts: Dr. Khan, Dr. Nair, Sunrise) |
+| HL-4M8D3 | Dr. Arjun Mehta | Independent doctor · Paediatrician |
+| HL-7F5K2 | Dr. Farah Khan | Independent doctor · Cardiologist |
+| HL-2D5M8 | Dr. Kavya Menon | Doctor at Test Hospital A · Cardiologist |
+| HL-8N3V6 | Dr. Vikram Nair | Doctor at Test Hospital A · Urologist |
+| HL-5P9L4 | Sunrise Pathology | Lab |
+| HL-6G2L7 | Green Valley Labs | Lab |
+
+The last nine are added to an existing trial database too: the seed job creates any that are
+missing on the next `docker compose up -d --build`, without touching other data.
 
 **Trust the local CA once per device.** On first start the API writes
 `healoo-local-ca.crt` into the `app_data` volume:

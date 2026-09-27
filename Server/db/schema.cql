@@ -36,7 +36,20 @@ CREATE TABLE IF NOT EXISTS users (
   photo_uri text, location text, phone text, official_number text,
   primary_hospital_id uuid,
   employer_doctor_id uuid,                    -- v0.2: assistants -> their doctor (rule 7)
-  created_at timestamp);
+  created_at timestamp,
+  email text,                                 -- v0.3: set when an administrator creates the account
+  status text,                                -- v0.3: null/ACTIVE or DEACTIVATED
+  created_by uuid, deactivated_at timestamp, deactivated_by uuid);   -- v0.3
+
+-- v0.3: upgrade an existing trial database in place (safe to run again).
+ALTER TABLE users ADD IF NOT EXISTS email text;
+ALTER TABLE users ADD IF NOT EXISTS status text;
+ALTER TABLE users ADD IF NOT EXISTS created_by uuid;
+ALTER TABLE users ADD IF NOT EXISTS deactivated_at timestamp;
+ALTER TABLE users ADD IF NOT EXISTS deactivated_by uuid;
+
+CREATE TABLE IF NOT EXISTS users_by_email (    -- v0.3: admin-created account -> first Auth0 sign-in
+  email text PRIMARY KEY, user_id uuid);
 
 CREATE TABLE IF NOT EXISTS users_by_sub (      -- v0.2: Auth0 sub -> user (first-login provisioning)
   auth0_sub text PRIMARY KEY, user_id uuid);

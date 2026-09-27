@@ -53,6 +53,7 @@ impl Inner {
             }
         };
         let user = self.db.user(user_id).await?.ok_or_else(|| ApiError::unauthorized("account no longer exists"))?;
+        if !user.active { return Err(ApiError::forbidden("this account has been deactivated by an administrator")); }
         self.rate_limit(user_id)?;
 
         let active_hospitals = if user.roles.contains(&Role::Doctor) { self.db.active_hospitals(user_id).await? } else { Default::default() };
@@ -71,6 +72,16 @@ impl Inner {
                 return Ok(uid);
             }
         }
+        // An administrator created this account for the same (verified) email: link it.
+        if let Some(email) = &t.email {
+            if let Some(uid) = self.db.user_id_by_email(email).await? {
+                if self.db.user(uid).await?.is_some_and(|u| u.active) {
+                    self.db.link_sub(&t.sub, uid).await?;
+                    tracing::info!(user_id = %uid, "linked first sign-in to administrator-created account");
+                    return Ok(uid);
+                }
+            }
+        }
         // First login: everyone starts as a PATIENT; other roles are granted by admins (doc 5.5).
         let name = t.name.clone().unwrap_or_else(|| "New Healoo user".to_string());
         let u = self.db.create_user(NewUser {
@@ -84,6 +95,8 @@ impl Inner {
             primary_hospital_id: None,
             employer_doctor_id: None,
             headline: None,
+            email: None,
+            created_by: None,
         }).await?;
         tracing::info!(user_id = %u.user_id, public_id = %u.public_id, "provisioned new patient on first login");
         Ok(u.user_id)

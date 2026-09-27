@@ -14,6 +14,8 @@ protocol HealooRepository: AnyObject {
     func sharedItems(with userId: String) async throws -> [DataItem]
     /// Global search by Healoo ID or name. Profiles only, never data.
     func search(_ query: String, role: Role?) async throws -> [UserProfile]
+    /// Doctors currently working at a hospital (profiles only).
+    func hospitalDoctors(_ hospitalId: String) async throws -> [UserProfile]
     func connections() async throws -> [UserProfile]
     func connect(_ userId: String) async throws -> UserProfile
     func share(_ itemId: String, with granteeId: String) async throws -> DataItem
@@ -24,7 +26,8 @@ protocol HealooRepository: AnyObject {
     func createAppointment(ownerId: String?, _ appointment: NewAppointment, shareWith: [String]) async throws -> DataItem
     func createAlert(title: String, _ alert: NewAlert, shareWith: [String]) async throws -> DataItem
     /// New MESSAGE item: starts a discussion with `userId` (the patient in the pair owns it).
-    func startConversation(with userId: String, body: String) async throws -> DataItem
+    /// Also shared with `alsoWith`; a clinician writing to a patient can add doctors only.
+    func startConversation(with userId: String, body: String, alsoWith: [String]) async throws -> DataItem
 
     // DataItem v2: adding to an existing item
     func itemMessages(_ itemId: String) async throws -> [Message]
@@ -44,6 +47,15 @@ protocol HealooRepository: AnyObject {
     func conversations(with withUser: String?) async throws -> [Conversation]
     /// Upcoming visits across items (YYYY-MM-DD, up to 62 days).
     func calendar(from: String, to: String) async throws -> [CalendarVisit]
+
+    // Administration (hospital administrators; users can't be deleted)
+    /// The administrator's hospital's doctors, deactivated ones included.
+    func adminDoctors() async throws -> [AdminAccount]
+    func adminCreateUser(_ account: NewAccount) async throws -> AdminAccount
+    func adminCreateDoctor(_ account: NewAccount) async throws -> AdminAccount
+    /// "Delete" a doctor: deactivates the account and ends the hospital affiliation.
+    func adminDeactivateDoctor(_ doctorId: String) async throws
+    func adminReactivateDoctor(_ doctorId: String) async throws -> AdminAccount
 
     // Account
     func updateProfile(_ update: ProfileUpdate) async throws -> UserProfile
@@ -121,13 +133,21 @@ final class MockRepository: HealooRepository {
         UserProfile(userId: "h-raoheart", publicId: "HL-9P4T6", displayName: "Rao Heart Clinic", roles: [.hospital], headline: "Hospital"),
         UserProfile(userId: "l-rao", publicId: "HL-5W1Q3", displayName: "Rao Diagnostics", roles: [.lab], headline: "Lab"),
         UserProfile(userId: "u-priya", publicId: "HL-4K7Q2", displayName: "Priya Rao", roles: [.patient], headline: "Patient"),
+        UserProfile(userId: "u-menon", publicId: "HL-2D5M8", displayName: "Dr. Kavya Menon", roles: [.doctor], headline: "Doctor · Cardiology",
+                    hospital: "Test Hospital A"),
+        UserProfile(userId: "a-admin", publicId: "HL-8A2D4", displayName: "Hospital A Admin", roles: [.administrator], headline: "Hospital administrator",
+                    hospital: "Test Hospital A"),
     ]
 
-    var demoAccounts: [UserProfile] { users.filter { ["u-lakshmi", "u-rao", "l-city"].contains($0.id) } }
+    var demoAccounts: [UserProfile] { users.filter { ["u-lakshmi", "u-rao", "l-city", "h-a", "a-admin"].contains($0.id) } }
     private var meId = "u-lakshmi"
     func signIn(as userId: String) { meId = userId }
 
-    private let affiliation = ["u-rao": "h-a"]                 // doctor -> current hospital
+    private var affiliation = ["u-rao": "h-a", "u-menon": "h-a"]   // doctor -> current hospital
+    private let adminHospital = ["a-admin": "h-a"]                  // administrator -> hospital
+    private var homeHospital = ["u-rao": "h-a", "u-menon": "h-a"]
+    private var deactivated = Set<String>()
+    private var emails: [String: String] = [:]                      // user -> email (admin-created)
     private var links: Set<Set<String>> = [
         ["u-lakshmi", "u-rao"], ["u-lakshmi", "h-a"], ["u-lakshmi", "l-city"], ["u-lakshmi", "u-srao"],
         ["u-rao", "h-a"], ["u-rao", "l-city"], ["u-priya", "l-city"],
@@ -247,7 +267,7 @@ final class MockRepository: HealooRepository {
         let it = s.item
         if it.ownerId == userId { return .full }
         let role = raw(userId).primaryRole
-        if role == .lab && s.createdBy == userId { return .full }
+        if (role == .lab || role == .hospital) && s.createdBy == userId { return .full }
         let direct = it.accessList.contains { $0.granteeType == .user && $0.granteeId == userId }
         let viaHospital = role == .doctor && it.accessList.contains { $0.granteeType == .hospital && affiliation[userId] == $0.granteeId }
         guard direct || viaHospital else { return .deny }
@@ -288,7 +308,7 @@ final class MockRepository: HealooRepository {
         if !full { actions.append("meta") }
         else if base.status == .open { actions += ["read", "message", "attach", "book", "alert", "close"] }
         else { actions.append("read") }
-        if full && owner { actions += ["share", "revoke"] }
+        if full && owner { actions += ["share", "revoke"] } else if full && raw(meId).canRefer { actions.append("share") }
         if full && owner && base.status == .open { actions.append("rate") }
         if full && base.status == .closed && (owner || raw(meId).primaryRole == .doctor) { actions.append("reopen") }
         out.allowedActions = actions
@@ -349,13 +369,17 @@ final class MockRepository: HealooRepository {
     func search(_ query: String, role: Role?) async throws -> [UserProfile] {
         await latency()
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        return users.filter { $0.id != meId }
+        return users.filter { $0.id != meId && !deactivated.contains($0.id) }
             .filter { role == nil || $0.primaryRole == role }
             .filter { q.isEmpty || $0.displayName.lowercased().contains(q) || $0.publicId.lowercased().contains(q) }
             .map(view)
     }
 
     func connections() async throws -> [UserProfile] { await latency(); return users.filter { $0.id != meId && isConnected(meId, $0.id) }.map(view) }
+    func hospitalDoctors(_ hospitalId: String) async throws -> [UserProfile] {
+        await latency()
+        return users.filter { $0.primaryRole == .doctor && affiliation[$0.id] == hospitalId && !deactivated.contains($0.id) }.sorted { $0.displayName < $1.displayName }.map(view)
+    }
     func connect(_ userId: String) async throws -> UserProfile { await latency(); links.insert([meId, userId]); return view(raw(userId)) }
 
     func conversations(with withUser: String?) async throws -> [Conversation] {
@@ -404,6 +428,9 @@ final class MockRepository: HealooRepository {
         return s
     }
 
+    /// Creating for a patient, the uploader may also refer the item to doctors only.
+    private func doctorsOnly(_ ids: [String]) -> [String] { ids.filter { raw($0).primaryRole == .doctor } }
+
     private func toAttachments(_ files: [PendingAttachment], startAt: Int, isReport: Bool) -> [Attachment] {
         files.enumerated().map { i, f in
             Attachment(attachmentId: newId(), kind: f.kind, uri: f.localURL.absoluteString, mime: f.mime, size: f.size,
@@ -415,14 +442,14 @@ final class MockRepository: HealooRepository {
         if let start = DateText.date(a.date), let p = RecurrenceRules.problem(start, a.recurrence) { throw RepoError(p) }
         guard raw(a.doctorId).primaryRole == .doctor else { throw RepoError("Choose a doctor for the appointment") }
         return appt(itemId, doctor: a.doctorId, patient: owner, date: a.date, time: a.time, a.recurrence, notes: a.notes,
-                    timezone: a.timezone, duration: a.durationMin)
+                    hospital: a.hospitalId, timezone: a.timezone, duration: a.durationMin)
     }
 
     func createReport(_ draft: ReportDraft, files: [PendingAttachment]) async throws -> DataItem {
         await latency(600)
         guard !files.isEmpty || !draft.links.isEmpty else { throw RepoError("A report needs at least one file or link") }
         let s = newItem(owner: draft.ownerId, kind: .report, title: draft.title, keywords: draft.keywords,
-                        shareWith: draft.ownerId == meId ? draft.shareWith : [])
+                        shareWith: draft.ownerId == meId ? draft.shareWith : doctorsOnly(draft.shareWith))
         s.item.attachments = toAttachments(files, startAt: 0, isReport: true)
         s.item.links = draft.links
         subject.send(.itemChanged(s.item.id))
@@ -447,12 +474,12 @@ final class MockRepository: HealooRepository {
         return try present(s)
     }
 
-    func startConversation(with userId: String, body: String) async throws -> DataItem {
+    func startConversation(with userId: String, body: String, alsoWith: [String]) async throws -> DataItem {
         await latency()
         let other = raw(userId), me = raw(meId)
         let owner = other.primaryRole == .patient && me.isClinical ? other.id : meId
         let firstLine = body.split(separator: "\n").first.map(String.init) ?? body
-        let s = newItem(owner: owner, kind: .message, title: String(firstLine.prefix(60)), keywords: [], shareWith: owner == meId ? [userId] : [])
+        let s = newItem(owner: owner, kind: .message, title: String(firstLine.prefix(60)), keywords: [], shareWith: owner == meId ? [userId] + alsoWith : doctorsOnly(alsoWith))
         _ = try await sendItemMessage(s.item.id, body: body)
         return try await item(s.item.id)
     }
@@ -544,12 +571,78 @@ final class MockRepository: HealooRepository {
     // MARK: Sharing
     func share(_ itemId: String, with granteeId: String) async throws -> DataItem {
         try await change(itemId) { s in
+            // The owner shares with anyone; a doctor, lab or hospital may pass it on to a doctor.
+            guard s.item.ownerId == meId || (raw(meId).canRefer && raw(granteeId).primaryRole == .doctor) else {
+                throw RepoError("Only the owner can share this with \(raw(granteeId).displayName); you can pass it on to doctors")
+            }
             if !s.item.accessList.contains(where: { $0.granteeId == granteeId }) { s.item.accessList.append(grant(for: raw(granteeId))) }
         }
     }
 
     func revoke(_ itemId: String, grantId: String) async throws -> DataItem {
         try await change(itemId) { s in s.item.accessList.removeAll { $0.grantId == grantId } }
+    }
+
+    // MARK: Administration (rule 10: create users and doctors, deactivate doctors only)
+    private func myHospital() throws -> String {
+        guard let h = adminHospital[meId] else { throw RepoError("Only hospital administrators can manage accounts") }
+        return h
+    }
+
+    private func adminView(_ u: UserProfile) -> AdminAccount {
+        AdminAccount(userId: u.id, publicId: u.publicId, displayName: u.displayName, roles: u.roles, headline: u.headline,
+                     hospital: u.hospital, officialNumber: u.officialNumber, email: emails[u.id], active: !deactivated.contains(u.id))
+    }
+
+    func adminDoctors() async throws -> [AdminAccount] {
+        await latency()
+        let h = try myHospital()
+        return users.filter { $0.primaryRole == .doctor && (affiliation[$0.id] == h || (deactivated.contains($0.id) && homeHospital[$0.id] == h)) }
+            .sorted { (deactivated.contains($0.id) ? 1 : 0, $0.displayName) < (deactivated.contains($1.id) ? 1 : 0, $1.displayName) }
+            .map(adminView)
+    }
+
+    private func newAccount(_ a: NewAccount, role: Role) throws -> AdminAccount {
+        let h = try myHospital()
+        let email = a.email.trimmingCharacters(in: .whitespaces).lowercased()
+        let name = a.displayName.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { throw RepoError("Enter a name") }
+        guard email.range(of: #"^[^@\s]+@[^@\s]+\.[^@\s]+$"#, options: .regularExpression) != nil else { throw RepoError("Enter a valid email address") }
+        guard !emails.values.contains(email) else { throw RepoError("An account with that email already exists") }
+        let doctor = role == .doctor
+        let alphabet = Array("23456789ABCDEFGHJKLMNPQRSTUVWXYZ")
+        var publicId = ""
+        repeat { publicId = "HL-" + String((0..<5).map { _ in alphabet.randomElement()! }) } while users.contains { $0.publicId == publicId }
+        let designation = a.designation?.trimmingCharacters(in: .whitespaces) ?? ""
+        let u = UserProfile(userId: "n-" + String(newId().prefix(8)), publicId: publicId, displayName: name, roles: [role],
+                            headline: doctor ? (designation.isEmpty ? "Doctor" : "Doctor · \(designation)") : "Patient",
+                            hospital: doctor ? raw(h).displayName : nil,
+                            officialNumber: doctor ? a.officialNumber.flatMap { $0.isEmpty ? nil : $0 } : nil)
+        users.append(u)
+        emails[u.id] = email
+        if doctor { affiliation[u.id] = h; homeHospital[u.id] = h; links.insert([u.id, h]) }
+        return adminView(u)
+    }
+
+    func adminCreateUser(_ account: NewAccount) async throws -> AdminAccount { await latency(); return try newAccount(account, role: .patient) }
+    func adminCreateDoctor(_ account: NewAccount) async throws -> AdminAccount { await latency(); return try newAccount(account, role: .doctor) }
+
+    func adminDeactivateDoctor(_ doctorId: String) async throws {
+        await latency()
+        let h = try myHospital()
+        guard raw(doctorId).primaryRole == .doctor else { throw RepoError("Users can't be deleted; administrators can delete (deactivate) doctors only") }
+        guard affiliation[doctorId] == h || homeHospital[doctorId] == h else { throw RepoError("You can delete only doctors of your own hospital") }
+        affiliation[doctorId] = nil
+        deactivated.insert(doctorId)
+    }
+
+    func adminReactivateDoctor(_ doctorId: String) async throws -> AdminAccount {
+        await latency()
+        let h = try myHospital()
+        guard homeHospital[doctorId] == h else { throw RepoError("You can reactivate only doctors of your own hospital") }
+        deactivated.remove(doctorId)
+        affiliation[doctorId] = h
+        return adminView(raw(doctorId))
     }
 
     // MARK: Account
@@ -644,6 +737,9 @@ final class RemoteRepository: HealooRepository {
         let p: PageResult<UserProfile> = try await request("GET", "v1/search", query: ["q": query, "type": role?.rawValue]); return p.data
     }
     func connections() async throws -> [UserProfile] { let p: PageResult<UserProfile> = try await request("GET", "v1/connections"); return p.data }
+    func hospitalDoctors(_ hospitalId: String) async throws -> [UserProfile] {
+        let p: PageResult<UserProfile> = try await request("GET", "v1/hospitals/\(hospitalId)/doctors"); return p.data
+    }
     func connect(_ userId: String) async throws -> UserProfile { try await request("POST", "v1/connections", body: ConnectBody(userId: userId)) }
     func share(_ itemId: String, with granteeId: String) async throws -> DataItem {
         let _: Empty = try await request("POST", "v1/grants", body: GrantBody(itemIds: [itemId], granteeId: granteeId)); return try await item(itemId)
@@ -664,12 +760,12 @@ final class RemoteRepository: HealooRepository {
     func createAlert(title: String, _ alert: NewAlert, shareWith: [String]) async throws -> DataItem {
         try await request("POST", "v1/items", body: NewItemRequest(title: title, shareWith: shareWith, alert: alert))
     }
-    func startConversation(with userId: String, body: String) async throws -> DataItem {
+    func startConversation(with userId: String, body: String, alsoWith: [String]) async throws -> DataItem {
         let me = try await self.me(), other = try await user(userId)
         // The patient in the pair owns the discussion; a clinician starts it on the patient's behalf.
         let clinicianToPatient = other.primaryRole == .patient && me.isClinical
         return try await request("POST", "v1/items", body: NewItemRequest(
-            ownerId: clinicianToPatient ? other.id : me.id, shareWith: clinicianToPatient ? [] : [userId],
+            ownerId: clinicianToPatient ? other.id : me.id, shareWith: clinicianToPatient ? alsoWith : [userId] + alsoWith,
             message: NewMessage(body: body, clientMsgId: UUID().uuidString)))
     }
 
@@ -715,7 +811,25 @@ final class RemoteRepository: HealooRepository {
         let p: PageResult<CalendarVisit> = try await request("GET", "v1/appointments", query: ["from": from, "to": to]); return p.data
     }
 
+    // Administration (hospital administrators; users can't be deleted)
+    /// The administrator's hospital's doctors, deactivated ones included.
+    func adminDoctors() async throws -> [AdminAccount]
+    func adminCreateUser(_ account: NewAccount) async throws -> AdminAccount
+    func adminCreateDoctor(_ account: NewAccount) async throws -> AdminAccount
+    /// "Delete" a doctor: deactivates the account and ends the hospital affiliation.
+    func adminDeactivateDoctor(_ doctorId: String) async throws
+    func adminReactivateDoctor(_ doctorId: String) async throws -> AdminAccount
+
     // Account
+    // Administration
+    func adminDoctors() async throws -> [AdminAccount] {
+        let p: PageResult<AdminAccount> = try await request("GET", "v1/admin/doctors"); return p.data
+    }
+    func adminCreateUser(_ account: NewAccount) async throws -> AdminAccount { try await request("POST", "v1/admin/users", body: account) }
+    func adminCreateDoctor(_ account: NewAccount) async throws -> AdminAccount { try await request("POST", "v1/admin/doctors", body: account) }
+    func adminDeactivateDoctor(_ doctorId: String) async throws { let _: Empty = try await request("DELETE", "v1/admin/doctors/\(doctorId)") }
+    func adminReactivateDoctor(_ doctorId: String) async throws -> AdminAccount { try await request("POST", "v1/admin/doctors/\(doctorId)/reactivate") }
+
     func updateProfile(_ update: ProfileUpdate) async throws -> UserProfile { try await request("PATCH", "v1/me", body: update) }
     func activeShares() async throws -> [ShareGroup] {
         let p: PageResult<OwnedGrant> = try await request("GET", "v1/grants", query: ["owner": "me"])

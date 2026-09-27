@@ -82,8 +82,9 @@ With fake data on (the default), the sign-in screen lets you choose an account:
 | Account | Use it to test |
 |---|---|
 | **Lakshmi K.** (patient) | Sharing, revoking, Active sharing, uploads, editing the profile |
-| **Dr. Anitha Rao** (doctor) | Seeing items shared with you or your hospital, messaging the patient, "Upload for Lakshmi" |
+| **Dr. Anitha Rao** (doctor) | Seeing items shared with you or your hospital, messaging the patient, Upload on Lakshmi's page, passing an item on to another doctor |
 | **City Diagnostics** (lab) | Uploading a report for a patient (Lakshmi or Priya) |
+| **Test Hospital A** (hospital, demo mode) | Uploading for Lakshmi; its page lists its doctors for booking |
 
 To switch accounts, go to Settings → Log out. The demo data is kept while the app is running, so an upload made as the lab shows up when you sign in as the patient. When you send a message, a simulated reply arrives about 1.5 seconds later through the live-events path.
 
@@ -129,10 +130,14 @@ To switch accounts, go to Settings → Log out. The demo data is kept while the 
 - The three toggles are saved to `PUT /v1/me/notification-prefs` and loaded from `GET /v1/me/notification-prefs`.
 - The change shows immediately and is undone if the server refuses it.
 
-### Uploading for a patient (doctor, assistant and lab)
-- On a connected patient's page, **Upload for <name>** opens Upload with that patient locked in. Opening the Upload tab directly as a clinician shows a patient picker instead.
-- The patient owns the new item. The uploader keeps access automatically, and the Share section is hidden, because only the owner decides sharing (doc 2.3).
-- The server should enforce the same rule: `POST /v1/items` with `owner_id` ≠ caller is allowed only for clinical roles connected to that patient, and it adds a grant for the uploader.
+### Bottom bar per page
+- Every page's bottom bar comes from `page-operations.json` (shared by both apps; see `Documentation/PageOperations_Design.md`). At most four operations show; the rest are under the three-dot **More** button.
+- On a person's page the operations act on that person (Message, History, Share, Upload, and Book on a doctor's page). On a hospital's page they are Doctors and Book. That person is always a recipient; more people are added with the Filtered Search Bar.
+
+### Uploading for a patient (doctor, assistant, lab and hospital)
+- On a connected patient's page, **Upload** opens Upload with that patient locked in. Opening the Upload tab directly as a clinician shows a patient picker instead.
+- The patient owns the new item. The uploader keeps access automatically and can also share it with doctors (access rule 9); anyone else is up to the patient.
+- The server enforces the same rule: `POST /v1/items` with `owner_id` ≠ caller is allowed only for clinical roles (now including hospitals) connected to that patient. It adds a grant for the uploader and accepts `share_with` for doctors only.
 - When a doctor opens a patient's item, the action button reads **Message patient**.
 
 ### New or changed API endpoints the apps call

@@ -9,6 +9,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Logout
+import androidx.compose.material.icons.outlined.AdminPanelSettings
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.Shield
@@ -28,6 +29,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.healoo.app.data.NotificationPrefs
 import com.healoo.app.data.ServiceLocator
 import com.healoo.app.data.UserProfile
+import com.healoo.app.data.isAdministrator
 import com.healoo.app.ui.components.*
 import com.healoo.app.ui.theme.*
 import kotlinx.coroutines.launch
@@ -65,6 +67,7 @@ fun SettingsScreen(
     onActiveSharing: () -> Unit,
     onContacts: () -> Unit,
     onLogout: () -> Unit,
+    onAdministration: () -> Unit = {},
     vm: SettingsViewModel = viewModel(),
 ) {
     Scaffold(containerColor = Sage.Background, bottomBar = { HealooBottomBar(Tab.SETTINGS, onTab) }) { padding ->
@@ -106,6 +109,12 @@ fun SettingsScreen(
                             SwitchRow("Quiet hours", "${p.quietStart} – ${p.quietEnd}, no sound", p.quietHours) { v -> vm.update { it.copy(quietHours = v) } }
                         }
                         vm.saveError?.let { Text(it, style = HType.small, color = Sage.Clay) }
+                    }
+                }
+                if (vm.me?.isAdministrator == true) item {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FieldLabel("Administration")
+                        GroupCard { LinkRow(Icons.Outlined.AdminPanelSettings, "Users and doctors", vm.me?.hospital ?: "", onAdministration) }
                     }
                 }
                 item {

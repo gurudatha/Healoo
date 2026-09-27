@@ -13,6 +13,7 @@ import androidx.compose.material.icons.automirrored.outlined.Chat
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -27,6 +28,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.healoo.app.data.OpId
+import com.healoo.app.data.PageKind
+import com.healoo.app.data.PageOperations
 import com.healoo.app.data.PrimaryKind
 import com.healoo.app.data.DataItem
 import com.healoo.app.ui.theme.*
@@ -192,35 +196,20 @@ fun HeaderIconButton(icon: ImageVector, label: String, onClick: () -> Unit) {
     ) { Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp)) }
 }
 
-enum class Tab(val label: String, val icon: ImageVector) {
-    HOME("Home", Icons.Outlined.Home),
-    SEARCH("Search", Icons.Outlined.Search),
-    UPLOAD("Upload", Icons.Outlined.FileUpload),
-    MESSAGES("Messages", Icons.AutoMirrored.Outlined.Chat),
-    SETTINGS("Settings", Icons.Outlined.Settings),
+/** The global screens; each is the operation of the same id in page-operations.json. */
+enum class Tab(val opId: String) {
+    HOME(OpId.HOME),
+    SEARCH(OpId.SEARCH),
+    UPLOAD(OpId.UPLOAD),
+    MESSAGES(OpId.MESSAGES),
+    SETTINGS(OpId.SETTINGS),
 }
 
+/** Bottom bar of the global (non-person) screens, from the "global" page in page-operations.json. */
 @Composable
 fun HealooBottomBar(current: Tab?, onSelect: (Tab) -> Unit) {
-    Column(Modifier.background(Sage.Surface).navigationBarsPadding()) {
-        HorizontalDivider(color = Sage.Divider)
-        Row(Modifier.fillMaxWidth().height(72.dp), horizontalArrangement = Arrangement.SpaceAround, verticalAlignment = Alignment.CenterVertically) {
-            Tab.entries.forEach { tab ->
-                val on = tab == current
-                val color = if (on) Sage.Primary else Sage.Muted
-                Column(
-                    Modifier.width(68.dp).height(56.dp).clip(RoundedCornerShape(12.dp))
-                        .clickable(role = Role.Tab) { onSelect(tab) }.semantics { selected = on },
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
-                ) {
-                    Icon(tab.icon, contentDescription = null, tint = color, modifier = Modifier.size(22.dp))
-                    Spacer(Modifier.height(4.dp))
-                    Text(tab.label, style = HType.tiny, color = color)
-                }
-            }
-        }
-    }
+    val ops = remember { PageOperations.resolve(PageKind.GLOBAL, emptySet()) }
+    OperationBar(ops, onOperation = { id -> Tab.entries.firstOrNull { it.opId == id }?.let(onSelect) }, selected = current?.opId)
 }
 
 @Composable

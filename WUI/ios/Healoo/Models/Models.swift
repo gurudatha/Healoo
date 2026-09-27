@@ -287,6 +287,7 @@ struct NewAppointment: Codable {
     var durationMin = 15
     var notes: String?
     var recurrence: Recurrence?
+    var hospitalId: String?             // booked through a hospital's page
 }
 
 struct NewAlert: Codable {
@@ -397,5 +398,38 @@ enum RealtimeEvent {
 }
 
 extension UserProfile {
-    var isClinical: Bool { [.doctor, .assistant, .lab].contains(primaryRole) }
+    /// Can create items for a patient in their contacts (the patient owns them).
+    var isClinical: Bool { [.doctor, .assistant, .lab, .hospital].contains(primaryRole) }
+    /// Hospital (or platform) administrator: manages users and doctors (Administration_Design.md).
+    var isAdministrator: Bool { [.administrator, .appAdministrator].contains(primaryRole) }
+    /// Can pass an item they don't own on to a doctor (referral).
+    var canRefer: Bool { [.doctor, .lab, .hospital].contains(primaryRole) }
+    func matches(_ q: String) -> Bool { displayName.lowercased().contains(q) || publicId.lowercased().contains(q) }
+}
+
+/// An account as an administrator sees it (GET/POST /v1/admin/...): profile plus email and status.
+struct AdminAccount: Codable, Hashable, Identifiable {
+    var userId: String
+    var publicId: String
+    var displayName: String
+    var roles: [Role]
+    var headline: String = ""
+    var hospital: String?
+    var officialNumber: String?
+    var email: String?
+    var active: Bool = true
+    var id: String { userId }
+    var profile: UserProfile {
+        UserProfile(userId: userId, publicId: publicId, displayName: displayName, roles: roles, headline: headline,
+                    hospital: hospital, officialNumber: officialNumber)
+    }
+}
+
+/// POST /v1/admin/users and /v1/admin/doctors. Designation and number apply to doctors.
+struct NewAccount: Codable {
+    var displayName: String
+    var email: String
+    var location: String?
+    var designation: String?
+    var officialNumber: String?
 }

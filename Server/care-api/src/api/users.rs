@@ -104,7 +104,7 @@ pub async fn search(State(st): State<AppState>, p: Principal, Query(q): Query<Se
 
     let connected: HashSet<Uuid> = st.db.connection_ids(p.id()).await?.into_iter().map(|(_, id)| id).collect();
     let mut out = Vec::new();
-    for u in found.iter().filter(|u| u.user_id != p.id()).filter(|u| role_filter.map_or(true, |r| u.primary_role() == r)) {
+    for u in found.iter().filter(|u| u.user_id != p.id() && u.active).filter(|u| role_filter.map_or(true, |r| u.primary_role() == r)) {
         out.push(user_dto(&st, u, connected.contains(&u.user_id)).await?);
     }
     Ok(Json(Page::of(out)))
@@ -115,6 +115,19 @@ pub async fn connections(State(st): State<AppState>, p: Principal) -> ApiResult<
     for (_, id) in st.db.connection_ids(p.id()).await? {
         if let Some(u) = st.db.user(id).await? { out.push(user_dto(&st, &u, true).await?); }
     }
+    Ok(Json(Page::of(out)))
+}
+
+/// `GET /v1/hospitals/{id}/doctors` — doctors with an active affiliation (profiles only), by name.
+pub async fn hospital_doctors(State(st): State<AppState>, p: Principal, Path(id): Path<Uuid>) -> ApiResult<Json<Page<UserDto>>> {
+    let hospital = load_user(&st, id).await?;
+    if hospital.primary_role() != Role::Hospital { return Err(ApiError::bad_request("that user is not a hospital")); }
+    let connected: HashSet<Uuid> = st.db.connection_ids(p.id()).await?.into_iter().map(|(_, id)| id).collect();
+    let mut out = Vec::new();
+    for doctor in st.db.hospital_doctors(id).await? {
+        if let Some(u) = st.db.user(doctor).await?.filter(|u| u.active) { out.push(user_dto(&st, &u, connected.contains(&u.user_id)).await?); }
+    }
+    out.sort_by(|a, b| a.display_name.cmp(&b.display_name));
     Ok(Json(Page::of(out)))
 }
 

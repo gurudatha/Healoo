@@ -5,7 +5,9 @@ import UniformTypeIdentifiers
 // MARK: - Upload (10% pinned header; several images and PDFs in one item)
 
 struct UploadView: View {
-    let targetUserId: String?
+    /// Opened from a person's page: that person always receives the item. A patient becomes its
+    /// owner when a doctor, assistant, lab or hospital uploads for them; anyone else is shared with.
+    let request: UploadRequest?
     /// When set, the screen only adds files to this existing item.
     let addToItemId: String?
     /// Called with the created (or changed) item's id.
@@ -25,8 +27,17 @@ struct UploadView: View {
     @State private var keywords = ""
     @State private var links: [String] = []
     @State private var files: [PendingAttachment] = []
-    @State private var shareWith: Set<String> = []
     @State private var isReport = true                   // add-files mode: are these report files?
+    /// The page's person when they receive the item but don't own it (always shared with).
+    @State private var fixedRecipient: UserProfile?
+    /// The page's person is the patient this is uploaded for, so the patient can't be changed.
+    @State private var ownerLocked = false
+    @State private var extraRecipients: [UserProfile] = []
+    @State private var preselectedDoctor: UserProfile?
+    /// Report: false = a new item, true = add the files to an existing one.
+    @State private var intoExisting = false
+    @State private var existingTarget: DataItem?
+    @State private var existingCandidates: [DataItem] = []
 
     // Appointment
     @State private var doctorId: String?
@@ -52,18 +63,51 @@ struct UploadView: View {
     @State private var message: String?
     @State private var busy = false
 
-    private var addingFiles: Bool { addToItemId != nil }
-    private var doctors: [UserProfile] { contacts.filter { $0.primaryRole == .doctor } + (me?.primaryRole == .doctor ? [me!] : []) }
+    private var addingFiles: Bool { addToItemId != nil || (kind == .report && intoExisting) }
+    private var doctors: [UserProfile] {
+        var seen = Set<String>()
+        return (contacts + [me, preselectedDoctor].compactMap { $0 }).filter { $0.primaryRole == .doctor && seen.insert($0.id).inserted }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             PinnedHeader(title: addingFiles ? "Add files" : "New item",
-                         subtitle: addingFiles ? "To this item" : "For \(owner?.displayName ?? "…") · \(kind.label)",
+                         subtitle: addToItemId != nil ? "To this item"
+                            : addingFiles ? "To \(existingTarget?.title ?? "an existing item")"
+                            : "For \(owner?.displayName ?? "…") · \(kind.label)",
                          backSymbol: "xmark", backLabel: "Cancel", onBack: cancel) {
-                if let owner, !addingFiles { Avatar(initials: owner.initials, size: 36) }
+                if let who = fixedRecipient ?? owner, !addingFiles { Avatar(initials: who.initials, size: 36) }
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    if addToItemId == nil {
+                        VStack(alignment: .leading, spacing: 8) {
+                            FieldLabel("Start with")
+                            HStack(spacing: 8) {
+                                ForEach([PrimaryKind.report, .appointment, .alert]) { k in
+                                    SageChip(label: k.label, selected: kind == k) { kind = k; message = nil }.frame(maxWidth: .infinity)
+                                }
+                            }
+                            Text("You can add files, messages, appointments and alerts to the item later.").font(HFont.small).foregroundStyle(Sage.muted)
+                        }
+                        // New documents go into a new item or into one that already exists.
+                        if kind == .report {
+                            Segmented(options: ["New item", "Existing item"], selection: Binding(
+                                get: { intoExisting ? 1 : 0 }, set: { intoExisting = $0 == 1; message = nil }))
+                            if intoExisting {
+                                if let picked = existingTarget {
+                                    PickedRow(content: { ItemResultRow(item: picked) }, onChange: { existingTarget = nil })
+                                } else {
+                                    FilteredSearchBar(
+                                        placeholder: "Search open items", candidates: existingCandidates,
+                                        matches: { i, q in i.title.lowercased().contains(q) || i.keywords.contains { $0.lowercased().contains(q) } },
+                                        onPick: { existingTarget = $0; message = nil }, showAllWhenBlank: true, maxResults: 6,
+                                        emptyText: existingCandidates.isEmpty ? "No open items to add to." : "No item matches."
+                                    ) { ItemResultRow(item: $0) }
+                                }
+                            }
+                        }
+                    }
                     if addingFiles {
                         attachSection
                         if !files.isEmpty { pendingList }
@@ -76,15 +120,6 @@ struct UploadView: View {
                         .tint(Sage.primary)
                     } else {
                         if me?.isClinical == true && kind != .alert { patientPicker }
-                        VStack(alignment: .leading, spacing: 8) {
-                            FieldLabel("Start with")
-                            HStack(spacing: 8) {
-                                ForEach([PrimaryKind.report, .appointment, .alert]) { k in
-                                    SageChip(label: k.label, selected: kind == k) { kind = k; message = nil }.frame(maxWidth: .infinity)
-                                }
-                            }
-                            Text("You can add files, messages, appointments and alerts to the item later.").font(HFont.small).foregroundStyle(Sage.muted)
-                        }
                         switch kind {
                         case .report:
                             attachSection
@@ -101,14 +136,16 @@ struct UploadView: View {
                             EmptyView()
                         }
                         textField("Keywords", text: $keywords, placeholder: "Separate with commas, e.g. BP, home readings")
+                        // Recipients: the page's person is always included; more are added with the Filtered Search Bar.
                         if uploadingForSomeoneElse && kind != .alert {
-                            Text("\(owner?.displayName ?? "The patient") will own this item and decide who else sees it. You keep access because you created it.")
+                            Text("\(owner?.displayName ?? "The patient") will own this item and decide who else sees it. You keep access because you created it, and you can pass it on to doctors below.")
                                 .font(HFont.caption).foregroundStyle(Sage.sandInk).padding(12)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .background(Sage.sandTint, in: RoundedRectangle(cornerRadius: 12))
-                        } else {
-                            shareSection
                         }
+                        RecipientField(fixed: fixedRecipient, extras: $extraRecipients, contacts: contacts,
+                                       doctorsOnly: uploadingForSomeoneElse && kind != .alert,
+                                       exclude: Set([me?.id, owner?.id].compactMap { $0 }), label: "Share with")
                     }
                     if let message { Text(message).font(HFont.small).foregroundStyle(Sage.clay) }
                 }
@@ -146,7 +183,7 @@ struct UploadView: View {
     }
 
     private func cancel() {
-        if addingFiles { dismiss() } else { router.uploadTarget = nil; router.openTab(.home) }
+        if addToItemId != nil { dismiss() } else { router.uploadRequest = nil; router.openTab(.home) }
     }
 
     private var attachSection: some View {
@@ -180,13 +217,13 @@ struct UploadView: View {
                     Text(owner.map { "\($0.displayName) · \($0.publicId)" } ?? "Choose a patient")
                         .font(HFont.body).foregroundStyle(owner == nil ? Sage.placeholder : Sage.ink).lineLimit(1)
                     Spacer()
-                    if targetUserId == nil { Image(systemName: "chevron.up.chevron.down").foregroundStyle(Sage.muted) }
+                    if !ownerLocked { Image(systemName: "chevron.up.chevron.down").foregroundStyle(Sage.muted) }
                 }
                 .padding(.horizontal, 14).frame(minHeight: 52)
                 .background(Sage.surface, in: RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(owner == nil ? Sage.clay : Sage.border))
             }
-            .disabled(targetUserId != nil)
+            .disabled(ownerLocked)
         }
     }
 
@@ -255,34 +292,6 @@ struct UploadView: View {
         }
     }
 
-    private var shareSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            FieldLabel("Share with")
-            if contacts.isEmpty {
-                Text("Connect with a doctor or hospital to share with them.").font(HFont.caption).foregroundStyle(Sage.muted)
-            } else {
-                GroupCard {
-                    ForEach(Array(contacts.enumerated()), id: \.element.id) { i, c in
-                        if i > 0 { RowDivider() }
-                        let on = shareWith.contains(c.id)
-                        Button { if on { shareWith.remove(c.id) } else { shareWith.insert(c.id) } } label: {
-                            HStack(spacing: 12) {
-                                Image(systemName: on ? "checkmark.square.fill" : "square").font(.system(size: 20))
-                                    .foregroundStyle(on ? Sage.primary : Sage.muted)
-                                Text(c.displayName).font(HFont.body).foregroundStyle(Sage.ink)
-                                Spacer()
-                                Text(c.primaryRole == .hospital ? "All its doctors" : "Direct").font(HFont.small).foregroundStyle(Sage.muted)
-                            }
-                            .padding(.horizontal, 14).frame(minHeight: 48)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityAddTraits(on ? .isSelected : [])
-                    }
-                }
-            }
-        }
-    }
-
     // MARK: file intake (limits from design doc 4.5)
 
     private func importPhotos() async {
@@ -327,7 +336,7 @@ struct UploadView: View {
     }
 
     private func resetForm() {
-        title = ""; keywords = ""; links = []; files = []; shareWith = []; message = nil
+        title = ""; keywords = ""; links = []; files = []; extraRecipients = []; message = nil; intoExisting = false; existingTarget = nil
         kind = .report; alertText = ""; apptNotes = ""; apptFrequency = nil; apptPeriod = nil
     }
 
@@ -337,11 +346,32 @@ struct UploadView: View {
             me = self_
             let all = try await env.repo.connections()
             patients = all.filter { $0.primaryRole == .patient }
-            if let targetUserId { owner = try await env.repo.user(targetUserId) }
+            contacts = all
+            if let mode = request?.mode { kind = mode }
+            var to: UserProfile?
+            if let id = request?.to { to = try await env.repo.user(id) }
+            ownerLocked = to?.primaryRole == .patient && self_.isClinical
+            if ownerLocked { owner = to }
             else if !self_.isClinical { owner = self_ }          // clinicians must pick a patient first
-            contacts = all.filter { $0.primaryRole == .doctor || $0.primaryRole == .hospital }
-            if doctorId == nil { doctorId = self_.primaryRole == .doctor ? self_.id : (doctors.count == 1 ? doctors[0].id : nil) }
+            fixedRecipient = ownerLocked ? nil : to
+            if let d = request?.doctorId {
+                if d == to?.id { preselectedDoctor = to } else { preselectedDoctor = try await env.repo.user(d) }
+            }
+            if doctorId == nil {
+                doctorId = preselectedDoctor?.id ?? (self_.primaryRole == .doctor ? self_.id : (doctors.count == 1 ? doctors[0].id : nil))
+            }
+            // Existing items to add to: those shared with the page's person, otherwise all open ones.
+            var candidates: [DataItem]
+            if let to { candidates = try await env.repo.sharedItems(with: to.id) }
+            else { candidates = try await env.repo.items(status: .open, limit: 100) }
+            existingCandidates = candidates.filter { $0.status == .open }
         } catch { message = "Couldn't load your contacts. You can still continue." }
+    }
+
+    /// The page's person plus anyone added. Creating for a patient, the uploader can add doctors only.
+    private var shareIds: [String] {
+        var seen = Set<String>()
+        return ([fixedRecipient].compactMap { $0 } + extraRecipients).map(\.id).filter { seen.insert($0).inserted }
     }
 
     private var keywordList: [String] {
@@ -349,13 +379,14 @@ struct UploadView: View {
     }
 
     private func submit() {
-        // Only the owner decides sharing (doc 2.3); a creator acting for a patient keeps access automatically.
-        let share = uploadingForSomeoneElse ? [] : Array(shareWith)
+        // The creator keeps access; the recipients are shared with (doctors only when creating for a patient).
+        let share = shareIds
         let work: () async throws -> DataItem
-        if let addToItemId {
+        if addingFiles {
+            guard let into = addToItemId ?? existingTarget?.id else { message = "Choose the item to add the files to."; return }
             guard !files.isEmpty else { message = "Add at least one image or PDF."; return }
             let (f, r) = (files, isReport)
-            work = { try await env.repo.addAttachments(addToItemId, files: f, isReport: r) }
+            work = { try await env.repo.addAttachments(into, files: f, isReport: r) }
         } else {
             switch kind {
             case .report:
@@ -368,13 +399,14 @@ struct UploadView: View {
             case .appointment:
                 guard let owner else { message = "Choose the patient this appointment is for."; return }
                 if let p = AppointmentFields.problem(doctorId: doctorId, date: apptDate, frequency: apptFrequency, period: apptPeriod) { message = p; return }
-                let a = AppointmentFields.build(patientId: owner.id, doctorId: doctorId!, date: apptDate, time: apptTime,
+                var a = AppointmentFields.build(patientId: owner.id, doctorId: doctorId!, date: apptDate, time: apptTime,
                                                 frequency: apptFrequency, period: apptPeriod, notes: apptNotes)
+                a.hospitalId = request?.hospitalId
                 work = { try await env.repo.createAppointment(ownerId: owner.id, a, shareWith: share) }
             case .alert:
                 if let p = AlertFields.problem(text: alertText, date: alertDate, frequency: alertFrequency, period: alertPeriod) { message = p; return }
                 let a = AlertFields.build(type: alertType, text: alertText, date: alertDate, time: alertTime, frequency: alertFrequency, period: alertPeriod)
-                let t = title.trimmingCharacters(in: .whitespaces), shareAlert = Array(shareWith)
+                let t = title.trimmingCharacters(in: .whitespaces), shareAlert = share
                 work = { try await env.repo.createAlert(title: t, a, shareWith: shareAlert) }
             case .message:
                 return
@@ -463,6 +495,12 @@ struct SettingsView: View {
                         }
                     } else { LoadingView() }
                     if let saveError { Text(saveError).font(HFont.small).foregroundStyle(Sage.clay) }
+                    if me?.isAdministrator == true {
+                        FieldLabel("Administration")
+                        GroupCard {
+                            NavigationLink(value: Route.administration) { linkLabel("person.badge.key", "Users and doctors", me?.hospital) }.buttonStyle(.plain)
+                        }
+                    }
                     FieldLabel("Privacy & sharing")
                     GroupCard {
                         NavigationLink(value: Route.activeSharing) { linkLabel("shield", "Active sharing", nil) }.buttonStyle(.plain)

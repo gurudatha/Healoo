@@ -1,10 +1,9 @@
 HEALOO REST API - DEVELOPER DOCUMENTATION: AUTHENTICATION AND USER API
 =====================================================================
 
-Applies to: care-api v0.2 (DataItem v2), design document sections 4 and 5, and
-Documentation/DataItem_Design.md.
-Note: the server code has not been compiled yet. This document describes the
-behaviour written in the source; confirm it against a running server.
+Applies to: care-api v0.3 (DataItem v2, page operations, administration),
+design document sections 4 and 5, Documentation/DataItem_Design.md and
+Documentation/Administration_Design.md.
 
 Contents
   1. Basics (base URL, formats, errors, limits)
@@ -187,9 +186,9 @@ AUTH_MODE. Check which one with GET /v1/config ("auth": {"mode": ...}).
   If the token carries a "uid" claim for an existing user, the new "sub" is
   linked to that user instead of creating a new one.
 
-  Other roles (DOCTOR, LAB, HOSPITAL, ASSISTANT, ADMINISTRATOR) are set up
-  by administrators; there is no public API for that in v0.1. On the trial
-  server they come from the seed data (care-seed).
+  Hospital administrators can also create users and doctors directly: see
+  3.4. Other roles (LAB, HOSPITAL, ASSISTANT, ADMINISTRATOR) have no public
+  API; on the trial server they come from the seed data (care-seed).
 
 3.2 Set the new user's profile
       PATCH /v1/me
@@ -218,6 +217,42 @@ AUTH_MODE. Check which one with GET /v1/config ("auth": {"mode": ...}).
       curl --cacert healoo-local-ca.crt -X POST $BASE/v1/connections \
         -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
         -d '{"user_id":"5eed0000-0000-4000-8000-000000000002"}'
+
+
+3.4 Administrators: add users and doctors, delete doctors (v0.3)
+  Needs an ADMINISTRATOR token (trial: Hospital A Admin, HL-8A2D4). A
+  hospital administrator acts only for their own hospital. Rules and tests:
+  Documentation/Administration_Design.md.
+
+      POST /v1/admin/users          new user (PATIENT)             -> 201
+      POST /v1/admin/doctors        new doctor at your hospital    -> 201
+      { "display_name": "Dr. Kavya Menon", "email": "kavya@example.com",
+        "designation": "Cardiologist", "official_number": "REG-12345",
+        "location": "Bengaluru" }
+
+  - display_name (1 to 80 characters) and email are required; the email
+    must be unique (409 otherwise). designation and official_number are
+    for doctors only. The designation shows as "Doctor · Cardiologist".
+  - Response: the UserProfile plus "email" and "active".
+  - A later Auth0 sign-in with the same verified email links to the account.
+
+      GET    /v1/admin/doctors                    your hospital's doctors,
+                                                  deactivated ones last
+      DELETE /v1/admin/doctors/{user_id}          deactivate -> 204
+      POST   /v1/admin/doctors/{user_id}/reactivate           -> 200
+      DELETE /v1/admin/users/{user_id}            always 403: users can't
+                                                  be deleted
+
+  Deleting a doctor deactivates the account: they can't sign in (existing
+  tokens get 403), they vanish from search and leave the hospital. Their
+  items, messages and appointments stay. Another hospital's doctor -> 403.
+  Platform administrators (APP_ADMINISTRATOR) add "hospital_id" to the body
+  or ?hospital_id= to the query.
+
+  Example:
+      curl --cacert healoo-local-ca.crt -X POST $BASE/v1/admin/doctors \
+        -H "authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' \
+        -d '{"display_name":"Dr. Test","email":"drtest@example.com","designation":"Urologist"}'
 
 
 4. QUERY USERS
@@ -269,6 +304,12 @@ Searches return profile fields only, never records or data items.
 4.3 Your contacts
       GET /v1/connections
   Response 200: { "data": [UserProfile, ...], "page_state": null }
+
+4.3a Doctors at a hospital (hospital page, "Book" and "Doctors")
+      GET /v1/hospitals/{hospital_id}/doctors
+  Response 200: { "data": [UserProfile, ...] } — doctors with an active
+  affiliation, sorted by name, profiles only. 400 if the id is not a hospital.
+      curl --cacert healoo-local-ca.crt "$BASE/v1/hospitals/5eed0000-0000-4000-8000-000000000003/doctors" -H "authorization: Bearer $TOKEN"
 
 4.4 Yourself
       GET /v1/me
@@ -733,7 +774,12 @@ Adding anything needs full access to the item, and the item must be OPEN
   GET/POST /v1/items/{id}/alerts, DELETE .../alerts/{aid}   Alerts
   GET     /v1/appointments?from=&to=                        Calendar
   GET     /v1/conversations?with=                           Messages tab
-  GET/POST /v1/grants, DELETE /v1/grants/{id}               Sharing
+  GET/POST /v1/grants, DELETE /v1/grants/{id}               Sharing (owner: anyone; doctor, lab or
+                                                            hospital with full access: doctors only)
+  GET     /v1/hospitals/{hospital_id}/doctors               Doctors working at a hospital
+  POST    /v1/admin/users  |  /v1/admin/doctors             Administrator: add a user / a doctor
+  GET     /v1/admin/doctors                                Administrator: the hospital's doctors
+  DELETE  /v1/admin/doctors/{id}, POST .../reactivate      Administrator: deactivate / reactivate
   POST/DELETE /v1/devices                                   Push registration
   GET     /v1/ws                                            WebSocket
 
@@ -755,5 +801,18 @@ APPENDIX: TRIAL ACCOUNTS (care-seed)
   HL-4K7Q2   Priya Rao             PATIENT             5eed0000-0000-4000-8000-000000000008
   HL-8A2D4   Hospital A Admin      ADMINISTRATOR       5eed0000-0000-4000-8000-000000000009
   HL-8S5T7   Meena S. (assistant)  ASSISTANT           5eed0000-0000-4000-8000-00000000000a
+  HL-3R7V2   Ravi Kumar            PATIENT             5eed0000-0000-4000-8000-00000000000b
+  HL-6A4S9   Anjali Sharma         PATIENT             5eed0000-0000-4000-8000-00000000000c
+  HL-9S2Y5   Suresh Iyer           PATIENT             5eed0000-0000-4000-8000-00000000000d
+  HL-4M8D3   Dr. Arjun Mehta       DOCTOR (indep.)     5eed0000-0000-4000-8000-00000000000e
+             Paediatrician
+  HL-7F5K2   Dr. Farah Khan        DOCTOR (indep.)     5eed0000-0000-4000-8000-00000000000f
+             Cardiologist
+  HL-2D5M8   Dr. Kavya Menon       DOCTOR (Hospital A) 5eed0000-0000-4000-8000-000000000010
+             Cardiologist
+  HL-8N3V6   Dr. Vikram Nair       DOCTOR (Hospital A) 5eed0000-0000-4000-8000-000000000011
+             Urologist
+  HL-5P9L4   Sunrise Pathology     LAB                 5eed0000-0000-4000-8000-000000000012
+  HL-6G2L7   Green Valley Labs     LAB                 5eed0000-0000-4000-8000-000000000013
 
   Test data only. Never put real patient information on the trial server.

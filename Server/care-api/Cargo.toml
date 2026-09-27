@@ -12,6 +12,9 @@ tokio = { version = "1.40", features = ["full"] }
 tokio-util = "0.7"
 axum = { version = "0.7", features = ["ws", "macros"] }
 axum-server = { version = "0.7", features = ["tls-rustls"] }
+# Several dependencies enable different rustls crypto engines (ring via reqwest, aws-lc-rs via
+# axum-server / the AWS SDK), so the binaries pick one explicitly: see care_api::install_crypto_provider.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors", "trace", "limit", "request-id", "set-header", "timeout"] }
 futures = "0.3"
