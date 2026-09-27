@@ -157,7 +157,7 @@ private fun FormDialog(title: String, confirm: String, problem: String?, onDismi
                 if (tried && problem != null) Text(problem, style = HType.small, color = Sage.Clay)
             }
         },
-        confirmButton = { TextButton({ tried = true; if (problem == null) onConfirm() }) { Text(confirm, color = Sage.Primary) } },
+        confirmButton = { TextButton({ tried = true; if (problem == null) onConfirm() }) { Text(confirm, color = Sage.Accent) } },
         dismissButton = { TextButton(onDismiss) { Text("Cancel", color = Sage.Muted) } },
     )
 }

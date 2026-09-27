@@ -39,8 +39,11 @@ pub async fn notify_change(st: &AppState, p: &Principal, item: &Item, change: &s
     Ok(())
 }
 
-async fn add_kind_if_missing(st: &AppState, item: &Item, kind: &str) -> ApiResult<()> {
-    if !item.kinds.contains(kind) { st.db.add_kind(item, kind).await?; }
+/// Something was added to the item: record the part kind (if new) and bump updated_at, so lists,
+/// which are ordered by last change, move this item to the top. Every addition counts, not only
+/// the first message or file.
+async fn touch_item(st: &AppState, item: &Item, kind: &str) -> ApiResult<()> {
+    st.db.add_kind(item, kind).await?;
     Ok(())
 }
 
@@ -103,9 +106,9 @@ pub async fn store_attachments(st: &AppState, p: &Principal, item: &Item, files:
         ids.push(id);
         pos += 1;
     }
-    add_kind_if_missing(st, item, part::ATTACHMENT).await?;
+    touch_item(st, item, part::ATTACHMENT).await?;
     if is_report {
-        add_kind_if_missing(st, item, part::REPORT).await?;
+        touch_item(st, item, part::REPORT).await?;
         if !item.has_report_files { st.db.set_has_report_files(item.id).await?; }
     }
     // The media worker makes thumbnails and page counts for new files.
@@ -194,7 +197,7 @@ pub async fn send_message(st: &AppState, p: &Principal, item: &Item, body: &str,
         attachment_ids,
     };
     st.db.insert_item_message(&m, client_msg_id).await?;
-    add_kind_if_missing(st, item, part::MESSAGE).await?;
+    touch_item(st, item, part::MESSAGE).await?;
 
     // Messages tab rows for every participant pair involving the sender.
     let preview: String = body.chars().take(120).collect();
@@ -320,7 +323,7 @@ pub async fn store_appointment(st: &AppState, p: &Principal, item: &Item, a: New
             granted_at: Some(now_ts()),
         }).await?;
     }
-    add_kind_if_missing(st, item, part::APPOINTMENT).await?;
+    touch_item(st, item, part::APPOINTMENT).await?;
     create_reminders(st, item, &row).await?;
     appointment_dto(st, item.id, &row, false).await
 }
@@ -560,7 +563,7 @@ pub async fn store_alert(st: &AppState, p: &Principal, item: &Item, a: NewAlert)
         active: Some(true),
     };
     st.db.insert_alert(item.id, &row).await?;
-    add_kind_if_missing(st, item, part::ALERT).await?;
+    touch_item(st, item, part::ALERT).await?;
     Ok(alert_dto(item.id, &row))
 }
 
@@ -644,11 +647,14 @@ pub async fn conversations(State(st): State<AppState>, p: Principal, Query(q): Q
             item_id: c.item_id,
             item_title: item.title,
             primary_kind: item.primary_kind,
+            status: item.status,
             other_user: other,
             last_message: c.last_message,
             last_message_at: c.last_message_at.map(|t| ts_to_dt(t).to_rfc3339()).unwrap_or_default(),
             unread: c.unread,
         });
     }
+    // Newest conversation first (the table is keyed by person and item, not by time).
+    out.sort_by(|a, b| b.last_message_at.cmp(&a.last_message_at));
     Ok(Json(Page::of(out)))
 }

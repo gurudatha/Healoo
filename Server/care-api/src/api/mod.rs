@@ -23,7 +23,7 @@ use axum::{
     extract::DefaultBodyLimit,
     http::{HeaderName, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
-    routing::{delete, get, patch, post},
+    routing::{delete, get, patch, post, put},
     Json, Router,
 };
 use dashmap::DashMap;
@@ -121,6 +121,7 @@ pub fn router(state: AppState) -> Router {
 
     let mut v1 = Router::new()
         .route("/me", get(users::me).patch(users::update_me))
+        .route("/me/photo", put(users::set_photo).delete(users::delete_photo))
         .route("/me/notification-prefs", get(users::get_prefs).put(users::put_prefs))
         .route("/dashboard", get(items::dashboard))
         .route("/search", get(users::search))

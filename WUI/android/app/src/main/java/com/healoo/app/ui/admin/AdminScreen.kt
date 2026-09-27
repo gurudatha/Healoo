@@ -80,8 +80,8 @@ fun AdminScreen(onBack: () -> Unit, vm: AdminViewModel = viewModel()) {
                 item {
                     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Sage.SageTint).padding(start = 12.dp),
                         verticalAlignment = Alignment.CenterVertically) {
-                        Text(n, style = HType.caption, color = Sage.Primary, modifier = Modifier.weight(1f))
-                        TextButton({ vm.notice = null }) { Text("OK", color = Sage.Primary) }
+                        Text(n, style = HType.caption, color = Sage.Accent, modifier = Modifier.weight(1f))
+                        TextButton({ vm.notice = null }) { Text("OK", color = Sage.Accent) }
                     }
                 }
             }
@@ -134,7 +134,7 @@ fun AdminScreen(onBack: () -> Unit, vm: AdminViewModel = viewModel()) {
             },
             confirmButton = {
                 TextButton({ vm.setActive(d, !d.active); confirm = null }) {
-                    Text(if (d.active) "Delete" else "Reactivate", color = if (d.active) Sage.Clay else Sage.Primary)
+                    Text(if (d.active) "Delete" else "Reactivate", color = if (d.active) Sage.Clay else Sage.Accent)
                 }
             },
             dismissButton = { TextButton({ confirm = null }) { Text("Cancel", color = Sage.Muted) } },
@@ -147,8 +147,8 @@ private fun AddButton(label: String, icon: androidx.compose.ui.graphics.vector.I
     OutlinedCard(onClick = onClick, modifier = modifier.height(64.dp), shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.outlinedCardColors(containerColor = Sage.Surface)) {
         Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, null, tint = Sage.Primary, modifier = Modifier.size(20.dp)); Spacer(Modifier.width(8.dp))
-            Text(label, style = HType.bodyStrong, color = Sage.Primary)
+            Icon(icon, null, tint = Sage.Accent, modifier = Modifier.size(20.dp)); Spacer(Modifier.width(8.dp))
+            Text(label, style = HType.bodyStrong, color = Sage.Accent)
         }
     }
 }

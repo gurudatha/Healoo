@@ -224,6 +224,7 @@ data class Conversation(
     @SerialName("item_id") val itemId: String,
     @SerialName("item_title") val itemTitle: String,
     @SerialName("primary_kind") val primaryKind: PrimaryKind,
+    val status: ItemStatus = ItemStatus.OPEN,
     @SerialName("other_user") val other: UserProfile,
     @SerialName("last_message") val lastMessage: String,
     @SerialName("last_message_at") val lastMessageAt: String,
@@ -337,6 +338,9 @@ data class ProfileUpdate(
     @SerialName("display_name") val displayName: String,
     val location: String?,
 )
+
+@Serializable
+data class PhotoUpdate(val uri: String)
 
 @Serializable
 data class NotificationPrefs(

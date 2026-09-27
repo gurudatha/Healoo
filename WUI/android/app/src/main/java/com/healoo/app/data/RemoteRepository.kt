@@ -60,6 +60,8 @@ interface HealooApi {
     @POST("v1/grants") suspend fun grant(@Body body: GrantRequest)
     @GET("v1/grants") suspend fun ownedGrants(@Query("owner") owner: String = "me"): PageResult<OwnedGrant>
     @PATCH("v1/me") suspend fun updateMe(@Body body: ProfileUpdate): UserProfile
+    @PUT("v1/me/photo") suspend fun setPhoto(@Body body: PhotoUpdate): UserProfile
+    @DELETE("v1/me/photo") suspend fun deletePhoto()
     @GET("v1/me/notification-prefs") suspend fun prefs(): NotificationPrefs
     @PUT("v1/me/notification-prefs") suspend fun savePrefs(@Body body: NotificationPrefs): NotificationPrefs
     @POST("v1/devices") suspend fun registerDevice(@Body body: DeviceRegistration)
@@ -173,6 +175,9 @@ class RemoteRepository(
     // ---- account ----
 
     override suspend fun updateProfile(update: ProfileUpdate) = api.updateMe(update)
+    override suspend fun setProfilePhoto(photo: PendingAttachment): UserProfile =
+        api.setPhoto(PhotoUpdate(uploadFiles(listOf(photo)).single().uri))
+    override suspend fun removeProfilePhoto(): UserProfile { api.deletePhoto(); return me() }
 
     override suspend fun activeShares(): List<ShareGroup> =
         api.ownedGrants().data.groupBy { it.granteeId }.map { (id, grants) ->

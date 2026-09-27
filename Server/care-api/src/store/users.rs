@@ -171,6 +171,17 @@ impl Db {
         ).await
     }
 
+    /// Profile picture: an `obj:` URI of an uploaded image, or None to remove it.
+    pub async fn set_photo(&self, u: &UserRec, photo_uri: Option<&str>) -> Result<()> {
+        self.batch(
+            &[
+                "UPDATE users SET photo_uri = ? WHERE user_id = ?",
+                "UPDATE users_by_public_id SET photo_uri = ? WHERE public_id = ?",
+            ],
+            ((photo_uri, u.user_id), (photo_uri, &u.public_id)),
+        ).await
+    }
+
     // ---- affiliations (rules 3–5) ----
 
     pub async fn active_hospitals(&self, doctor: Uuid) -> Result<HashSet<Uuid>> {

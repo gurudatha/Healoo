@@ -34,6 +34,7 @@ import com.healoo.app.data.PageKind
 import com.healoo.app.data.PageOperations
 import com.healoo.app.data.PrimaryKind
 import com.healoo.app.data.DataItem
+import com.healoo.app.data.ItemStatus
 import com.healoo.app.ui.theme.*
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -41,8 +42,8 @@ import java.time.format.DateTimeFormatter
 data class TypeStyle(val tint: Color, val fg: Color, val icon: ImageVector)
 
 fun styleFor(kind: PrimaryKind): TypeStyle = when (kind) {
-    PrimaryKind.REPORT -> TypeStyle(Sage.SageTint, Sage.Primary, Icons.Outlined.Description)
-    PrimaryKind.MESSAGE -> TypeStyle(Sage.SageTint, Sage.Primary, Icons.AutoMirrored.Outlined.Chat)
+    PrimaryKind.REPORT -> TypeStyle(Sage.SageTint, Sage.Accent, Icons.Outlined.Description)
+    PrimaryKind.MESSAGE -> TypeStyle(Sage.SageTint, Sage.Accent, Icons.AutoMirrored.Outlined.Chat)
     PrimaryKind.APPOINTMENT -> TypeStyle(Sage.SandTint, Sage.Sand, Icons.Outlined.Event)
     PrimaryKind.ALERT -> TypeStyle(Sage.ClayTint, Sage.Clay, Icons.Outlined.NotificationsNone)
 }
@@ -80,32 +81,42 @@ fun TypeTile(type: PrimaryKind, size: Dp = 40.dp) {
 
 @Composable
 fun DataItemRow(item: DataItem, onClick: () -> Unit, showDate: Boolean = true) {
+    // Open items are white; closed ones grey, with muted text.
+    val closed = item.status == ItemStatus.CLOSED
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(Radius.card)).background(Sage.Surface)
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(Radius.card)).background(if (closed) Sage.Closed else Sage.Surface)
             .clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         TypeTile(item.primaryKind)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(item.title, style = HType.bodyStrong, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Sage.Ink)
-            Text(item.subtitle, style = HType.caption, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Sage.Muted)
+            Text(item.title, style = HType.bodyStrong, maxLines = 1, overflow = TextOverflow.Ellipsis, color = if (closed) Sage.Muted else Sage.Ink)
+            Text(if (closed) "Closed · ${item.subtitle}" else item.subtitle, style = HType.caption, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Sage.Muted)
         }
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            if (showDate) Text(shortDate(item.date), style = HType.small, color = Sage.Muted)
+            if (showDate) Text(TimeText.activity(item.updatedAt.ifEmpty { item.createdAt }), style = HType.small, color = Sage.Muted)
             TypeBadge(item.primaryKind)
         }
     }
 }
 
 @Composable
-fun Avatar(initials: String, size: Dp = 44.dp, background: Color = Sage.Avatar, border: Color? = null) {
+fun Avatar(initials: String, size: Dp = 44.dp, background: Color = Sage.Avatar, border: Color? = null, photoUrl: String? = null) {
     Box(
         Modifier.size(size).clip(CircleShape).background(background)
             .then(if (border != null) Modifier.border(2.dp, border, CircleShape) else Modifier),
         contentAlignment = Alignment.Center,
     ) {
-        Text(initials, style = HType.section.copy(fontSize = (size.value * 0.34f).sp), color = Sage.Primary)
+        // Initials underneath: shown while the photo loads, or when there is none.
+        Text(initials, style = HType.section.copy(fontSize = (size.value * 0.34f).sp), color = Sage.Accent)
+        if (!photoUrl.isNullOrBlank()) {
+            coil.compose.AsyncImage(
+                com.healoo.app.data.thumbnailRequest(androidx.compose.ui.platform.LocalContext.current, photoUrl),
+                contentDescription = null, contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.matchParentSize().clip(CircleShape),
+            )
+        }
     }
 }
 
@@ -114,7 +125,7 @@ fun SectionHeader(title: String, action: String? = null, onAction: () -> Unit = 
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         Text(title, style = HType.section, color = Sage.Ink)
         if (action != null) TextButton(onClick = onAction) {
-            Text(action, style = HType.bodyStrong.copy(fontSize = 14.sp), color = Sage.Primary)
+            Text(action, style = HType.bodyStrong.copy(fontSize = 14.sp), color = Sage.Accent)
         }
     }
 }
@@ -124,19 +135,20 @@ fun FieldLabel(text: String, modifier: Modifier = Modifier) =
     Text(text, style = HType.label, modifier = modifier)
 
 @Composable
-fun SageChip(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, onHeader: Boolean = false) {
+/** [compact]: half height (20 dp) with smaller text, for the landing page's role filter. */
+fun SageChip(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, onHeader: Boolean = false, compact: Boolean = false) {
     val (bg, fg, border) = when {
-        onHeader && selected -> Triple(Color.White, Sage.Primary, Color.White)
-        onHeader -> Triple(Sage.PrimaryRaised, Color.White, Sage.PrimaryRaised)
-        selected -> Triple(Sage.Primary, Color.White, Sage.Primary)
+        onHeader && selected -> Triple(Color.White, Sage.Accent, Color.White)
+        onHeader -> Triple(Sage.PrimaryRaised, Sage.OnPrimary, Sage.PrimaryRaised)
+        selected -> Triple(Sage.Primary, Sage.OnPrimary, Sage.Primary)
         else -> Triple(Sage.Surface, Sage.Ink, Sage.Border)
     }
     Surface(
         onClick = onClick, shape = RoundedCornerShape(Radius.chip), color = bg, border = BorderStroke(1.dp, border),
-        modifier = modifier.heightIn(min = 40.dp).semantics { this.selected = selected },
+        modifier = modifier.heightIn(min = if (compact) 20.dp else 40.dp).semantics { this.selected = selected },
     ) {
-        Box(Modifier.padding(horizontal = 14.dp), contentAlignment = Alignment.Center) {
-            Text(label, style = HType.caption.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), color = fg)
+        Box(Modifier.padding(horizontal = if (compact) 10.dp else 14.dp), contentAlignment = Alignment.Center) {
+            Text(label, style = (if (compact) HType.small else HType.caption).copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), color = fg)
         }
     }
 }
@@ -181,7 +193,7 @@ fun PinnedHeader(
     ) {
         HeaderIconButton(backIcon, backLabel, onBack)
         Column(Modifier.weight(1f)) {
-            Text(title, style = HType.headerTitle, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, style = HType.headerTitle, color = Sage.OnPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(subtitle, style = HType.small, color = Sage.OnPrimarySoft, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         trailing()
@@ -194,7 +206,7 @@ fun HeaderIconButton(icon: ImageVector, label: String, onClick: () -> Unit) {
         Modifier.size(44.dp).clip(CircleShape).background(Sage.PrimaryRaised).clickable(role = Role.Button, onClick = onClick)
             .semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
-    ) { Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp)) }
+    ) { Icon(icon, contentDescription = null, tint = Sage.OnPrimary, modifier = Modifier.size(20.dp)) }
 }
 
 /** The global screens; each is the operation of the same id in page-operations.json. */
@@ -218,16 +230,16 @@ fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifi
     Button(
         onClick = onClick, enabled = enabled, modifier = modifier.height(50.dp),
         shape = RoundedCornerShape(Radius.pill),
-        colors = ButtonDefaults.buttonColors(containerColor = Sage.Primary, contentColor = Color.White),
+        colors = ButtonDefaults.buttonColors(containerColor = Sage.Primary, contentColor = Sage.OnPrimary),
     ) { Text(text, style = HType.bodyStrong) }
 }
 
 @Composable
-fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     OutlinedButton(
-        onClick = onClick, modifier = modifier.height(50.dp), shape = RoundedCornerShape(Radius.pill),
-        border = BorderStroke(1.dp, Sage.Primary),
-        colors = ButtonDefaults.outlinedButtonColors(contentColor = Sage.Primary),
+        onClick = onClick, modifier = modifier.height(50.dp), enabled = enabled, shape = RoundedCornerShape(Radius.pill),
+        border = BorderStroke(1.dp, Sage.Accent),
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = Sage.Accent),
     ) { Text(text, style = HType.bodyStrong) }
 }
 
@@ -241,7 +253,7 @@ fun BottomActionBar(content: @Composable RowScope.() -> Unit) {
 
 @Composable
 fun LoadingBox(modifier: Modifier = Modifier) =
-    Box(modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Sage.Primary) }
+    Box(modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Sage.Accent) }
 
 @Composable
 fun ErrorBox(message: String, onRetry: () -> Unit) {

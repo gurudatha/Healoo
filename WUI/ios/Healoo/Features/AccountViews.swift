@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 
 // MARK: - Sign in (Auth0, developer sign-in, or demo account picker)
@@ -13,7 +14,7 @@ struct LoginView: View {
                 HStack(spacing: 12) {
                     Image("HealooMark").resizable().scaledToFit().frame(width: 52, height: 52)
                         .accessibilityHidden(true)   // the name next to it is the label
-                    Text("Healoo").font(HFont.display(36, relativeTo: .largeTitle)).foregroundStyle(.white)
+                    Text("Healoo").font(HFont.display(36, relativeTo: .largeTitle)).foregroundStyle(Sage.onPrimary)
                 }
                 Text("Your reports, doctors and messages in one place. You decide who sees what.")
                     .font(HFont.body).foregroundStyle(Sage.onPrimarySoft)
@@ -34,7 +35,7 @@ struct LoginView: View {
                                 Task { try? await env.completeSignIn(); busy = false }
                             } label: {
                                 HStack(spacing: 12) {
-                                    Avatar(initials: u.initials)
+                                    Avatar(initials: u.initials, photoUrl: u.photoUri)
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(u.displayName).font(HFont.bodyStrong).foregroundStyle(Sage.ink)
                                         Text("\(u.headline) · \(u.publicId)").font(HFont.small).foregroundStyle(Sage.muted)
@@ -94,7 +95,7 @@ struct DevSignInSection: View {
             if let loadError {
                 Text(loadError).font(HFont.small).foregroundStyle(Sage.clay)
                 Button("Try again") { Task { await load() } }
-                    .font(HFont.bodyStrong).foregroundStyle(Sage.primary).disabled(busy)
+                    .font(HFont.bodyStrong).foregroundStyle(Sage.accent).disabled(busy)
             } else if let accounts {
                 if accounts.isEmpty {
                     Text("The server has no test accounts yet. Run care-seed on the server.").font(HFont.small).foregroundStyle(Sage.muted)
@@ -161,6 +162,9 @@ struct EditProfileView: View {
     @State private var location = ""
     @State private var saving = false
     @State private var message: String?
+    @State private var photoItem: PhotosPickerItem?
+    @State private var showCamera = false
+    @State private var photoBusy = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -168,6 +172,24 @@ struct EditProfileView: View {
             ScrollView {
                 if let me {
                     VStack(alignment: .leading, spacing: 16) {
+                        // Profile picture: shown to everyone who can see this profile. Only you can change it.
+                        VStack(spacing: 12) {
+                            Avatar(initials: me.initials, size: 96, photoUrl: me.photoUri)
+                            if photoBusy { Text("Saving photo…").font(HFont.small).foregroundStyle(Sage.muted) }
+                            HStack(spacing: 8) {
+                                PhotosPicker(selection: $photoItem, matching: .images) { Text("Choose photo") }
+                                    .buttonStyle(SecondaryButtonStyle()).disabled(photoBusy)
+                                if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                                    Button("Take photo") { showCamera = true }.buttonStyle(SecondaryButtonStyle()).disabled(photoBusy)
+                                }
+                            }
+                            if me.photoUri?.isEmpty == false {
+                                Button("Remove photo", action: removePhoto).font(HFont.bodyStrong).foregroundStyle(Sage.clay).disabled(photoBusy)
+                            }
+                        }
+                        .padding(20).frame(maxWidth: .infinity)
+                        .background(Sage.surface, in: RoundedRectangle(cornerRadius: Radius.card))
+
                         VStack(spacing: 10) {
                             QRCodeView(content: HealooQR.content(for: me.publicId)).frame(width: 180, height: 180)
                                 .accessibilityLabel("QR code for your Healoo ID \(me.publicId)")
@@ -203,6 +225,35 @@ struct EditProfileView: View {
         .task {
             guard me == nil, let u = try? await env.repo.me() else { return }
             me = u; name = u.displayName; location = u.location ?? ""
+        }
+        .onChange(of: photoItem) { _, item in
+            guard let item else { return }
+            Task {
+                if let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) { await changePhoto(image) }
+                photoItem = nil
+            }
+        }
+        .fullScreenCover(isPresented: $showCamera) { CameraPicker { image in Task { await changePhoto(image) } } }
+    }
+
+    /// Resizes the image (512 px JPEG), uploads it and makes it the profile picture.
+    private func changePhoto(_ image: UIImage) async {
+        photoBusy = true; message = nil
+        do {
+            let updated = try await env.repo.setProfilePhoto(try ProfilePhotos.prepare(image))
+            me = updated; env.auth.session = .signedIn(updated)
+        } catch { message = "The photo wasn't saved. Check your connection and try again." }
+        photoBusy = false
+    }
+
+    private func removePhoto() {
+        photoBusy = true; message = nil
+        Task {
+            do {
+                let updated = try await env.repo.removeProfilePhoto()
+                me = updated; env.auth.session = .signedIn(updated)
+            } catch { message = "The photo wasn't removed. Try again." }
+            photoBusy = false
         }
     }
 
@@ -290,7 +341,7 @@ struct ActiveSharingView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
                 let hospital = g.granteeType == .hospital
-                Image(systemName: hospital ? "cross.case" : "person").font(.system(size: 15)).foregroundStyle(Sage.primary)
+                Image(systemName: hospital ? "cross.case" : "person").font(.system(size: 15)).foregroundStyle(Sage.accent)
                     .frame(width: 32, height: 32).background(Sage.sageTint, in: RoundedRectangle(cornerRadius: 10))
                 VStack(alignment: .leading, spacing: 1) {
                     Text(g.granteeName).font(HFont.bodyStrong).foregroundStyle(Sage.ink)

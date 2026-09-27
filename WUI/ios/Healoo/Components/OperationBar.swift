@@ -113,7 +113,7 @@ struct OperationBar: View {
             Image(systemName: symbol).font(.system(size: 20))
             Text(text).font(HFont.tiny).lineLimit(1)
         }
-        .foregroundStyle(on ? Sage.primary : Sage.muted)
+        .foregroundStyle(on ? Sage.accent : Sage.muted)
         .frame(maxWidth: .infinity, minHeight: 52)
         .contentShape(Rectangle())
     }
@@ -213,14 +213,14 @@ struct UserResultRow: View {
     var trailing: String? = nil
     var body: some View {
         HStack(spacing: 12) {
-            Avatar(initials: user.initials, size: 36)
+            Avatar(initials: user.initials, size: 36, photoUrl: user.photoUri)
             VStack(alignment: .leading, spacing: 1) {
                 Text(user.displayName).font(HFont.bodyStrong).foregroundStyle(Sage.ink).lineLimit(1)
                 Text([user.headline, user.publicId].filter { !$0.isEmpty }.joined(separator: " · "))
                     .font(HFont.small).foregroundStyle(Sage.muted).lineLimit(1)
             }
             Spacer(minLength: 0)
-            if let trailing { Text(trailing).font(HFont.small).foregroundStyle(Sage.primary) }
+            if let trailing { Text(trailing).font(HFont.small).foregroundStyle(Sage.accent) }
         }
         .padding(.horizontal, 12).padding(.vertical, 8).frame(minHeight: 56)
         .contentShape(Rectangle())
@@ -252,7 +252,7 @@ struct PickedRow<Content: View>: View {
     var body: some View {
         HStack(spacing: 0) {
             content()
-            Button("Change", action: onChange).font(HFont.captionStrong).foregroundStyle(Sage.primary).padding(.horizontal, 12)
+            Button("Change", action: onChange).font(HFont.captionStrong).foregroundStyle(Sage.accent).padding(.horizontal, 12)
         }
         .background(Sage.sageTint, in: RoundedRectangle(cornerRadius: Radius.card))
     }
@@ -306,13 +306,13 @@ struct RecipientField: View {
 
     private func chip(_ u: UserProfile, removable: Bool) -> some View {
         HStack(spacing: 6) {
-            Avatar(initials: u.initials, size: 26)
+            Avatar(initials: u.initials, size: 26, photoUrl: u.photoUri)
             Text(u.displayName).font(HFont.captionStrong).foregroundStyle(Sage.ink).lineLimit(1)
             if removable {
                 Button { extras.removeAll { $0.id == u.id } } label: { Image(systemName: "xmark").font(.system(size: 12, weight: .semibold)).foregroundStyle(Sage.muted) }
                     .frame(width: 28, height: 28).accessibilityLabel("Remove \(u.displayName)")
             } else {
-                Image(systemName: "lock.fill").font(.system(size: 11)).foregroundStyle(Sage.primary).accessibilityLabel("Always included")
+                Image(systemName: "lock.fill").font(.system(size: 11)).foregroundStyle(Sage.accent).accessibilityLabel("Always included")
             }
         }
         .padding(.leading, 6).padding(.trailing, removable ? 4 : 12).frame(minHeight: 36)

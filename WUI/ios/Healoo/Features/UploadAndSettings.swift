@@ -76,7 +76,7 @@ struct UploadView: View {
                             : addingFiles ? "To \(existingTarget?.title ?? "an existing item")"
                             : "For \(owner?.displayName ?? "…") · \(kind.label)",
                          backSymbol: "xmark", backLabel: "Cancel", onBack: cancel) {
-                if let who = fixedRecipient ?? owner, !addingFiles { Avatar(initials: who.initials, size: 36) }
+                if let who = fixedRecipient ?? owner, !addingFiles { Avatar(initials: who.initials, size: 36, photoUrl: who.photoUri) }
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -114,10 +114,10 @@ struct UploadView: View {
                         Toggle(isOn: $isReport) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("These are report files").font(HFont.body).foregroundStyle(Sage.ink)
-                                Text("Report files open only for doctors the item is shared with.").font(HFont.small).foregroundStyle(Sage.muted)
+                                Text("Report files open for the patient who owns the item and for doctors it is shared with.").font(HFont.small).foregroundStyle(Sage.muted)
                             }
                         }
-                        .tint(Sage.primary)
+                        .tint(Sage.accent)
                     } else {
                         if me?.isClinical == true && kind != .alert { patientPicker }
                         switch kind {
@@ -213,7 +213,7 @@ struct UploadView: View {
                 ForEach(patients) { p in Button("\(p.displayName) · \(p.publicId)") { owner = p } }
             } label: {
                 HStack(spacing: 10) {
-                    if let owner { Avatar(initials: owner.initials, size: 28) }
+                    if let owner { Avatar(initials: owner.initials, size: 28, photoUrl: owner.photoUri) }
                     Text(owner.map { "\($0.displayName) · \($0.publicId)" } ?? "Choose a patient")
                         .font(HFont.body).foregroundStyle(owner == nil ? Sage.placeholder : Sage.ink).lineLimit(1)
                     Spacer()
@@ -233,7 +233,7 @@ struct UploadView: View {
                 Image(systemName: symbol).font(.system(size: 18))
                 Text(label).font(HFont.smallStrong)
             }
-            .foregroundStyle(Sage.primary).frame(maxWidth: .infinity, minHeight: 60)
+            .foregroundStyle(Sage.accent).frame(maxWidth: .infinity, minHeight: 60)
             .background(Sage.surface, in: RoundedRectangle(cornerRadius: 14))
             .overlay(RoundedRectangle(cornerRadius: 14).stroke(Sage.dashed, style: StrokeStyle(lineWidth: 1.5, dash: [5, 4])))
         }
@@ -250,7 +250,7 @@ struct UploadView: View {
                         Sage.sageTint
                         if f.kind == .image, let img = UIImage(contentsOfFile: f.localURL.path) {
                             Image(uiImage: img).resizable().scaledToFill()
-                        } else { Image(systemName: "doc.richtext").foregroundStyle(Sage.primary) }
+                        } else { Image(systemName: "doc.richtext").foregroundStyle(Sage.accent) }
                     }
                     .frame(width: 40, height: 40).clipShape(RoundedRectangle(cornerRadius: 10))
                     VStack(alignment: .leading, spacing: 1) {
@@ -267,7 +267,7 @@ struct UploadView: View {
             ForEach(Array(links.enumerated()), id: \.offset) { i, link in
                 if !files.isEmpty || i > 0 { RowDivider() }
                 HStack(spacing: 10) {
-                    Image(systemName: "link").foregroundStyle(Sage.primary)
+                    Image(systemName: "link").foregroundStyle(Sage.accent)
                     Text(link).font(HFont.caption).foregroundStyle(Sage.ink).lineLimit(1)
                     Spacer(minLength: 0)
                     iconButton("xmark", "Remove link", tint: Sage.clay) { links.remove(at: i) }
@@ -465,16 +465,16 @@ struct SettingsView: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Settings").font(HFont.screenTitle).foregroundStyle(.white)
+                Text("Settings").font(HFont.screenTitle).foregroundStyle(Sage.onPrimary)
                 HStack(spacing: 14) {
-                    Avatar(initials: me?.initials ?? "", size: 52)
+                    Avatar(initials: me?.initials ?? "", size: 52, photoUrl: me?.photoUri)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(me?.displayName ?? "").font(.custom(FontName.figtreeSemiBold, size: 17)).foregroundStyle(.white)
+                        Text(me?.displayName ?? "").font(.custom(FontName.figtreeSemiBold, size: 17)).foregroundStyle(Sage.onPrimary)
                         Text("\(me?.headline ?? "") · \(me?.publicId ?? "")").font(HFont.caption).foregroundStyle(Sage.onPrimarySoft)
                     }
                     Spacer()
                     NavigationLink("Edit", value: Route.editProfile)
-                        .font(HFont.captionStrong).foregroundStyle(Sage.primary)
+                        .font(HFont.captionStrong).foregroundStyle(Sage.accent)
                         .padding(.horizontal, 14).frame(minHeight: 40).background(.white, in: Capsule())
                 }
                 .padding(12).background(Sage.primaryRaised, in: RoundedRectangle(cornerRadius: 18))
@@ -549,7 +549,7 @@ struct SettingsView: View {
                 Text(note).font(HFont.small).foregroundStyle(Sage.muted)
             }
         }
-        .tint(Sage.primary).padding(.horizontal, 14).frame(minHeight: 56)
+        .tint(Sage.accent).padding(.horizontal, 14).frame(minHeight: 56)
     }
 
     private func linkRow(_ symbol: String, _ label: String, _ value: String?, action: @escaping () -> Void) -> some View {
@@ -558,7 +558,7 @@ struct SettingsView: View {
 
     private func linkLabel(_ symbol: String, _ label: String, _ value: String?) -> some View {
             HStack(spacing: 12) {
-                Image(systemName: symbol).font(.system(size: 15)).foregroundStyle(Sage.primary)
+                Image(systemName: symbol).font(.system(size: 15)).foregroundStyle(Sage.accent)
                     .frame(width: 32, height: 32).background(Sage.sageTint, in: RoundedRectangle(cornerRadius: 10))
                 Text(label).font(HFont.bodyMedium).foregroundStyle(Sage.ink)
                 Spacer()

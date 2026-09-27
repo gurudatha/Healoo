@@ -327,6 +327,8 @@ pub struct ConversationDto {
     pub item_id: Uuid,
     pub item_title: String,
     pub primary_kind: PrimaryKind,
+    /// OPEN or CLOSED: the apps grey out discussions of closed items.
+    pub status: ItemStatus,
     pub other_user: UserDto,
     pub last_message: String,
     pub last_message_at: String,

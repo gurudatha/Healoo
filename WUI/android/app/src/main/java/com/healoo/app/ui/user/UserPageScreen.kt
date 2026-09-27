@@ -50,7 +50,10 @@ class UserPageViewModel(private val userId: String, startOnMessages: Boolean) : 
 
     // Message and Share sheets: the page's person is always a recipient; these are the extra ones.
     val extraRecipients = mutableStateListOf<UserProfile>()
-    var draft by mutableStateOf("")
+    private val draftKey = "person:$userId"
+    /** Unsent Message text for this person survives closing the sheet or leaving the page (Drafts). */
+    var draft by mutableStateOf(Drafts[draftKey]); private set
+    fun updateDraft(text: String) { draft = text; Drafts[draftKey] = text }
     var picked by mutableStateOf<DataItem?>(null)
     var busy by mutableStateOf(false); private set
     var sheetError by mutableStateOf<String?>(null)
@@ -84,7 +87,7 @@ class UserPageViewModel(private val userId: String, startOnMessages: Boolean) : 
     fun connect() = viewModelScope.launch { runCatching { repo.connect(userId) }.onSuccess { load() } }
 
     fun openSheet() {
-        extraRecipients.clear(); draft = ""; picked = null; sheetError = null
+        extraRecipients.clear(); picked = null; sheetError = null   // the draft text is kept
     }
 
     fun loadShareable() = viewModelScope.launch {
@@ -101,7 +104,7 @@ class UserPageViewModel(private val userId: String, startOnMessages: Boolean) : 
         busy = true
         viewModelScope.launch {
             runCatching { repo.startConversation(userId, body, extraRecipients.map { it.id }) }
-                .onSuccess { onStarted(it.id); refreshConversations() }
+                .onSuccess { updateDraft(""); onStarted(it.id); refreshConversations() }
                 .onFailure { sheetError = "That didn't send: ${it.message}. Try again." }
             busy = false
         }
@@ -211,7 +214,7 @@ private fun ProfileHeader(user: UserProfile, progress: Float, onBack: () -> Unit
         // Collapsed row (always present; name slides in as details fade)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             HeaderIconButton(Icons.AutoMirrored.Outlined.ArrowBack, "Back", onBack)
-            Text(user.displayName, style = HType.headerTitle, color = Color.White, modifier = Modifier.weight(1f).alpha(1f - full),
+            Text(user.displayName, style = HType.headerTitle, color = Sage.OnPrimary, modifier = Modifier.weight(1f).alpha(1f - full),
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (user.connected) ConnectedPill()
         }
@@ -220,9 +223,9 @@ private fun ProfileHeader(user: UserProfile, progress: Float, onBack: () -> Unit
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                Avatar(user.initials, 64.dp, border = Sage.OnPrimaryLine)
+                Avatar(user.initials, 64.dp, border = Sage.OnPrimaryLine, photoUrl = user.photoUri)
                 Column {
-                    Text(user.displayName, style = HType.profileName, color = Color.White)
+                    Text(user.displayName, style = HType.profileName, color = Sage.OnPrimary)
                     Text(user.headline, style = HType.caption, color = Sage.OnPrimarySoft)
                 }
             }
@@ -234,7 +237,7 @@ private fun ProfileHeader(user: UserProfile, progress: Float, onBack: () -> Unit
                 ).forEach { (k, v) ->
                     Column(Modifier.weight(1f)) {
                         Text(k, style = HType.tiny.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Normal), color = Sage.OnPrimaryLine)
-                        Text(v, style = HType.caption.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), color = Color.White,
+                        Text(v, style = HType.caption.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), color = Sage.OnPrimary,
                             maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
@@ -261,8 +264,8 @@ private fun Notice(text: String, onDismiss: () -> Unit) {
             .padding(start = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(text, style = HType.caption, color = Sage.Primary, modifier = Modifier.weight(1f))
-        TextButton(onDismiss) { Text("OK", color = Sage.Primary) }
+        Text(text, style = HType.caption, color = Sage.Accent, modifier = Modifier.weight(1f))
+        TextButton(onDismiss) { Text("OK", color = Sage.Accent) }
     }
 }
 
@@ -342,11 +345,11 @@ private fun MessageSheet(vm: UserPageViewModel, user: UserProfile, onDismiss: ()
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             FieldLabel("Message")
             OutlinedTextField(
-                value = vm.draft, onValueChange = { vm.draft = it; vm.sheetError = null }, minLines = 3, maxLines = 8,
+                value = vm.draft, onValueChange = { vm.updateDraft(it); vm.sheetError = null }, minLines = 3, maxLines = 8,
                 placeholder = { Text("Write to ${user.displayName.substringBefore(' ')}", style = HType.body, color = Sage.Placeholder) },
                 textStyle = HType.body.copy(color = Sage.Ink), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth(),
                 colors = OutlinedTextFieldDefaults.colors(focusedContainerColor = Sage.Surface, unfocusedContainerColor = Sage.Surface,
-                    focusedBorderColor = Sage.Primary, unfocusedBorderColor = Sage.Border, cursorColor = Sage.Primary),
+                    focusedBorderColor = Sage.Accent, unfocusedBorderColor = Sage.Border, cursorColor = Sage.Accent),
             )
             Text("This starts a new discussion item that everyone above can read and add to.", style = HType.small, color = Sage.Muted)
         }

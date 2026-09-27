@@ -69,6 +69,10 @@ interface HealooRepository {
 
     // ---- account ----
     suspend fun updateProfile(update: ProfileUpdate): UserProfile
+    /** Profile picture: uploads an image prepared by [ProfilePhotos.prepare] (PUT /v1/me/photo). */
+    suspend fun setProfilePhoto(photo: PendingAttachment): UserProfile
+    /** Back to initials (DELETE /v1/me/photo). */
+    suspend fun removeProfilePhoto(): UserProfile
     /** Everything the caller has shared, grouped by who it is shared with. */
     suspend fun activeShares(): List<ShareGroup>
     suspend fun notificationPrefs(): NotificationPrefs

@@ -35,7 +35,7 @@ struct DataItemView: View {
         VStack(spacing: 0) {
             PinnedHeader(title: item?.title ?? "", subtitle: item.map { "\($0.primaryKind.label) · added by \($0.createdByName)" } ?? "",
                          onBack: { dismiss() }) {
-                if let me { Avatar(initials: me.initials, size: 36) }
+                if let me { Avatar(initials: me.initials, size: 36, photoUrl: me.photoUri) }
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
@@ -114,11 +114,11 @@ struct DataItemView: View {
                 if open { sheet = .close } else { run { try await env.repo.reopenItem(itemId) } }
             } label: {
                 HStack(spacing: 6) {
-                    Circle().fill(open ? Sage.primary : Sage.muted).frame(width: 8, height: 8)
+                    Circle().fill(open ? Sage.accent : Sage.muted).frame(width: 8, height: 8)
                     Text(open ? "Open" : "Closed").font(HFont.smallStrong)
                 }
-                .foregroundStyle(open ? Sage.primary : Sage.muted).padding(.horizontal, 12).frame(minHeight: 36)
-                .overlay(Capsule().stroke(open ? Sage.primary : Sage.border))
+                .foregroundStyle(open ? Sage.accent : Sage.muted).padding(.horizontal, 12).frame(minHeight: 36)
+                .overlay(Capsule().stroke(open ? Sage.accent : Sage.border))
             }
             .disabled(!canChange)
             .accessibilityLabel(open ? "Status open. Double-tap to close" : "Status closed. Double-tap to reopen")
@@ -147,7 +147,7 @@ struct DataItemView: View {
             HStack {
                 FieldLabel("Attachments · \(files.count)")
                 Spacer()
-                if item.can("attach") { Button("Add files") { sheet = .addFiles }.font(HFont.captionStrong).foregroundStyle(Sage.primary) }
+                if item.can("attach") { Button("Add files") { sheet = .addFiles }.font(HFont.captionStrong).foregroundStyle(Sage.accent) }
             }
             if files.isEmpty {
                 Text("No files yet.").font(HFont.small).foregroundStyle(Sage.muted)
@@ -163,7 +163,7 @@ struct DataItemView: View {
                 }
             }
             if files.contains(where: \.report) {
-                Text("Report files open only for doctors this item is shared with.").font(HFont.small).foregroundStyle(Sage.muted)
+                Text("Report files open for the patient who owns this item and for doctors it is shared with.").font(HFont.small).foregroundStyle(Sage.muted)
             }
         }
     }
@@ -178,11 +178,11 @@ struct DataItemView: View {
                     }
                     ForEach(item.messages.suffix(2)) { m in
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(senderName(item, m.senderId)).font(HFont.smallStrong).foregroundStyle(Sage.primary)
+                            Text(senderName(item, m.senderId)).font(HFont.smallStrong).foregroundStyle(Sage.accent)
                             Text(m.body).font(HFont.body).foregroundStyle(Sage.ink).lineLimit(2).multilineTextAlignment(.leading)
                         }
                     }
-                    Text(item.messages.isEmpty ? "Start discussion ›" : "Open discussion ›").font(HFont.captionStrong).foregroundStyle(Sage.primary)
+                    Text(item.messages.isEmpty ? "Start discussion ›" : "Open discussion ›").font(HFont.captionStrong).foregroundStyle(Sage.accent)
                 }
                 .padding(14).frame(maxWidth: .infinity, alignment: .leading)
                 .background(Sage.surface, in: RoundedRectangle(cornerRadius: Radius.card))
@@ -196,7 +196,7 @@ struct DataItemView: View {
             HStack {
                 FieldLabel("Appointments · \(item.appointments.count)")
                 Spacer()
-                if item.can("book") { Button("Book") { sheet = .book }.font(HFont.captionStrong).foregroundStyle(Sage.primary) }
+                if item.can("book") { Button("Book") { sheet = .book }.font(HFont.captionStrong).foregroundStyle(Sage.accent) }
             }
             if item.appointments.isEmpty { Text("No appointments yet.").font(HFont.small).foregroundStyle(Sage.muted) }
             ForEach(item.appointments) { a in appointmentCard(item, a) }
@@ -240,7 +240,7 @@ struct DataItemView: View {
                                 Button("Mark attended") { visit(a, v, "COMPLETED") }
                                 Button("Mark missed") { visit(a, v, "NO_SHOW") }
                             }
-                        } label: { Image(systemName: "ellipsis.circle").foregroundStyle(Sage.primary).frame(width: 44, height: 44) }
+                        } label: { Image(systemName: "ellipsis.circle").foregroundStyle(Sage.accent).frame(width: 44, height: 44) }
                         .accessibilityLabel("Options for visit on \(DateText.long(v.date))")
                     }
                 }
@@ -266,7 +266,7 @@ struct DataItemView: View {
             HStack {
                 FieldLabel("Alerts · \(item.alerts.count)")
                 Spacer()
-                if item.can("alert") { Button("Add alert") { sheet = .alert }.font(HFont.captionStrong).foregroundStyle(Sage.primary) }
+                if item.can("alert") { Button("Add alert") { sheet = .alert }.font(HFont.captionStrong).foregroundStyle(Sage.accent) }
             }
             if item.alerts.isEmpty { Text("No alerts.").font(HFont.small).foregroundStyle(Sage.muted) }
             if !item.alerts.isEmpty {
@@ -303,7 +303,7 @@ struct DataItemView: View {
                 ForEach(Array(links.enumerated()), id: \.offset) { i, link in
                     if i > 0 { RowDivider() }
                     Button { if let u = URL(string: link) { openURL(u) } } label: {
-                        Label(link, systemImage: "link").font(HFont.caption).foregroundStyle(Sage.primary).lineLimit(1)
+                        Label(link, systemImage: "link").font(HFont.caption).foregroundStyle(Sage.accent).lineLimit(1)
                             .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading).padding(.horizontal, 14)
                     }
                 }
@@ -375,7 +375,7 @@ struct DataItemView: View {
 
     private func accessRow(_ symbol: String, _ name: String, _ note: String, _ onRevoke: (() -> Void)?) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: symbol).font(.system(size: 15)).foregroundStyle(Sage.primary)
+            Image(systemName: symbol).font(.system(size: 15)).foregroundStyle(Sage.accent)
                 .frame(width: 32, height: 32).background(Sage.sageTint, in: RoundedRectangle(cornerRadius: 10))
             VStack(alignment: .leading, spacing: 1) {
                 Text(name).font(HFont.bodyStrong).foregroundStyle(Sage.ink)
@@ -420,7 +420,7 @@ struct DataItemView: View {
                         sheet = nil
                     } label: {
                         HStack(spacing: 12) {
-                            Avatar(initials: c.initials, size: 36)
+                            Avatar(initials: c.initials, size: 36, photoUrl: c.photoUri)
                             VStack(alignment: .leading) {
                                 Text(c.displayName).font(HFont.bodyStrong).foregroundStyle(Sage.ink)
                                 Text(c.primaryRole == .hospital ? "All its doctors" : c.headline).font(HFont.small).foregroundStyle(Sage.muted)

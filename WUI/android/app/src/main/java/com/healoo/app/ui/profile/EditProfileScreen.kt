@@ -1,6 +1,12 @@
 package com.healoo.app.ui.profile
 
+import android.content.Context
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -12,10 +18,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.FileProvider
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.healoo.app.data.ProfilePhotos
 import com.healoo.app.data.ProfileUpdate
 import com.healoo.app.data.Role
 import com.healoo.app.data.ServiceLocator
@@ -26,6 +35,7 @@ import com.healoo.app.ui.scan.healooQrContent
 import com.healoo.app.ui.theme.*
 import com.healoo.app.ui.upload.SageTextField
 import kotlinx.coroutines.launch
+import java.io.File
 
 class EditProfileViewModel : ViewModel() {
     private val repo = ServiceLocator.repository
@@ -34,6 +44,28 @@ class EditProfileViewModel : ViewModel() {
     var location by mutableStateOf("")
     var saving by mutableStateOf(false); private set
     var message by mutableStateOf<String?>(null); private set
+    var photoBusy by mutableStateOf(false); private set
+
+    /** Resizes the picked or captured image (512 px JPEG), uploads it and makes it the profile picture. */
+    fun changePhoto(context: Context, source: Uri) {
+        photoBusy = true; message = null
+        viewModelScope.launch {
+            runCatching { repo.setProfilePhoto(ProfilePhotos.prepare(context, source)) }
+                .onSuccess { me = it; ServiceLocator.auth.signedIn(it) }
+                .onFailure { message = "The photo wasn't saved. Check your connection and try again." }
+            photoBusy = false
+        }
+    }
+
+    fun removePhoto() {
+        photoBusy = true; message = null
+        viewModelScope.launch {
+            runCatching { repo.removeProfilePhoto() }
+                .onSuccess { me = it; ServiceLocator.auth.signedIn(it) }
+                .onFailure { message = "The photo wasn't removed. Try again." }
+            photoBusy = false
+        }
+    }
 
     init {
         viewModelScope.launch {
@@ -56,6 +88,10 @@ class EditProfileViewModel : ViewModel() {
 @Composable
 fun EditProfileScreen(onClose: () -> Unit, vm: EditProfileViewModel = viewModel()) {
     val me = vm.me
+    val context = LocalContext.current
+    val pickPhoto = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let { vm.changePhoto(context, it) } }
+    var cameraUri by remember { mutableStateOf<Uri?>(null) }
+    val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok -> if (ok) cameraUri?.let { vm.changePhoto(context, it) } }
     Scaffold(
         containerColor = Sage.Background,
         topBar = { PinnedHeader("Edit profile", me?.publicId ?: "", onClose, backIcon = Icons.Outlined.Close, backLabel = "Cancel") },
@@ -63,6 +99,26 @@ fun EditProfileScreen(onClose: () -> Unit, vm: EditProfileViewModel = viewModel(
     ) { padding ->
         if (me == null) { LoadingBox(Modifier.padding(padding)); return@Scaffold }
         ScrollbarLazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            item {
+                // Profile picture: shown to everyone who can see this profile.
+                Column(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(Radius.card)).background(Sage.Surface).padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Avatar(me.initials, 96.dp, photoUrl = me.photoUri)
+                    if (vm.photoBusy) Text("Saving photo…", style = HType.small, color = Sage.Muted)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SecondaryButton("Choose photo", { pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, enabled = !vm.photoBusy)
+                        SecondaryButton("Take photo", {
+                            val file = File(context.cacheDir, "captures/profile-${System.currentTimeMillis()}.jpg").apply { parentFile?.mkdirs() }
+                            val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+                            cameraUri = uri; takePhoto.launch(uri)
+                        }, enabled = !vm.photoBusy)
+                    }
+                    if (!me.photoUri.isNullOrBlank()) Text("Remove photo", style = HType.bodyStrong, color = Sage.Clay,
+                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(enabled = !vm.photoBusy) { vm.removePhoto() }.padding(6.dp))
+                }
+            }
             item {
                 Column(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(Radius.card)).background(Sage.Surface).padding(20.dp),

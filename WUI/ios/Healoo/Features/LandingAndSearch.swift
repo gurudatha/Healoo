@@ -24,10 +24,12 @@ struct LandingView: View {
                 LazyVStack(spacing: 8) {
                     VStack(alignment: .leading, spacing: 10) {
                         FieldLabel("Find doctors, patients, hospitals or labs")
-                        SearchField(text: $query, placeholder: "Search by name or Healoo ID", onSubmit: { openSearch(role) })
-                        RoleFilterRow(selected: role, includeAll: false) { role = $0; openSearch($0) }
+                        SearchField(text: $query, placeholder: "Search by name or Healoo ID", onSubmit: { openSearch(role) }, compact: true)
+                        RoleFilterRow(selected: role, includeAll: true, compact: true) { role = $0; openSearch($0) }
                     }
                     .padding(.bottom, 6)
+                    // A fine line between Find and Open items, drawn inside the gap that was already there.
+                    .overlay(alignment: .bottom) { Rectangle().fill(Sage.border).frame(height: 1).offset(y: 3) }
 
                     // "See all" expands the list in place (it used to open Search, which lists people, not items).
                     let more = showAll || (items?.count ?? 0) >= preview
@@ -36,7 +38,7 @@ struct LandingView: View {
                     }
                     if let f = filter {
                         Button("Clear filter") { toggleFilter(f) }
-                            .font(HFont.small).foregroundStyle(Sage.primary)
+                            .font(HFont.small).foregroundStyle(Sage.accent)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
@@ -74,10 +76,10 @@ struct LandingView: View {
                     Text(Date(), format: .dateTime.weekday(.wide).day().month(.abbreviated))
                         .font(HFont.caption).foregroundStyle(Sage.onPrimarySoft)
                     Text("\(greeting), \(me?.displayName.split(separator: " ").first.map(String.init) ?? "")")
-                        .font(HFont.greeting).foregroundStyle(.white).lineLimit(1)
+                        .font(HFont.greeting).foregroundStyle(Sage.onPrimary).lineLimit(1)
                 }
                 Spacer()
-                Button { router.openTab(.settings) } label: { Avatar(initials: me?.initials ?? "", ring: Sage.onPrimaryLine) }
+                Button { router.openTab(.settings) } label: { Avatar(initials: me?.initials ?? "", ring: Sage.onPrimaryLine, photoUrl: me?.photoUri) }
                     .accessibilityLabel("Open profile and settings")
             }
             Spacer(minLength: 8)
@@ -102,7 +104,7 @@ struct LandingView: View {
         let selected = filter == kind
         return Button { toggleFilter(kind) } label: {
             VStack(alignment: .leading, spacing: 2) {
-                Text(value.map(String.init) ?? "–").font(HFont.counter).foregroundStyle(selected ? Sage.primary : .white)
+                Text(value.map(String.init) ?? "–").font(HFont.counter).foregroundStyle(selected ? Sage.accent : Sage.onPrimary)
                 Text(label).font(HFont.small).foregroundStyle(selected ? Sage.ink : Sage.onPrimarySoft).lineLimit(1).minimumScaleFactor(0.85)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -151,26 +153,28 @@ struct SearchField<Trailing: View>: View {
     @Binding var text: String
     let placeholder: String
     var onSubmit: () -> Void = {}
+    /// 34 pt high instead of 48 (30% smaller), for the landing page.
+    var compact = false
     @ViewBuilder var trailing: () -> Trailing
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass").foregroundStyle(Sage.muted).accessibilityHidden(true)
+        HStack(spacing: compact ? 8 : 10) {
+            Image(systemName: "magnifyingglass").font(compact ? .footnote : .body).foregroundStyle(Sage.muted).accessibilityHidden(true)
             TextField(placeholder, text: $text, prompt: Text(placeholder).foregroundStyle(Sage.placeholder))
-                .font(HFont.body).foregroundStyle(Sage.ink)
+                .font(compact ? HFont.caption : HFont.body).foregroundStyle(Sage.ink)
                 .submitLabel(.search).onSubmit(onSubmit)
                 .autocorrectionDisabled().textInputAutocapitalization(.never)
             trailing()
         }
-        .padding(.leading, 14).padding(.trailing, 8).frame(minHeight: 48)
+        .padding(.leading, compact ? 12 : 14).padding(.trailing, 8).frame(minHeight: compact ? 34 : 48)
         .background(Sage.surface, in: RoundedRectangle(cornerRadius: Radius.field))
         .overlay(RoundedRectangle(cornerRadius: Radius.field).stroke(Sage.border, lineWidth: 1))
     }
 }
 
 extension SearchField where Trailing == EmptyView {
-    init(text: Binding<String>, placeholder: String, onSubmit: @escaping () -> Void = {}) {
-        self.init(text: text, placeholder: placeholder, onSubmit: onSubmit) { EmptyView() }
+    init(text: Binding<String>, placeholder: String, onSubmit: @escaping () -> Void = {}, compact: Bool = false) {
+        self.init(text: text, placeholder: placeholder, onSubmit: onSubmit, compact: compact) { EmptyView() }
     }
 }
 
@@ -178,14 +182,15 @@ struct RoleFilterRow: View {
     let selected: Role?
     var includeAll = true
     var onHeader = false
+    var compact = false
     let onSelect: (Role?) -> Void
     private let filters: [(Role?, String)] = [(nil, "All"), (.doctor, "Doctors"), (.patient, "Users"), (.hospital, "Hospitals"), (.lab, "Labs")]
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
+            HStack(spacing: compact ? 6 : 8) {
                 ForEach(filters.filter { includeAll || $0.0 != nil }, id: \.1) { filter in
-                    SageChip(label: filter.1, selected: selected == filter.0, onHeader: onHeader) { onSelect(filter.0) }
+                    SageChip(label: filter.1, selected: selected == filter.0, onHeader: onHeader, compact: compact) { onSelect(filter.0) }
                 }
             }
         }
@@ -212,10 +217,10 @@ struct SearchView: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Search").font(HFont.screenTitle).foregroundStyle(.white)
+                Text("Search").font(HFont.screenTitle).foregroundStyle(Sage.onPrimary)
                 SearchField(text: $query, placeholder: "Healoo ID or name") {
                     Button { showScanner = true } label: {
-                        Image(systemName: "qrcode.viewfinder").foregroundStyle(Sage.primary)
+                        Image(systemName: "qrcode.viewfinder").foregroundStyle(Sage.accent)
                             .frame(width: 36, height: 36).background(Sage.sageTint, in: RoundedRectangle(cornerRadius: 10))
                     }
                     .accessibilityLabel("Scan Healoo ID QR code")
@@ -266,7 +271,7 @@ struct SearchView: View {
         HStack(spacing: 12) {
             NavigationLink(value: Route.user(user.id, messages: false)) {
                 HStack(spacing: 12) {
-                    Avatar(initials: user.initials, background: tint(for: user.primaryRole))
+                    Avatar(initials: user.initials, background: tint(for: user.primaryRole), photoUrl: user.photoUri)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(user.displayName).font(HFont.bodyStrong).foregroundStyle(Sage.ink).lineLimit(1)
                         Text([user.headline, user.primaryRole == .doctor ? user.hospital : nil, user.publicId].compactMap { $0 }.joined(separator: " · "))
@@ -278,13 +283,13 @@ struct SearchView: View {
             .buttonStyle(.plain)
 
             if user.connected {
-                Label("Connected", systemImage: "checkmark").font(HFont.smallStrong).foregroundStyle(Sage.primary)
+                Label("Connected", systemImage: "checkmark").font(HFont.smallStrong).foregroundStyle(Sage.accent)
                     .padding(.horizontal, 10).padding(.vertical, 6).background(Sage.sageTint, in: Capsule())
             } else {
                 Button { Task { await connect(user) } } label: {
                     Label(adding.contains(user.id) ? "Adding…" : "Add", systemImage: "plus").font(HFont.captionStrong)
-                        .foregroundStyle(Sage.primary).padding(.horizontal, 14).frame(minHeight: 40)
-                        .overlay(Capsule().stroke(Sage.primary, lineWidth: 1))
+                        .foregroundStyle(Sage.accent).padding(.horizontal, 14).frame(minHeight: 40)
+                        .overlay(Capsule().stroke(Sage.accent, lineWidth: 1))
                 }
                 .disabled(adding.contains(user.id))
                 .accessibilityLabel("Add \(user.displayName) to contacts")

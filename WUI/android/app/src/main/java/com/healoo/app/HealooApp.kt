@@ -88,7 +88,8 @@ class HealooApplication : Application(), coil.ImageLoaderFactory {
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
-        enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
+        // Headers are light (#AAB5AD), so the status bar uses dark icons.
+        enableEdgeToEdge(statusBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT))
         super.onCreate(savedInstanceState)
         DeepLinks.handle(intent)
         setContent { HealooTheme { HealooRoot() } }
@@ -109,6 +110,7 @@ private suspend fun completeSignIn(context: Context) {
 }
 
 private suspend fun signOut(context: Context) {
+    com.healoo.app.data.Drafts.clear()   // another account must not see this one's unsent text
     PushRegistrar.unregister(context)
     ServiceLocator.repository.stopRealtime()
     val auth = ServiceLocator.auth
@@ -131,7 +133,7 @@ fun HealooRoot() {
 
     when (val s = session) {
         SessionState.Checking -> Box(Modifier.fillMaxSize().background(Sage.Primary), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator(color = androidx.compose.ui.graphics.Color.White)
+            CircularProgressIndicator(color = Sage.OnPrimary)
         }
         SessionState.SignedOut -> LoginScreen(onSignedIn = { completeSignIn(context) })
         is SessionState.SignedIn -> key(s.me.id) {        // new account -> fresh navigation and screens
@@ -309,6 +311,7 @@ fun HealooNavHost(onSignOut: () -> Unit) {
                 itemId = itemId,
                 onBack = { nav.popBackStack() },
                 onOpenItem = { nav.navigate(Routes.item(it)) { launchSingleTop = true } },
+                onOpenUser = { nav.navigate(Routes.user(it)) },
             )
         }
         composable(

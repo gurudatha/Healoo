@@ -249,9 +249,10 @@ class FakeRepository : HealooRepository {
 
     override suspend fun sharedItems(userId: String): List<DataItem> = latency {
         if (!connected(meId, userId)) emptyList()
-        else store.filter { s -> s.item.status == ItemStatus.OPEN &&
-            ((s.item.ownerId == meId && access(s, userId) != Access.DENY) || (s.item.ownerId == userId && access(s, meId) != Access.DENY)) }
-            .map { present(it) }
+        // Open and closed, newest first (closed ones are shown grey), as the server does.
+        else store.filter { s ->
+            (s.item.ownerId == meId && access(s, userId) != Access.DENY) || (s.item.ownerId == userId && access(s, meId) != Access.DENY) }
+            .map { present(it) }.sortedByDescending { it.updatedAt }
     }
 
     override suspend fun search(query: String, role: Role?) = latency {
@@ -273,7 +274,7 @@ class FakeRepository : HealooRepository {
             .flatMap { s ->
                 val last = s.item.messages.last()
                 participants(s.item).filter { it != meId && (withUser == null || it == withUser) }.map { other ->
-                    Conversation(s.item.id, s.item.title, s.item.primaryKind, view(raw(other)), last.body, last.sentAt, unread["$meId|${s.item.id}"] ?: 0)
+                    Conversation(s.item.id, s.item.title, s.item.primaryKind, s.item.status, view(raw(other)), last.body, last.sentAt, unread["$meId|${s.item.id}"] ?: 0)
                 }
             }.sortedByDescending { it.lastMessageAt }
     }
@@ -491,6 +492,19 @@ class FakeRepository : HealooRepository {
     override suspend fun updateProfile(update: ProfileUpdate): UserProfile = latency {
         val i = users.indexOfFirst { it.id == meId }
         users[i] = users[i].copy(displayName = update.displayName.trim(), location = update.location?.trim()?.ifEmpty { null })
+        view(users[i])
+    }
+
+    // Demo mode: the photo stays on the phone (a file in the cache).
+    override suspend fun setProfilePhoto(photo: PendingAttachment): UserProfile = latency {
+        val i = users.indexOfFirst { it.id == meId }
+        users[i] = users[i].copy(photoUri = photo.localUri.toString())
+        view(users[i])
+    }
+
+    override suspend fun removeProfilePhoto(): UserProfile = latency {
+        val i = users.indexOfFirst { it.id == meId }
+        users[i] = users[i].copy(photoUri = null)
         view(users[i])
     }
 

@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -82,17 +83,18 @@ fun LandingScreen(
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         FieldLabel("Find doctors, patients, hospitals or labs")
-                        SearchField(query, { query = it }, placeholder = "Search by name or Healoo ID", onSubmit = { onSearch(query, role) })
-                        RoleFilterRow(selected = role, includeAll = false, onSelect = { role = it; onSearch(query, it) })
+                        SearchField(query, { query = it }, placeholder = "Search by name or Healoo ID", onSubmit = { onSearch(query, role) }, compact = true)
+                        RoleFilterRow(selected = role, includeAll = true, compact = true, onSelect = { role = it; onSearch(query, it) })
                     }
                 }
                 item {
-                    Spacer(Modifier.height(6.dp))
+                    // A fine line between Find and Open items, drawn inside the gap that was already there.
+                    HorizontalDivider(Modifier.padding(vertical = 2.5.dp), thickness = 1.dp, color = Sage.Border)
                     // "See all" expands the list in place (it used to open Search, which lists people, not items).
                     val more = vm.showAll || (vm.items?.size ?: 0) >= LandingViewModel.PREVIEW
                     SectionHeader(filterTitle(vm.filter), if (!more) null else if (vm.showAll) "Show fewer" else "See all", vm::toggleShowAll)
                     vm.filter?.let { f ->
-                        Text("Clear filter", style = HType.small, color = Sage.Primary,
+                        Text("Clear filter", style = HType.small, color = Sage.Accent,
                             modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { vm.toggleFilter(f) }.padding(vertical = 4.dp))
                     }
                 }
@@ -124,12 +126,12 @@ private fun DashboardHeader(me: UserProfile?, d: Dashboard?, filter: String?, on
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(LocalDate.now().format(DateTimeFormatter.ofPattern("EEEE, d MMM")), style = HType.caption, color = Sage.OnPrimarySoft)
-                Text("$greeting, ${me?.displayName?.substringBefore(' ') ?: ""}", style = HType.greeting, color = Color.White,
+                Text("$greeting, ${me?.displayName?.substringBefore(' ') ?: ""}", style = HType.greeting, color = Sage.OnPrimary,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             androidx.compose.foundation.layout.Box(Modifier.clip(RoundedCornerShape(22.dp))) {
                 androidx.compose.material3.Surface(onClick = onOpenProfile, color = Color.Transparent) {
-                    Avatar(me?.initials ?: "", size = 44.dp, border = Sage.OnPrimaryLine)
+                    Avatar(me?.initials ?: "", size = 44.dp, border = Sage.OnPrimaryLine, photoUrl = me?.photoUri)
                 }
             }
         }
@@ -151,7 +153,7 @@ private fun Counter(value: Int?, label: String, selected: Boolean, modifier: Mod
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        Text(value?.toString() ?: "–", style = HType.counter, color = if (selected) Sage.Primary else Color.White)
+        Text(value?.toString() ?: "–", style = HType.counter, color = if (selected) Sage.Accent else Sage.OnPrimary)
         Text(label, style = HType.small, color = if (selected) Sage.Ink else Sage.OnPrimarySoft, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }

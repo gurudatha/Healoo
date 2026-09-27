@@ -60,6 +60,10 @@ protocol HealooRepository: AnyObject {
 
     // Account
     func updateProfile(_ update: ProfileUpdate) async throws -> UserProfile
+    /// Profile picture: a JPEG prepared by `ProfilePhotos.prepare` (PUT /v1/me/photo). Own profile only.
+    func setProfilePhoto(_ photo: PendingAttachment) async throws -> UserProfile
+    /// Back to initials (DELETE /v1/me/photo).
+    func removeProfilePhoto() async throws -> UserProfile
     func activeShares() async throws -> [ShareGroup]
     func notificationPrefs() async throws -> NotificationPrefs
     func saveNotificationPrefs(_ prefs: NotificationPrefs) async throws -> NotificationPrefs
@@ -108,6 +112,7 @@ final class AppEnvironment {
     }
 
     @MainActor func signOut() async {
+        Drafts.clear()   // another account must not see this one's unsent text
         await PushManager.shared.unregister(repo: repo)
         repo.stopRealtime()
         if !useFakeData { await auth.logout() } else { auth.signedOut() }
@@ -363,9 +368,10 @@ final class MockRepository: HealooRepository {
     func sharedItems(with userId: String) async throws -> [DataItem] {
         await latency()
         guard isConnected(meId, userId) else { return [] }
-        return store.filter { s in s.item.status == .open &&
-            ((s.item.ownerId == meId && access(s, userId) != .deny) || (s.item.ownerId == userId && access(s, meId) != .deny)) }
-            .compactMap { try? present($0) }
+        // Open and closed, newest first (closed ones are shown grey), as the server does.
+        return store.filter { s in
+            (s.item.ownerId == meId && access(s, userId) != .deny) || (s.item.ownerId == userId && access(s, meId) != .deny) }
+            .compactMap { try? present($0) }.sorted { $0.updatedAt > $1.updatedAt }
     }
 
     func search(_ query: String, role: Role?) async throws -> [UserProfile] {
@@ -656,6 +662,21 @@ final class MockRepository: HealooRepository {
         return view(users[i])
     }
 
+    // Demo mode: the photo stays on the phone (a file in the caches folder).
+    func setProfilePhoto(_ photo: PendingAttachment) async throws -> UserProfile {
+        await latency()
+        let i = users.firstIndex { $0.id == meId }!
+        users[i].photoUri = photo.localURL.absoluteString
+        return view(users[i])
+    }
+
+    func removeProfilePhoto() async throws -> UserProfile {
+        await latency()
+        let i = users.firstIndex { $0.id == meId }!
+        users[i].photoUri = nil
+        return view(users[i])
+    }
+
     func activeShares() async throws -> [ShareGroup] {
         await latency()
         let grants = store.filter { $0.item.ownerId == meId }.flatMap { s in
@@ -833,6 +854,14 @@ final class RemoteRepository: HealooRepository {
     func adminReactivateDoctor(_ doctorId: String) async throws -> AdminAccount { try await request("POST", "v1/admin/doctors/\(doctorId)/reactivate") }
 
     func updateProfile(_ update: ProfileUpdate) async throws -> UserProfile { try await request("PATCH", "v1/me", body: update) }
+    func setProfilePhoto(_ photo: PendingAttachment) async throws -> UserProfile {
+        let uploaded = try await uploadFiles([photo])
+        return try await request("PUT", "v1/me/photo", body: PhotoUpdate(uri: uploaded[0].uri))
+    }
+    func removeProfilePhoto() async throws -> UserProfile {
+        let _: Empty = try await request("DELETE", "v1/me/photo")
+        return try await me()
+    }
     func activeShares() async throws -> [ShareGroup] {
         let p: PageResult<OwnedGrant> = try await request("GET", "v1/grants", query: ["owner": "me"])
         return Dictionary(grouping: p.data, by: \.granteeId).map { id, list in
@@ -886,6 +915,11 @@ enum AttachmentStore {
     static func thumbnailURL(for a: Attachment) async throws -> URL? {
         guard let t = a.thumbUri, !t.isEmpty else { return nil }
         return try await localFile(t, name: "thumb-\((a.name as NSString).deletingPathExtension).jpg", cache: thumbs)
+    }
+
+    /// A small image such as a profile picture, cached with the thumbnails.
+    static func imageURL(_ uri: String, name: String) async throws -> URL {
+        try await localFile(uri, name: name, cache: thumbs)
     }
 
     /// Deletes the least recently used files beyond the cache's file or byte limit.

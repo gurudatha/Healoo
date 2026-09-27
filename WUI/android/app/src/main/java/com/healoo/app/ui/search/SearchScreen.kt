@@ -2,6 +2,7 @@ package com.healoo.app.ui.search
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -22,6 +23,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -74,22 +78,52 @@ class SearchViewModel(initialQuery: String, initialRole: Role?) : ViewModel() {
 private val roleFilters = listOf(null to "All", Role.DOCTOR to "Doctors", Role.PATIENT to "Users", Role.HOSPITAL to "Hospitals", Role.LAB to "Labs")
 
 @Composable
-fun RoleFilterRow(selected: Role?, onSelect: (Role?) -> Unit, includeAll: Boolean = true, onHeader: Boolean = false) {
-    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+fun RoleFilterRow(selected: Role?, onSelect: (Role?) -> Unit, includeAll: Boolean = true, onHeader: Boolean = false, compact: Boolean = false) {
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 8.dp)) {
         roleFilters.filter { includeAll || it.first != null }.forEach { (r, label) ->
-            SageChip(label, selected == r, onClick = { onSelect(r) }, onHeader = onHeader)
+            SageChip(label, selected == r, onClick = { onSelect(r) }, onHeader = onHeader, compact = compact)
         }
     }
 }
 
+/**
+ * [compact]: 40 dp high instead of Material's 56 dp (30% smaller), for the landing page. Material's
+ * text field can't go below 56 dp, so the compact one is drawn here with the same look.
+ */
 @Composable
 fun SearchField(
     value: String,
     onChange: (String) -> Unit,
     placeholder: String,
     onSubmit: () -> Unit = {},
+    compact: Boolean = false,
     trailing: @Composable (() -> Unit)? = null,
 ) {
+    if (compact) {
+        var focused by remember { mutableStateOf(false) }
+        Row(
+            Modifier.fillMaxWidth().height(40.dp).clip(RoundedCornerShape(Radius.field)).background(Sage.Surface)
+                .border(1.dp, if (focused) Sage.Accent else Sage.Border, RoundedCornerShape(Radius.field))
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(Icons.Outlined.Search, contentDescription = null, tint = Sage.Muted, modifier = Modifier.size(18.dp))
+            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                if (value.isEmpty()) Text(placeholder, style = HType.caption, color = Sage.Placeholder, maxLines = 1)
+                androidx.compose.foundation.text.BasicTextField(
+                    value = value, onValueChange = onChange, singleLine = true,
+                    textStyle = HType.caption.copy(color = Sage.Ink),
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(Sage.Accent),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { onSubmit() }),
+                    modifier = Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }
+                        .semantics { contentDescription = placeholder },
+                )
+            }
+            trailing?.invoke()
+        }
+        return
+    }
     OutlinedTextField(
         value = value, onValueChange = onChange, singleLine = true,
         placeholder = { Text(placeholder, style = HType.body, color = Sage.Placeholder) },
@@ -101,7 +135,7 @@ fun SearchField(
         keyboardActions = KeyboardActions(onSearch = { onSubmit() }),
         colors = OutlinedTextFieldDefaults.colors(
             focusedContainerColor = Sage.Surface, unfocusedContainerColor = Sage.Surface,
-            focusedBorderColor = Sage.Primary, unfocusedBorderColor = Sage.Border, cursorColor = Sage.Primary,
+            focusedBorderColor = Sage.Accent, unfocusedBorderColor = Sage.Border, cursorColor = Sage.Accent,
         ),
         modifier = Modifier.fillMaxWidth(),
     )
@@ -143,10 +177,10 @@ fun SearchScreen(
                     .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text("Search", style = HType.screenTitle, color = Color.White)
+                Text("Search", style = HType.screenTitle, color = Sage.OnPrimary)
                 SearchField(vm.query, vm::onQuery, placeholder = "Healoo ID or name", onSubmit = { vm.run(false) }) {
                     IconButton(onClick = onScanId) {
-                        Icon(Icons.Outlined.QrCodeScanner, contentDescription = "Scan Healoo ID QR code", tint = Sage.Primary)
+                        Icon(Icons.Outlined.QrCodeScanner, contentDescription = "Scan Healoo ID QR code", tint = Sage.Accent)
                     }
                 }
                 RoleFilterRow(vm.role, vm::onRole, onHeader = true)
@@ -196,7 +230,7 @@ private fun ResultRow(user: UserProfile, adding: Boolean, onOpen: () -> Unit, on
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         val tint = when (user.primaryRole) { Role.HOSPITAL, Role.PATIENT -> Sage.SandTint; Role.LAB -> Sage.ClayTint; else -> Sage.SageTint }
-        Avatar(user.initials, 44.dp, background = tint)
+        Avatar(user.initials, 44.dp, background = tint, photoUrl = user.photoUri)
         Column(Modifier.weight(1f)) {
             Text(user.displayName, style = HType.bodyStrong, color = Sage.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(listOfNotNull(user.headline, user.hospital?.takeIf { user.primaryRole == Role.DOCTOR }, user.publicId).joinToString(" · "),
@@ -207,18 +241,18 @@ private fun ResultRow(user: UserProfile, adding: Boolean, onOpen: () -> Unit, on
                 Modifier.clip(RoundedCornerShape(16.dp)).background(Sage.SageTint).padding(horizontal = 10.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Icon(Icons.Outlined.Check, contentDescription = null, tint = Sage.Primary, modifier = Modifier.size(14.dp))
-                Text("Connected", style = HType.small.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), color = Sage.Primary)
+                Icon(Icons.Outlined.Check, contentDescription = null, tint = Sage.Accent, modifier = Modifier.size(14.dp))
+                Text("Connected", style = HType.small.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), color = Sage.Accent)
             }
         } else {
             OutlinedButton(
                 onClick = onAdd, enabled = !adding, shape = RoundedCornerShape(20.dp),
-                border = BorderStroke(1.dp, Sage.Primary), contentPadding = PaddingValues(horizontal = 14.dp),
+                border = BorderStroke(1.dp, Sage.Accent), contentPadding = PaddingValues(horizontal = 14.dp),
                 modifier = Modifier.height(40.dp),
             ) {
-                Icon(Icons.Outlined.Add, contentDescription = null, tint = Sage.Primary, modifier = Modifier.size(16.dp))
+                Icon(Icons.Outlined.Add, contentDescription = null, tint = Sage.Accent, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(4.dp))
-                Text(if (adding) "Adding…" else "Add", style = HType.caption, color = Sage.Primary)
+                Text(if (adding) "Adding…" else "Add", style = HType.caption, color = Sage.Accent)
             }
         }
     }

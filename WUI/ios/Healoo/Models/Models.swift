@@ -241,6 +241,8 @@ struct Conversation: Codable, Hashable, Identifiable {
     var itemId: String
     var itemTitle: String
     var primaryKind: PrimaryKind
+    /// OPEN or CLOSED (server v0.3+); discussions of closed items are shown grey.
+    var status: ItemStatus? = nil
     var otherUser: UserProfile
     var lastMessage: String
     var lastMessageAt: String
@@ -317,6 +319,8 @@ struct AddAttachmentsRequest: Encodable { var attachments: [NewAttachment]; var 
 struct VisitActionRequest: Encodable { var action: String; var newDate: String?; var newTime: String? }
 
 /// A file the user picked, copied into the app's temporary folder, before upload.
+struct PhotoUpdate: Codable { var uri: String }
+
 struct PendingAttachment: Identifiable, Hashable {
     let id = UUID()
     var localURL: URL
@@ -352,6 +356,24 @@ enum DateText {
     }
     static func long(_ s: String) -> String { iso.date(from: String(s.prefix(10))).map(longFmt.string) ?? s }
     static func today() -> String { iso.string(from: Date()) }
+
+    private static let instant: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f
+    }()
+    private static let instantNoFraction = ISO8601DateFormatter()
+    private static func fmt(_ pattern: String) -> DateFormatter {
+        let f = DateFormatter(); f.dateFormat = pattern; f.locale = Locale(identifier: "en_US_POSIX"); return f
+    }
+    private static let clockFmt = fmt("h.mma"), thisYearFmt = fmt("EEE M/d"), otherYearFmt = fmt("M/d/yyyy")
+
+    /// When an item last changed, in the phone's time zone, for list rows:
+    /// this year "6.37pm, Fri 4/16"; an earlier year "6.37pm 4/16/2025" (same as Android's TimeText).
+    static func activity(_ s: String, now: Date = Date()) -> String {
+        guard let d = instant.date(from: s) ?? instantNoFraction.date(from: s) else { return s }
+        let clock = clockFmt.string(from: d).lowercased()
+        let sameYear = Calendar.current.component(.year, from: d) == Calendar.current.component(.year, from: now)
+        return sameYear ? "\(clock), \(thisYearFmt.string(from: d))" : "\(clock) \(otherYearFmt.string(from: d))"
+    }
     static func string(_ d: Date) -> String { iso.string(from: d) }
     static func date(_ s: String) -> Date? { iso.date(from: String(s.prefix(10))) }
     /// "HH:MM" from an ISO timestamp such as 2026-09-21T20:00:00+05:30.

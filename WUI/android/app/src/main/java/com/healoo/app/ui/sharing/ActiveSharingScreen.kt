@@ -69,7 +69,7 @@ fun ActiveSharingScreen(onBack: () -> Unit, onOpenItem: (String) -> Unit, vm: Ac
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             val hospital = g.granteeType == GranteeType.HOSPITAL
                             Box(Modifier.size(32.dp).clip(RoundedCornerShape(10.dp)).background(Sage.SageTint), contentAlignment = Alignment.Center) {
-                                Icon(if (hospital) Icons.Outlined.LocalHospital else Icons.Outlined.Person, null, tint = Sage.Primary, modifier = Modifier.size(17.dp))
+                                Icon(if (hospital) Icons.Outlined.LocalHospital else Icons.Outlined.Person, null, tint = Sage.Accent, modifier = Modifier.size(17.dp))
                             }
                             Column(Modifier.weight(1f)) {
                                 Text(g.granteeName, style = HType.bodyStrong, color = Sage.Ink)
@@ -109,7 +109,7 @@ fun ActiveSharingScreen(onBack: () -> Unit, onOpenItem: (String) -> Unit, vm: Ac
             title = { Text(if (all) "Stop sharing everything with $name?" else "Stop sharing “${grants.first().itemTitle}”?", style = HType.section) },
             text = { Text(if (all) "$name loses access to ${grants.size} items straight away." else "$name loses access straight away. You can share it again later.", style = HType.body) },
             confirmButton = { TextButton({ vm.revoke(grants); confirm = null }) { Text("Stop sharing", color = Sage.Clay) } },
-            dismissButton = { TextButton({ confirm = null }) { Text("Keep sharing", color = Sage.Primary) } },
+            dismissButton = { TextButton({ confirm = null }) { Text("Keep sharing", color = Sage.Accent) } },
         )
     }
 }

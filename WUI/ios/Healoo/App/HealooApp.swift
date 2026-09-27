@@ -18,7 +18,7 @@ struct HealooApp: App {
 
     var body: some Scene {
         WindowGroup {
-            SessionGate().environment(env).tint(Sage.primary)
+            SessionGate().environment(env).tint(Sage.accent)
         }
         // Live channel only while in the foreground; push covers the rest (doc 4.4 / 8).
         .onChange(of: scenePhase) { _, phase in
@@ -60,7 +60,7 @@ struct SessionGate: View {
         Group {
             switch env.auth.session {
             case .checking:
-                ZStack { Sage.primary.ignoresSafeArea(); ProgressView().tint(.white) }
+                ZStack { Sage.primary.ignoresSafeArea(); ProgressView().tint(Sage.onPrimary) }
             case .signedOut:
                 LoginView()
             case .signedIn(let me):

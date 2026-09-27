@@ -214,14 +214,14 @@ impl Db {
     /// header and in every list row so list icons stay right.
     pub async fn add_kind(&self, it: &Item, kind: &str) -> Result<()> {
         let now = now_ts();
-        let mut kinds = it.kinds.clone();
-        kinds.insert(kind.to_string());
+        // Add to the set rather than overwrite it: `it` may be stale when two parts are added in a row.
+        let kinds: HashSet<String> = [kind.to_string()].into_iter().collect();
         let st = text(&it.status);
-        self.exec("UPDATE items SET kinds = ?, updated_at = ? WHERE item_id = ?", (&kinds, now, tu(it.id))).await?;
-        self.exec("UPDATE items_by_owner SET kinds = ?, updated_at = ? WHERE owner_id = ? AND status = ? AND item_id = ?",
+        self.exec("UPDATE items SET kinds = kinds + ?, updated_at = ? WHERE item_id = ?", (&kinds, now, tu(it.id))).await?;
+        self.exec("UPDATE items_by_owner SET kinds = kinds + ?, updated_at = ? WHERE owner_id = ? AND status = ? AND item_id = ?",
             (&kinds, now, it.owner_id, &st, tu(it.id))).await?;
         for g in it.grant_list() {
-            self.exec("UPDATE items_by_grantee SET kinds = ?, updated_at = ? WHERE grantee_key = ? AND status = ? AND item_id = ?",
+            self.exec("UPDATE items_by_grantee SET kinds = kinds + ?, updated_at = ? WHERE grantee_key = ? AND status = ? AND item_id = ?",
                 (&kinds, now, g.key(), &st, tu(it.id))).await?;
         }
         Ok(())

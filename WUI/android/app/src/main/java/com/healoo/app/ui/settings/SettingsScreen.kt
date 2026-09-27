@@ -79,18 +79,18 @@ fun SettingsScreen(
                     .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 20.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                Text("Settings", style = HType.screenTitle, color = Color.White)
+                Text("Settings", style = HType.screenTitle, color = Sage.OnPrimary)
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Sage.PrimaryRaised).padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    Avatar(vm.me?.initials ?: "", 52.dp)
+                    Avatar(vm.me?.initials ?: "", 52.dp, photoUrl = vm.me?.photoUri)
                     Column(Modifier.weight(1f)) {
-                        Text(vm.me?.displayName ?: "", style = HType.bodyStrong.copy(fontSize = 17.sp), color = Color.White)
+                        Text(vm.me?.displayName ?: "", style = HType.bodyStrong.copy(fontSize = 17.sp), color = Sage.OnPrimary)
                         Text("${vm.me?.headline ?: ""} · ${vm.me?.publicId ?: ""}", style = HType.caption, color = Sage.OnPrimarySoft)
                     }
                     Surface(onClick = onEditProfile, shape = RoundedCornerShape(20.dp), color = Color.White) {
-                        Text("Edit", style = HType.caption.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), color = Sage.Primary,
+                        Text("Edit", style = HType.caption.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold), color = Sage.Accent,
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp))
                     }
                 }
@@ -155,7 +155,7 @@ private fun SwitchRow(label: String, note: String, checked: Boolean, onChange: (
         }
         Switch(
             checked = checked, onCheckedChange = null,
-            colors = SwitchDefaults.colors(checkedTrackColor = Sage.Primary, uncheckedTrackColor = Sage.SwitchOff,
+            colors = SwitchDefaults.colors(checkedTrackColor = Sage.Accent, uncheckedTrackColor = Sage.SwitchOff,
                 uncheckedThumbColor = Color.White, uncheckedBorderColor = Sage.SwitchOff),
         )
     }
@@ -168,7 +168,7 @@ private fun LinkRow(icon: ImageVector, label: String, value: String, onClick: ()
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Box(Modifier.size(32.dp).clip(RoundedCornerShape(10.dp)).background(Sage.SageTint), contentAlignment = Alignment.Center) {
-            Icon(icon, null, tint = Sage.Primary, modifier = Modifier.size(17.dp))
+            Icon(icon, null, tint = Sage.Accent, modifier = Modifier.size(17.dp))
         }
         Text(label, style = HType.body.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Medium), color = Sage.Ink, modifier = Modifier.weight(1f))
         if (value.isNotEmpty()) Text(value, style = HType.caption, color = Sage.Muted)

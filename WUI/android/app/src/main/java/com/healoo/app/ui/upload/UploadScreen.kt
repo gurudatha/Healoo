@@ -216,7 +216,7 @@ fun UploadScreen(
                     else -> "For ${vm.owner?.displayName ?: "…"} · ${vm.mode.label}"
                 },
                 onBack = onClose, backIcon = Icons.Outlined.Close, backLabel = "Cancel",
-                trailing = { (vm.fixedRecipient ?: vm.owner)?.let { Avatar(it.initials, 36.dp) } },
+                trailing = { (vm.fixedRecipient ?: vm.owner)?.let { Avatar(it.initials, 36.dp, photoUrl = it.photoUri) } },
             )
         },
         bottomBar = {
@@ -306,10 +306,10 @@ fun UploadScreen(
             if (adding) item {
                 Row(Modifier.fillMaxWidth().clickable(role = SemRole.Checkbox) { vm.filesAreReport = !vm.filesAreReport },
                     verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(vm.filesAreReport, null, colors = CheckboxDefaults.colors(checkedColor = Sage.Primary))
+                    Checkbox(vm.filesAreReport, null, colors = CheckboxDefaults.colors(checkedColor = Sage.Accent))
                     Column {
                         Text("These are report files", style = HType.body, color = Sage.Ink)
-                        Text("Report files open only for doctors the item is shared with.", style = HType.small, color = Sage.Muted)
+                        Text("Report files open for the patient who owns the item and for doctors it is shared with.", style = HType.small, color = Sage.Muted)
                     }
                 }
             }
@@ -324,7 +324,7 @@ fun UploadScreen(
                         if (vm.files.isNotEmpty() || i > 0) RowDivider()
                         Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Icon(Icons.Outlined.Link, null, tint = Sage.Primary, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Outlined.Link, null, tint = Sage.Accent, modifier = Modifier.size(18.dp))
                             Text(link, style = HType.caption, color = Sage.Ink, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                             IconButton({ vm.links.removeAt(i) }) { Icon(Icons.Outlined.Close, "Remove link", tint = Sage.Clay) }
                         }
@@ -372,7 +372,7 @@ private fun PatientPicker(patients: List<UserProfile>, selected: UserProfile?, l
                 shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, if (selected == null) Sage.Clay else Sage.Border),
                 colors = ButtonDefaults.outlinedButtonColors(containerColor = Sage.Surface),
             ) {
-                if (selected != null) { Avatar(selected.initials, 28.dp); Spacer(Modifier.width(10.dp)) }
+                if (selected != null) { Avatar(selected.initials, 28.dp, photoUrl = selected.photoUri); Spacer(Modifier.width(10.dp)) }
                 Text(selected?.let { "${it.displayName} · ${it.publicId}" } ?: "Choose a patient", style = HType.body,
                     color = if (selected == null) Sage.Placeholder else Sage.Ink, modifier = Modifier.weight(1f))
                 if (!locked) Icon(Icons.Outlined.ArrowDropDown, null, tint = Sage.Muted)
@@ -392,8 +392,8 @@ private fun AttachButton(label: String, icon: ImageVector, modifier: Modifier, o
         border = BorderStroke(1.dp, Sage.Dashed), colors = CardDefaults.outlinedCardColors(containerColor = Sage.Surface),
     ) {
         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            Icon(icon, null, tint = Sage.Primary, modifier = Modifier.size(20.dp))
-            Text(label, style = HType.small.copy(fontWeight = FontWeight.SemiBold), color = Sage.Primary)
+            Icon(icon, null, tint = Sage.Accent, modifier = Modifier.size(20.dp))
+            Text(label, style = HType.small.copy(fontWeight = FontWeight.SemiBold), color = Sage.Accent)
         }
     }
 }
@@ -404,7 +404,7 @@ private fun PendingRow(f: PendingAttachment, index: Int, count: Int, onUp: () ->
         horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Box(Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(Sage.SageTint), contentAlignment = Alignment.Center) {
             if (f.kind == AttachmentKind.IMAGE) AsyncImage(f.localUri, null, contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.fillMaxSize())
-            else Icon(Icons.Outlined.PictureAsPdf, null, tint = Sage.Primary, modifier = Modifier.size(20.dp))
+            else Icon(Icons.Outlined.PictureAsPdf, null, tint = Sage.Accent, modifier = Modifier.size(20.dp))
         }
         Column(Modifier.weight(1f)) {
             Text(f.name, style = HType.caption.copy(fontWeight = FontWeight.SemiBold), color = Sage.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -426,7 +426,7 @@ fun SageTextField(label: String, value: String, onChange: (String) -> Unit, plac
             textStyle = HType.body.copy(color = Sage.Ink), shape = RoundedCornerShape(12.dp),
             colors = OutlinedTextFieldDefaults.colors(
                 focusedContainerColor = Sage.Surface, unfocusedContainerColor = Sage.Surface,
-                focusedBorderColor = Sage.Primary, unfocusedBorderColor = Sage.Border, cursorColor = Sage.Primary,
+                focusedBorderColor = Sage.Accent, unfocusedBorderColor = Sage.Border, cursorColor = Sage.Accent,
             ),
         )
     }
@@ -440,7 +440,7 @@ private fun LinkDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
         onDismissRequest = onDismiss, containerColor = Sage.Surface,
         title = { Text("Add a link", style = HType.section) },
         text = { SageTextField("Web address", url, { url = it.trim() }) },
-        confirmButton = { TextButton({ onAdd(url) }, enabled = valid) { Text("Add link", color = Sage.Primary) } },
+        confirmButton = { TextButton({ onAdd(url) }, enabled = valid) { Text("Add link", color = Sage.Accent) } },
         dismissButton = { TextButton(onDismiss) { Text("Cancel", color = Sage.Muted) } },
     )
 }

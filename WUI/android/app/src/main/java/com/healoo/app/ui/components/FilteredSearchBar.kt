@@ -86,7 +86,7 @@ fun <T> FilteredSearchBar(
             textStyle = HType.body.copy(color = Sage.Ink), shape = RoundedCornerShape(Radius.field),
             colors = OutlinedTextFieldDefaults.colors(
                 focusedContainerColor = Sage.Surface, unfocusedContainerColor = Sage.Surface,
-                focusedBorderColor = Sage.Primary, unfocusedBorderColor = Sage.Border, cursorColor = Sage.Primary,
+                focusedBorderColor = Sage.Accent, unfocusedBorderColor = Sage.Border, cursorColor = Sage.Accent,
             ),
             modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
         )
@@ -113,13 +113,13 @@ fun UserResultRow(user: UserProfile, trailing: String? = null) {
         Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Avatar(user.initials, 36.dp)
+        Avatar(user.initials, 36.dp, photoUrl = user.photoUri)
         Column(Modifier.weight(1f)) {
             Text(user.displayName, style = HType.bodyStrong, color = Sage.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(listOf(user.headline, user.publicId).filter { it.isNotBlank() }.joinToString(" · "),
                 style = HType.small, color = Sage.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        trailing?.let { Text(it, style = HType.small, color = Sage.Primary) }
+        trailing?.let { Text(it, style = HType.small, color = Sage.Accent) }
     }
 }
 
@@ -178,9 +178,9 @@ private fun RecipientChip(user: UserProfile, onRemove: (() -> Unit)?) {
     ) {
         Row(Modifier.heightIn(min = 36.dp).padding(start = 6.dp, end = if (onRemove == null) 12.dp else 2.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Avatar(user.initials, 26.dp)
+            Avatar(user.initials, 26.dp, photoUrl = user.photoUri)
             Text(user.displayName, style = HType.caption.copy(fontWeight = FontWeight.SemiBold), color = Sage.Ink, maxLines = 1)
-            if (onRemove == null) Icon(Icons.Outlined.Lock, contentDescription = "Always included", tint = Sage.Primary, modifier = Modifier.size(14.dp))
+            if (onRemove == null) Icon(Icons.Outlined.Lock, contentDescription = "Always included", tint = Sage.Accent, modifier = Modifier.size(14.dp))
             else IconButton(onRemove, Modifier.size(32.dp)) {
                 Icon(Icons.Outlined.Close, contentDescription = "Remove ${user.displayName}", tint = Sage.Muted, modifier = Modifier.size(16.dp))
             }
@@ -212,6 +212,6 @@ fun PickedRow(content: @Composable RowScope.() -> Unit, onChange: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, content = content)
-        TextButton(onChange) { Text("Change", style = HType.caption.copy(fontWeight = FontWeight.SemiBold), color = Sage.Primary) }
+        TextButton(onChange) { Text("Change", style = HType.caption.copy(fontWeight = FontWeight.SemiBold), color = Sage.Accent) }
     }
 }

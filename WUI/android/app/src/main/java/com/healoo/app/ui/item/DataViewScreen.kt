@@ -116,7 +116,7 @@ fun DataViewScreen(
                 title = item?.title ?: "",
                 subtitle = item?.let { "${it.primaryKind.label} · added by ${it.createdByName.ifEmpty { "—" }}" } ?: "",
                 onBack = onBack,
-                trailing = { me?.let { Avatar(it.initials, 36.dp) } },
+                trailing = { me?.let { Avatar(it.initials, 36.dp, photoUrl = it.photoUri) } },
             )
         },
         bottomBar = {
@@ -176,7 +176,7 @@ fun DataViewScreen(
                     available.forEach { c ->
                         Row(Modifier.fillMaxWidth().clickable { vm.share(c.id); showShare = false }.heightIn(min = 48.dp),
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Avatar(c.initials, 36.dp)
+                            Avatar(c.initials, 36.dp, photoUrl = c.photoUri)
                             Column {
                                 Text(c.displayName, style = HType.bodyStrong, color = Sage.Ink)
                                 Text(if (c.primaryRole == Role.HOSPITAL) "All its doctors" else c.headline, style = HType.small, color = Sage.Muted)
@@ -185,7 +185,7 @@ fun DataViewScreen(
                     }
                 }
             },
-            confirmButton = { TextButton({ showShare = false }) { Text("Done", color = Sage.Primary) } },
+            confirmButton = { TextButton({ showShare = false }) { Text("Done", color = Sage.Accent) } },
         )
     }
 
@@ -195,7 +195,7 @@ fun DataViewScreen(
             title = { Text("Stop sharing with ${grant.granteeName}?", style = HType.section) },
             text = { Text("They will lose access to this item straight away. You can share it again later.", style = HType.body) },
             confirmButton = { TextButton({ vm.revoke(grant); confirmRevoke = null }) { Text("Stop sharing", color = Sage.Clay) } },
-            dismissButton = { TextButton({ confirmRevoke = null }) { Text("Keep sharing", color = Sage.Primary) } },
+            dismissButton = { TextButton({ confirmRevoke = null }) { Text("Keep sharing", color = Sage.Accent) } },
             containerColor = Sage.Surface,
         )
     }
@@ -222,13 +222,13 @@ private fun MetaRow(item: DataItem, onClose: () -> Unit, onReopen: () -> Unit) {
         val canChange = if (open) item.can("close") else item.can("reopen")
         OutlinedButton(
             onClick = { if (open) onClose() else onReopen() }, enabled = canChange, shape = RoundedCornerShape(16.dp),
-            border = BorderStroke(1.dp, if (open) Sage.Primary else Sage.Border),
+            border = BorderStroke(1.dp, if (open) Sage.Accent else Sage.Border),
             contentPadding = PaddingValues(horizontal = 12.dp), modifier = Modifier.height(36.dp)
                 .semantics { contentDescription = if (open) "Status open. Tap to close" else "Status closed. Tap to reopen" },
         ) {
-            Box(Modifier.size(8.dp).clip(CircleShape).background(if (open) Sage.Primary else Sage.Muted))
+            Box(Modifier.size(8.dp).clip(CircleShape).background(if (open) Sage.Accent else Sage.Muted))
             Spacer(Modifier.width(6.dp))
-            Text(if (open) "Open" else "Closed", style = HType.small.copy(fontWeight = FontWeight.SemiBold), color = if (open) Sage.Primary else Sage.Muted)
+            Text(if (open) "Open" else "Closed", style = HType.small.copy(fontWeight = FontWeight.SemiBold), color = if (open) Sage.Accent else Sage.Muted)
         }
     }
 }
@@ -262,8 +262,8 @@ private fun DiscussionPreview(item: DataItem, myId: String, onOpen: () -> Unit) 
             RowDivider()
             Row(Modifier.fillMaxWidth().clickable(onClick = onOpen).heightIn(min = 48.dp).padding(horizontal = 14.dp),
                 verticalAlignment = Alignment.CenterVertically) {
-                Text("Open discussion", style = HType.bodyStrong, color = Sage.Primary, modifier = Modifier.weight(1f))
-                Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null, tint = Sage.Primary)
+                Text("Open discussion", style = HType.bodyStrong, color = Sage.Accent, modifier = Modifier.weight(1f))
+                Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null, tint = Sage.Accent)
             }
         }
     }
@@ -290,7 +290,7 @@ private fun AppointmentsSection(
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             FieldLabel("Appointments · ${item.appointments.size}", Modifier.weight(1f))
-            if (canBook) TextButton(onBook) { Text("Book", style = HType.bodyStrong, color = Sage.Primary) }
+            if (canBook) TextButton(onBook) { Text("Book", style = HType.bodyStrong, color = Sage.Accent) }
         }
         item.appointments.forEach { a ->
             val manage = item.can("book") && a.status != "CANCELLED"
@@ -344,7 +344,7 @@ private fun AlertsSection(alerts: List<Alert>, canAdd: Boolean, myId: String, is
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             FieldLabel("Alerts · ${alerts.size}", Modifier.weight(1f))
-            if (canAdd) TextButton(onAdd) { Text("Add", style = HType.bodyStrong, color = Sage.Primary) }
+            if (canAdd) TextButton(onAdd) { Text("Add", style = HType.bodyStrong, color = Sage.Accent) }
         }
         if (alerts.isNotEmpty()) GroupCard {
             alerts.forEachIndexed { i, a ->
@@ -376,7 +376,7 @@ private fun AttachmentsSection(attachments: List<Attachment>, canAdd: Boolean, o
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             FieldLabel("Attachments · ${attachments.size}", Modifier.weight(1f))
-            if (canAdd) TextButton(onAdd) { Text("Add files", style = HType.bodyStrong, color = Sage.Primary) }
+            if (canAdd) TextButton(onAdd) { Text("Add files", style = HType.bodyStrong, color = Sage.Accent) }
         }
         if (attachments.isNotEmpty()) LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             itemsIndexed(attachments, key = { _, a -> a.id.ifEmpty { a.uri } }) { index, a ->
@@ -426,8 +426,8 @@ private fun LinksSection(links: List<String>) {
             links.forEachIndexed { i, link ->
                 Row(Modifier.fillMaxWidth().clickable { uri.openUri(link) }.heightIn(min = 48.dp).padding(horizontal = 14.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Icon(Icons.Outlined.Link, null, tint = Sage.Primary, modifier = Modifier.size(18.dp))
-                    Text(link, style = HType.caption, color = Sage.Primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Icon(Icons.Outlined.Link, null, tint = Sage.Accent, modifier = Modifier.size(18.dp))
+                    Text(link, style = HType.caption, color = Sage.Accent, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 if (i < links.lastIndex) RowDivider()
             }
@@ -452,7 +452,7 @@ private fun AccessSection(item: DataItem, isOwner: Boolean, onRevoke: (Grant) ->
             }
         }
         if (item.attachments.any { it.isReport })
-            Text("Report files open only for doctors you share with.", style = HType.small, color = Sage.Muted)
+            Text("Report files open for the patient who owns this item and for doctors it is shared with.", style = HType.small, color = Sage.Muted)
     }
 }
 
@@ -461,7 +461,7 @@ private fun AccessRow(icon: androidx.compose.ui.graphics.vector.ImageVector, nam
     Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Box(Modifier.size(32.dp).clip(RoundedCornerShape(10.dp)).background(Sage.SageTint), contentAlignment = Alignment.Center) {
-            Icon(icon, null, tint = Sage.Primary, modifier = Modifier.size(17.dp))
+            Icon(icon, null, tint = Sage.Accent, modifier = Modifier.size(17.dp))
         }
         Column(Modifier.weight(1f)) {
             Text(name, style = HType.bodyStrong, color = Sage.Ink)

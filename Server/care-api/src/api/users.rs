@@ -2,6 +2,7 @@
 
 use super::{principal::Principal, ApiError, ApiResult, AppState};
 use crate::{
+    files::key_of,
     model::*,
     store::users::UserRec,
 };
@@ -33,7 +34,7 @@ pub async fn user_dto(st: &AppState, u: &UserRec, connected: bool) -> ApiResult<
         display_name: u.display_name.clone(),
         roles,
         headline,
-        photo_uri: u.photo_uri.clone(),
+        photo_uri: photo_url(st, u).await?,
         location: u.location.clone(),
         hospital,
         official_number: u.official_number.clone(),
@@ -65,6 +66,41 @@ pub async fn update_me(State(st): State<AppState>, p: Principal, Json(b): Json<P
     st.db.update_profile(&p.user, name, location).await?;
     let u = load_user(&st, p.id()).await?;
     Ok(Json(user_dto(&st, &u, true).await?))
+}
+
+/// The profile picture as a short-lived signed link (like attachments), so it works in `<img>`/Coil.
+async fn photo_url(st: &AppState, u: &UserRec) -> ApiResult<Option<String>> {
+    Ok(match u.photo_uri.as_deref() {
+        Some(uri) => match key_of(uri) { Some(k) => Some(st.files.presign_get(k).await?), None => Some(uri.to_string()) },
+        None => None,
+    })
+}
+
+#[derive(Deserialize)]
+pub struct PhotoUpdate { uri: String }
+
+/// `PUT /v1/me/photo` — set the profile picture to an image uploaded with /v1/uploads/presign.
+/// The apps resize it (512 px JPEG) before uploading.
+pub async fn set_photo(State(st): State<AppState>, p: Principal, Json(b): Json<PhotoUpdate>) -> ApiResult<Json<UserDto>> {
+    let key = key_of(&b.uri).ok_or_else(|| ApiError::bad_request("uri must be an uploaded file (obj:…)"))?;
+    if !key.starts_with(&super::items::upload_prefix(p.id())) {
+        return Err(ApiError::forbidden("the photo must be a file you uploaded"));
+    }
+    let bytes = st.files.get(key).await.map_err(|_| ApiError::bad_request("the photo hasn't been uploaded"))?;
+    if bytes.len() as i64 > super::items::IMAGE_MAX || image::guess_format(&bytes).is_err() {
+        return Err(ApiError::bad_request("the photo must be an image up to 10 MB"));
+    }
+    st.db.set_photo(&p.user, Some(&b.uri)).await?;
+    st.principals.clear(); // cached sign-ins hold the old profile
+    let u = load_user(&st, p.id()).await?;
+    Ok(Json(user_dto(&st, &u, true).await?))
+}
+
+/// `DELETE /v1/me/photo` — back to initials.
+pub async fn delete_photo(State(st): State<AppState>, p: Principal) -> ApiResult<StatusCode> {
+    st.db.set_photo(&p.user, None).await?;
+    st.principals.clear();
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn profile(State(st): State<AppState>, p: Principal, Path(id): Path<Uuid>) -> ApiResult<Json<UserDto>> {

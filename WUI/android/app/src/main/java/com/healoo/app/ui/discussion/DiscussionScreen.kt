@@ -2,6 +2,8 @@ package com.healoo.app.ui.discussion
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -36,7 +38,13 @@ class DiscussionViewModel(private val itemId: String) : ViewModel() {
     var item by mutableStateOf<DataItem?>(null); private set
     var me by mutableStateOf<UserProfile?>(null); private set
     var messages by mutableStateOf<List<Message>>(emptyList()); private set
-    var draft by mutableStateOf("")
+    /** Everyone in this discussion except me (owner, visible shares, senders), for the header strip. */
+    var people by mutableStateOf<List<UserProfile>>(emptyList()); private set
+    private val draftKey = "item:$itemId"
+    /** Unsent text survives leaving the screen (Drafts), until the app is closed. */
+    var draft by mutableStateOf(Drafts[draftKey]); private set
+
+    fun updateDraft(text: String) { draft = text; Drafts[draftKey] = text }
     var error by mutableStateOf<String?>(null); private set
 
     init {
@@ -57,21 +65,30 @@ class DiscussionViewModel(private val itemId: String) : ViewModel() {
             item = repo.item(itemId)
             messages = repo.itemMessages(itemId)          // also marks them read
         }.onFailure { error = "Couldn't open this discussion." }
+        loadPeople()
+    }
+
+    private fun loadPeople() = viewModelScope.launch {
+        val it = item ?: return@launch
+        val meId = me?.id
+        val ids = (listOf(it.ownerId) + it.accessList.map { g -> g.granteeId } + messages.map { m -> m.senderId })
+            .distinct().filter { id -> id != meId && id.isNotBlank() }
+        people = ids.mapNotNull { id -> runCatching { repo.user(id) }.getOrNull() }
     }
 
     fun send() {
         val body = draft.trim().ifEmpty { return }
-        draft = ""
+        updateDraft("")
         viewModelScope.launch {
             runCatching { repo.sendItemMessage(itemId, body) }
                 .onSuccess { m -> if (messages.none { it.id == m.id }) messages = messages + m }
-                .onFailure { draft = body; error = it.message ?: "Couldn't send. Try again." }
+                .onFailure { updateDraft(body); error = it.message ?: "Couldn't send. Try again." }
         }
     }
 }
 
 @Composable
-fun DiscussionScreen(itemId: String, onBack: () -> Unit, onOpenItem: (String) -> Unit) {
+fun DiscussionScreen(itemId: String, onBack: () -> Unit, onOpenItem: (String) -> Unit, onOpenUser: (String) -> Unit = {}) {
     val vm: DiscussionViewModel = viewModel(key = "discussion-$itemId") { DiscussionViewModel(itemId) }
     val item = vm.item
     val me = vm.me
@@ -82,11 +99,12 @@ fun DiscussionScreen(itemId: String, onBack: () -> Unit, onOpenItem: (String) ->
                 title = item?.title ?: "Discussion",
                 subtitle = item?.let { "${it.primaryKind.label} · tap for details" } ?: "",
                 onBack = onBack,
-                trailing = { if (item != null) TextButton({ onOpenItem(itemId) }) { Text("Details", color = Color.White) } },
+                trailing = { if (item != null) TextButton({ onOpenItem(itemId) }) { Text("Details", color = Sage.OnPrimary) } },
             )
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
+            if (vm.people.isNotEmpty()) PeopleStrip(vm.people, onOpenUser)
             when {
                 item == null && vm.error != null -> ErrorBox(vm.error!!, vm::load)
                 item == null || me == null -> LoadingBox()
@@ -103,7 +121,7 @@ fun DiscussionScreen(itemId: String, onBack: () -> Unit, onOpenItem: (String) ->
                         }
                         items(vm.messages, key = { it.id }) { m -> Bubble(m, mine = m.senderId == me.id, name = senderName(item, m.senderId, me.id)) }
                     }
-                    if (item.can("message")) Composer(vm.draft, { vm.draft = it }, vm::send)
+                    if (item.can("message")) Composer(vm.draft, vm::updateDraft, vm::send)
                     else Text(if (item.status == ItemStatus.CLOSED) "This item is closed. Reopen it to continue the discussion." else "You can read this discussion.",
                         style = HType.small, color = Sage.Muted, modifier = Modifier.fillMaxWidth().background(Sage.Surface).padding(16.dp))
                 }
@@ -121,9 +139,35 @@ private fun Bubble(m: Message, mine: Boolean, name: String) {
                 .background(if (mine) Sage.Primary else Sage.Surface).padding(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Text(m.body, style = HType.body.copy(fontSize = 14.sp), color = if (mine) Color.White else Sage.Ink)
+            Text(m.body, style = HType.body.copy(fontSize = 14.sp), color = if (mine) Sage.OnPrimary else Sage.Ink)
             Text("$name · ${m.sentAt.drop(11).take(5)}", style = HType.tiny.copy(fontWeight = FontWeight.Normal),
-                color = if (mine) Sage.OnPrimaryLine else Sage.Muted)
+                color = if (mine) Sage.OnPrimarySoft else Sage.Muted)
+        }
+    }
+}
+
+/** Who this discussion is with: name and Healoo ID for each person; tap one to open their profile. */
+@Composable
+private fun PeopleStrip(people: List<UserProfile>, onOpenUser: (String) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().background(Sage.Surface).horizontalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("With", style = HType.small, color = Sage.Muted)
+        people.forEach { p ->
+            Row(
+                Modifier.clip(RoundedCornerShape(Radius.chip)).background(Sage.SageTint)
+                    .clickable(onClickLabel = "Open profile") { onOpenUser(p.id) }
+                    .padding(start = 4.dp, end = 12.dp, top = 4.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Avatar(p.initials, 28.dp, photoUrl = p.photoUri)
+                Column {
+                    Text(p.displayName, style = HType.small.copy(fontWeight = FontWeight.SemiBold), color = Sage.Ink, maxLines = 1)
+                    Text(p.publicId, style = HType.tiny, color = Sage.Accent)
+                }
+            }
         }
     }
 }
@@ -139,11 +183,11 @@ fun Composer(draft: String, onDraft: (String) -> Unit, onSend: () -> Unit, place
             placeholder = { Text(placeholder, style = HType.body, color = Sage.Placeholder) },
             textStyle = HType.body, shape = RoundedCornerShape(22.dp), maxLines = 4,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send), keyboardActions = KeyboardActions(onSend = { onSend() }),
-            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Sage.Primary, unfocusedBorderColor = Sage.Border, cursorColor = Sage.Primary),
+            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Sage.Accent, unfocusedBorderColor = Sage.Border, cursorColor = Sage.Accent),
         )
         FilledIconButton(onClick = onSend, enabled = draft.isNotBlank(), modifier = Modifier.size(48.dp),
             colors = IconButtonDefaults.filledIconButtonColors(containerColor = Sage.Primary)) {
-            Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = "Send message", tint = Color.White)
+            Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = "Send message", tint = Sage.OnPrimary)
         }
     }
 }
@@ -151,20 +195,21 @@ fun Composer(draft: String, onDraft: (String) -> Unit, onSend: () -> Unit, place
 /** One conversation row (Messages tab and the Messages section of a person's page). */
 @Composable
 fun ConversationRow(c: Conversation, onClick: () -> Unit, showPerson: Boolean = true) {
+    val closed = c.status == ItemStatus.CLOSED   // discussions of closed items are grey
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(Radius.card)).background(Sage.Surface).clickable(onClick = onClick).padding(12.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(Radius.card)).background(if (closed) Sage.Closed else Sage.Surface).clickable(onClick = onClick).padding(12.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        if (showPerson) Avatar(c.other.initials, 44.dp) else TypeTile(c.primaryKind)
+        if (showPerson) Avatar(c.other.initials, 44.dp, photoUrl = c.other.photoUri) else TypeTile(c.primaryKind)
         Column(Modifier.weight(1f)) {
-            Text(if (showPerson) c.other.displayName else c.itemTitle, style = HType.bodyStrong, color = Sage.Ink, maxLines = 1)
-            if (showPerson) Text(c.itemTitle, style = HType.small.copy(fontWeight = FontWeight.SemiBold), color = Sage.Primary, maxLines = 1)
+            Text(if (showPerson) c.other.displayName else c.itemTitle, style = HType.bodyStrong, color = if (closed) Sage.Muted else Sage.Ink, maxLines = 1)
+            if (showPerson) Text(c.itemTitle, style = HType.small.copy(fontWeight = FontWeight.SemiBold), color = Sage.Accent, maxLines = 1)
             Text(c.lastMessage, style = HType.caption, color = Sage.Muted, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
         }
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(shortDate(c.lastMessageAt.take(10)), style = HType.small, color = Sage.Muted)
             if (c.unread > 0) Box(Modifier.size(20.dp).clip(androidx.compose.foundation.shape.CircleShape).background(Sage.Primary), contentAlignment = Alignment.Center) {
-                Text("${c.unread}", style = HType.tiny, color = Color.White)
+                Text("${c.unread}", style = HType.tiny, color = Sage.OnPrimary)
             }
         }
     }

@@ -115,9 +115,9 @@ struct UserPageView: View {
         else if let user {
             if let notice {
                 HStack {
-                    Text(notice).font(HFont.caption).foregroundStyle(Sage.primary)
+                    Text(notice).font(HFont.caption).foregroundStyle(Sage.accent)
                     Spacer()
-                    Button("OK") { self.notice = nil }.font(HFont.captionStrong).foregroundStyle(Sage.primary)
+                    Button("OK") { self.notice = nil }.font(HFont.captionStrong).foregroundStyle(Sage.accent)
                 }
                 .padding(12).background(Sage.sageTint, in: RoundedRectangle(cornerRadius: 12)).padding(.top, 12)
             }
@@ -207,6 +207,9 @@ private struct MessageSheet: View {
             .padding(20)
         }
         .background(Sage.background)
+        // Unsent text for this person survives closing the sheet or leaving the page (Drafts).
+        .onAppear { if draft.isEmpty { draft = Drafts.get("person:\(user.id)") } }
+        .onChange(of: draft) { _, text in Drafts.set("person:\(user.id)", text) }
         .navigationTitle("New message").navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
     }
@@ -216,7 +219,11 @@ private struct MessageSheet: View {
         guard !body.isEmpty else { error = "Write a message first."; return }
         busy = true
         Task {
-            do { onStarted(try await env.repo.startConversation(with: user.id, body: body, alsoWith: extras.map(\.id)).id) }
+            do {
+                let id = try await env.repo.startConversation(with: user.id, body: body, alsoWith: extras.map(\.id)).id
+                Drafts.set("person:\(user.id)", "")
+                onStarted(id)
+            }
             catch { self.error = "That didn't send: \(error.localizedDescription). Try again." }
             busy = false
         }
@@ -326,7 +333,7 @@ private struct ProfileHeader: View {
         ZStack(alignment: .top) {
             HStack(spacing: 12) {
                 HeaderIconButton(symbol: "chevron.left", label: "Back", action: onBack)
-                Text(user.displayName).font(HFont.headerTitle).foregroundStyle(.white).lineLimit(1).opacity(1 - details)
+                Text(user.displayName).font(HFont.headerTitle).foregroundStyle(Sage.onPrimary).lineLimit(1).opacity(1 - details)
                 Spacer(minLength: 0)
                 if user.connected {
                     Label("Connected", systemImage: "checkmark").font(HFont.smallStrong).foregroundStyle(Sage.onPrimarySoft)
@@ -337,9 +344,9 @@ private struct ProfileHeader: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Spacer(minLength: 0)
                     HStack(spacing: 14) {
-                        Avatar(initials: user.initials, size: 64, ring: Sage.onPrimaryLine)
+                        Avatar(initials: user.initials, size: 64, ring: Sage.onPrimaryLine, photoUrl: user.photoUri)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(user.displayName).font(HFont.profileName).foregroundStyle(.white)
+                            Text(user.displayName).font(HFont.profileName).foregroundStyle(Sage.onPrimary)
                             Text(user.headline).font(HFont.caption).foregroundStyle(Sage.onPrimarySoft)
                         }
                     }
@@ -347,7 +354,7 @@ private struct ProfileHeader: View {
                         ForEach(facts, id: \.0) { fact in
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(fact.0).font(.custom(FontName.figtreeRegular, size: 11)).foregroundStyle(Sage.onPrimaryLine)
-                                Text(fact.1).font(HFont.captionStrong).foregroundStyle(.white).lineLimit(1)
+                                Text(fact.1).font(HFont.captionStrong).foregroundStyle(Sage.onPrimary).lineLimit(1)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                         }
@@ -380,7 +387,7 @@ struct ConversationsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Text("Messages").font(HFont.screenTitle).foregroundStyle(.white)
+            Text("Messages").font(HFont.screenTitle).foregroundStyle(Sage.onPrimary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 20).padding(.top, 8).padding(.bottom, 20)
                 .sageHeaderBackground()
@@ -416,30 +423,62 @@ struct ConversationRow: View {
 
     var body: some View {
         let c = conversation
+        let closed = c.status == .closed   // discussions of closed items are grey
         HStack(spacing: 12) {
-            if showPerson { Avatar(initials: c.otherUser.initials) } else { TypeTile(type: c.primaryKind) }
+            if showPerson { Avatar(initials: c.otherUser.initials, photoUrl: c.otherUser.photoUri) } else { TypeTile(type: c.primaryKind) }
             VStack(alignment: .leading, spacing: 2) {
-                Text(showPerson ? c.otherUser.displayName : c.itemTitle).font(HFont.bodyStrong).foregroundStyle(Sage.ink).lineLimit(1)
-                if showPerson { Text(c.itemTitle).font(HFont.smallStrong).foregroundStyle(Sage.primary).lineLimit(1) }
+                Text(showPerson ? c.otherUser.displayName : c.itemTitle).font(HFont.bodyStrong).foregroundStyle(closed ? Sage.muted : Sage.ink).lineLimit(1)
+                if showPerson { Text(c.itemTitle).font(HFont.smallStrong).foregroundStyle(Sage.accent).lineLimit(1) }
                 Text(c.lastMessage).font(HFont.caption).foregroundStyle(Sage.muted).lineLimit(1)
             }
             Spacer(minLength: 0)
             VStack(alignment: .trailing, spacing: 4) {
                 Text(MessageTime.short(c.lastMessageAt)).font(HFont.small).foregroundStyle(Sage.muted)
                 if c.unread > 0 {
-                    Text("\(c.unread)").font(HFont.tiny).foregroundStyle(.white)
+                    Text("\(c.unread)").font(HFont.tiny).foregroundStyle(Sage.onPrimary)
                         .frame(width: 20, height: 20).background(Sage.primary, in: Circle())
                         .accessibilityLabel("\(c.unread) unread")
                 }
             }
         }
         .padding(12)
-        .background(Sage.surface, in: RoundedRectangle(cornerRadius: Radius.card))
+        .background(closed ? Sage.closed : Sage.surface, in: RoundedRectangle(cornerRadius: Radius.card))
         .accessibilityElement(children: .combine)
     }
 }
 
 // MARK: - Discussion (an item's messages)
+
+/// Who a discussion is with: name and Healoo ID for each person; tap one to open their profile.
+private struct PeopleStrip: View {
+    let people: [UserProfile]
+    let open: (String) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                Text("With").font(HFont.small).foregroundStyle(Sage.muted)
+                ForEach(people) { p in
+                    Button { open(p.id) } label: {
+                        HStack(spacing: 8) {
+                            Avatar(initials: p.initials, size: 28, photoUrl: p.photoUri)
+                            VStack(alignment: .leading, spacing: 0) {
+                                Text(p.displayName).font(HFont.smallStrong).foregroundStyle(Sage.ink).lineLimit(1)
+                                Text(p.publicId).font(HFont.tiny).foregroundStyle(Sage.accent)
+                            }
+                        }
+                        .padding(.leading, 4).padding(.trailing, 12).padding(.vertical, 4)
+                        .background(Sage.sageTint, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(p.displayName), \(p.publicId). Open profile")
+                }
+            }
+            .padding(.horizontal, 16).padding(.vertical, 8)
+        }
+        .background(Sage.surface)
+    }
+}
 
 struct DiscussionView: View {
     let itemId: String
@@ -449,7 +488,9 @@ struct DiscussionView: View {
     @State private var item: DataItem?
     @State private var me: UserProfile?
     @State private var messages: [Message] = []
-    @State private var draft = ""
+    /// Everyone in this discussion except me (owner, visible shares, senders), for the header strip.
+    @State private var people: [UserProfile] = []
+    @State private var draft = ""   // restored from / saved to Drafts ("item:<id>")
     @State private var sending = false
     @State private var error: String?
 
@@ -458,9 +499,10 @@ struct DiscussionView: View {
             PinnedHeader(title: item?.title ?? "Discussion", subtitle: item.map { "\($0.primaryKind.label) · everyone this item is shared with" } ?? "",
                          onBack: { dismiss() }) {
                 if item != nil {
-                    Button("Details") { router.push(.item(itemId)) }.font(HFont.captionStrong).foregroundStyle(.white).frame(minHeight: 44)
+                    Button("Details") { router.push(.item(itemId)) }.font(HFont.captionStrong).foregroundStyle(Sage.onPrimary).frame(minHeight: 44)
                 }
             }
+            if !people.isEmpty { PeopleStrip(people: people) { router.push(.user($0, messages: false)) } }
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 10) {
@@ -490,6 +532,9 @@ struct DiscussionView: View {
             }
         }
         .task { if item == nil { await load() } }
+        // Unsent text survives leaving the screen (Drafts), until the app is closed.
+        .onAppear { if draft.isEmpty { draft = Drafts.get("item:\(itemId)") } }
+        .onChange(of: draft) { _, text in Drafts.set("item:\(itemId)", text) }
         .onReceive(env.repo.events) { event in
             if case .newMessage(let m) = event, m.itemId == itemId, !messages.contains(where: { $0.id == m.id }) { messages.append(m) }
         }
@@ -524,6 +569,18 @@ struct DiscussionView: View {
             item = try await env.repo.item(itemId)
             messages = try await env.repo.itemMessages(itemId)
         } catch { self.error = "Couldn't open this discussion. You may no longer have access to it." }
+        await loadPeople()
+    }
+
+    private func loadPeople() async {
+        guard let item else { return }
+        let ids = ([item.ownerId] + item.accessList.map(\.granteeId) + messages.map(\.senderId))
+            .filter { $0 != me?.id && !$0.isEmpty }
+        var seen = Set<String>(), found: [UserProfile] = []
+        for id in ids where seen.insert(id).inserted {
+            if let p = try? await env.repo.user(id) { found.append(p) }
+        }
+        people = found
     }
 }
 
@@ -536,8 +593,8 @@ struct MessageBubble: View {
         HStack {
             if mine { Spacer(minLength: 60) }
             VStack(alignment: .leading, spacing: 4) {
-                if !mine { Text(name).font(HFont.smallStrong).foregroundStyle(Sage.primary) }
-                Text(message.body).font(.custom(FontName.figtreeRegular, size: 14)).foregroundStyle(mine ? .white : Sage.ink)
+                if !mine { Text(name).font(HFont.smallStrong).foregroundStyle(Sage.accent) }
+                Text(message.body).font(.custom(FontName.figtreeRegular, size: 14)).foregroundStyle(mine ? Sage.onPrimary : Sage.ink)
                 Text(MessageTime.short(message.sentAt)).font(.custom(FontName.figtreeRegular, size: 11))
                     .foregroundStyle(mine ? Sage.onPrimaryLine : Sage.muted)
             }
@@ -564,7 +621,7 @@ struct Composer: View {
                 .overlay(RoundedRectangle(cornerRadius: 22).stroke(Sage.border))
                 .submitLabel(.send).onSubmit(send)
             Button(action: send) {
-                Group { if busy { ProgressView().tint(.white) } else { Image(systemName: "paperplane.fill").foregroundStyle(.white) } }
+                Group { if busy { ProgressView().tint(Sage.onPrimary) } else { Image(systemName: "paperplane.fill").foregroundStyle(Sage.onPrimary) } }
                     .frame(width: 48, height: 48)
                     .background(empty ? Sage.muted : Sage.primary, in: Circle())
             }

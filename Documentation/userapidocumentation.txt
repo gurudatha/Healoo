@@ -198,6 +198,14 @@ AUTH_MODE. Check which one with GET /v1/config ("auth": {"mode": ...}).
   - location: optional; empty or missing clears it.
   Response 200: the updated UserProfile. 400 if the name is empty or too long.
 
+3.2a Profile picture (v0.3)
+  Upload the image with POST /v1/uploads/presign and PUT (section 5), then:
+      PUT /v1/me/photo      { "uri": "obj:uploads/<your user_id>/…" }   -> 200 UserProfile
+      DELETE /v1/me/photo                                            -> 204
+  Only your own picture can be changed, and only to a file you uploaded (403
+  otherwise). It must be an image of at most 10 MB; the apps send a 512 px
+  JPEG. Profiles return it in "photo_uri" as a 10-minute signed link.
+
 3.3 Add a user to your contacts
   Adding a contact lets you message each other and see shared items. It
   does not give access to any records by itself; the owner still has to
@@ -756,6 +764,7 @@ Adding anything needs full access to the item, and the item must be OPEN
   GET     /v1/config                                        Server mode, URLs, sign-in mode (no token)
   GET     /dev/users, POST /dev/token                       Trial accounts and tokens (LAN + dev only)
   GET     /v1/me  /  PATCH /v1/me                           Your profile
+  PUT/DELETE /v1/me/photo                                   Your profile picture
   GET/POST /v1/connections, DELETE /v1/connections/{id}     Contacts
   GET     /v1/search?q=&type=                               Find users by Healoo ID or name
   GET     /v1/users/{user_id}                               One user's profile

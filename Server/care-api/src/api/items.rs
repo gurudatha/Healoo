@@ -181,14 +181,17 @@ fn summary_dto(s: &ItemSummary, p: &Principal) -> ItemDto {
 /// Everything the caller may list, most recently updated first: own items, direct grants,
 /// hospital grants through active affiliations, and delegated patients for assistants.
 pub async fn visible(st: &AppState, p: &Principal, status: ItemStatus, limit: i32) -> ApiResult<Vec<ItemSummary>> {
-    let mut all = st.db.owner_partition(p.id(), status, limit).await?;
-    all.extend(st.db.grantee_partition(&grantee_key(GranteeType::User, p.id()), status, limit).await?);
+    // Partitions are ordered by creation, but lists are ordered by last change: read more than
+    // `limit` from each, so an old item with a new message isn't cut off before sorting.
+    let per_partition = limit.max(200);
+    let mut all = st.db.owner_partition(p.id(), status, per_partition).await?;
+    all.extend(st.db.grantee_partition(&grantee_key(GranteeType::User, p.id()), status, per_partition).await?);
     for h in &p.subject.active_hospitals {
-        all.extend(st.db.grantee_partition(&grantee_key(GranteeType::Hospital, *h), status, limit).await?);
+        all.extend(st.db.grantee_partition(&grantee_key(GranteeType::Hospital, *h), status, per_partition).await?);
     }
     if p.has(Role::Assistant) {
         for patient in st.db.delegated_patients(p.id()).await? {
-            all.extend(st.db.owner_partition(patient, status, limit).await?);
+            all.extend(st.db.owner_partition(patient, status, per_partition).await?);
         }
     }
     let mut seen = HashSet::new();
@@ -234,7 +237,8 @@ pub async fn get_one(State(st): State<AppState>, p: Principal, Path(id): Path<Uu
     Ok(Json(item_dto(&st, &p, &item, &d).await?))
 }
 
-/// Items shared between the caller and another user; empty unless connected (rule 8).
+/// Items shared between the caller and another user, open and closed, newest first (the apps grey
+/// out closed ones); empty unless connected (rule 8).
 pub async fn shared_items(State(st): State<AppState>, p: Principal, Path(other_id): Path<Uuid>) -> ApiResult<Json<Page<ItemDto>>> {
     let other = load_user(&st, other_id).await?;
     if !st.db.is_connected(p.id(), other_id, other.primary_role()).await? {
@@ -242,18 +246,20 @@ pub async fn shared_items(State(st): State<AppState>, p: Principal, Path(other_i
     }
     let other_hospitals = if other.roles.contains(&Role::Doctor) { st.db.active_hospitals(other_id).await? } else { HashSet::new() };
     let mut out = Vec::new();
-    for s in st.db.owner_partition(p.id(), ItemStatus::Open, 100).await? {
-        if let Some(item) = st.db.item(s.id).await? {
-            let visible_to_other = item.grant_list().iter().any(|g| match g.grantee_type {
-                GranteeType::User => g.grantee_id == other_id,
-                GranteeType::Hospital => other_hospitals.contains(&g.grantee_id),
-            });
-            if visible_to_other { out.push(summary_dto(&s, &p)); }
+    for status in [ItemStatus::Open, ItemStatus::Closed] {
+        for s in st.db.owner_partition(p.id(), status, 100).await? {
+            if let Some(item) = st.db.item(s.id).await? {
+                let visible_to_other = item.grant_list().iter().any(|g| match g.grantee_type {
+                    GranteeType::User => g.grantee_id == other_id,
+                    GranteeType::Hospital => other_hospitals.contains(&g.grantee_id),
+                });
+                if visible_to_other { out.push(summary_dto(&s, &p)); }
+            }
         }
-    }
-    for s in st.db.owner_partition(other_id, ItemStatus::Open, 100).await? {
-        if let Some(item) = st.db.item(s.id).await? {
-            if policy::decide(&item.facts(), &p.subject, None).access != Access::Deny { out.push(summary_dto(&s, &p)); }
+        for s in st.db.owner_partition(other_id, status, 100).await? {
+            if let Some(item) = st.db.item(s.id).await? {
+                if policy::decide(&item.facts(), &p.subject, None).access != Access::Deny { out.push(summary_dto(&s, &p)); }
+            }
         }
     }
     out.sort_by_key(|i| std::cmp::Reverse(i.updated_at.clone()));

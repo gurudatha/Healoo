@@ -128,9 +128,9 @@ struct AppointmentFields: View {
             HStack(spacing: 12) {
                 LabeledField("First visit") {
                     DatePicker("First visit", selection: $date, in: Calendar.current.startOfDay(for: Date())..., displayedComponents: .date)
-                        .labelsHidden().tint(Sage.primary)
+                        .labelsHidden().tint(Sage.accent)
                 }
-                LabeledField("Time") { DatePicker("Time", selection: $time, displayedComponents: .hourAndMinute).labelsHidden().tint(Sage.primary) }
+                LabeledField("Time") { DatePicker("Time", selection: $time, displayedComponents: .hourAndMinute).labelsHidden().tint(Sage.accent) }
             }
             RepeatPicker(start: date, frequency: $frequency, period: $period)
             LabeledField("Notes (optional)") { TextField("Reason for the visit", text: $notes).font(HFont.body) }
@@ -196,8 +196,8 @@ struct AlertFields: View {
             }
             LabeledField("Alert text") { TextField("e.g. Iron tablet after dinner", text: $text).font(HFont.body) }
             HStack(spacing: 12) {
-                LabeledField("Starts") { DatePicker("Starts", selection: $date, displayedComponents: .date).labelsHidden().tint(Sage.primary) }
-                LabeledField("Time") { DatePicker("Time", selection: $time, displayedComponents: .hourAndMinute).labelsHidden().tint(Sage.primary) }
+                LabeledField("Starts") { DatePicker("Starts", selection: $date, displayedComponents: .date).labelsHidden().tint(Sage.accent) }
+                LabeledField("Time") { DatePicker("Time", selection: $time, displayedComponents: .hourAndMinute).labelsHidden().tint(Sage.accent) }
             }
             RepeatPicker(start: date, frequency: $frequency, period: $period, noun: "alert")
         }
@@ -254,9 +254,9 @@ struct MoveVisitSheet: View {
             HStack(spacing: 12) {
                 LabeledField("New date") {
                     DatePicker("New date", selection: $date, in: Calendar.current.startOfDay(for: Date())..., displayedComponents: .date)
-                        .labelsHidden().tint(Sage.primary)
+                        .labelsHidden().tint(Sage.accent)
                 }
-                LabeledField("New time") { DatePicker("New time", selection: $time, displayedComponents: .hourAndMinute).labelsHidden().tint(Sage.primary) }
+                LabeledField("New time") { DatePicker("New time", selection: $time, displayedComponents: .hourAndMinute).labelsHidden().tint(Sage.accent) }
             }
         }
     }

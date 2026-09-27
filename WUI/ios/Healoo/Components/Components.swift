@@ -5,8 +5,8 @@ struct TypeStyle { let tint: Color; let fg: Color; let symbol: String }
 extension PrimaryKind {
     var style: TypeStyle {
         switch self {
-        case .report: TypeStyle(tint: Sage.sageTint, fg: Sage.primary, symbol: "doc.text")
-        case .message: TypeStyle(tint: Sage.sageTint, fg: Sage.primary, symbol: "bubble.left")
+        case .report: TypeStyle(tint: Sage.sageTint, fg: Sage.accent, symbol: "doc.text")
+        case .message: TypeStyle(tint: Sage.sageTint, fg: Sage.accent, symbol: "bubble.left")
         case .appointment: TypeStyle(tint: Sage.sandTint, fg: Sage.sand, symbol: "calendar")
         case .alert: TypeStyle(tint: Sage.clayTint, fg: Sage.clay, symbol: "bell")
         }
@@ -37,20 +37,22 @@ struct TypeTile: View {
 struct DataItemRow: View {
     let item: DataItem
     var body: some View {
+        // Open items are white; closed ones grey, with muted text.
+        let closed = item.status == .closed
         HStack(spacing: 12) {
             TypeTile(type: item.primaryKind)
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.title).font(HFont.bodyStrong).foregroundStyle(Sage.ink).lineLimit(1)
-                Text(item.subtitle).font(HFont.caption).foregroundStyle(Sage.muted).lineLimit(1)
+                Text(item.title).font(HFont.bodyStrong).foregroundStyle(closed ? Sage.muted : Sage.ink).lineLimit(1)
+                Text(closed ? "Closed · \(item.subtitle)" : item.subtitle).font(HFont.caption).foregroundStyle(Sage.muted).lineLimit(1)
             }
             Spacer(minLength: 8)
             VStack(alignment: .trailing, spacing: 4) {
-                Text(DateText.short(item.date)).font(HFont.small).foregroundStyle(Sage.muted)
+                Text(DateText.activity(item.updatedAt.isEmpty ? item.createdAt : item.updatedAt)).font(HFont.small).foregroundStyle(Sage.muted)
                 TypeBadge(type: item.primaryKind)
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 10)
-        .background(Sage.surface, in: RoundedRectangle(cornerRadius: Radius.card))
+        .background(closed ? Sage.closed : Sage.surface, in: RoundedRectangle(cornerRadius: Radius.card))
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
     }
@@ -61,11 +63,23 @@ struct Avatar: View {
     var size: CGFloat = 44
     var background: Color = Sage.avatar
     var ring: Color? = nil
+    /// Profile picture (signed URL); initials show while it loads or when there is none.
+    var photoUrl: String? = nil
+    @State private var photo: UIImage?
+
     var body: some View {
-        Text(initials).font(HFont.display(size * 0.34)).foregroundStyle(Sage.primary)
+        Text(initials).font(HFont.display(size * 0.34)).foregroundStyle(Sage.accent)
             .frame(width: size, height: size)
             .background(background, in: Circle())
+            .overlay {
+                if let photo { Image(uiImage: photo).resizable().scaledToFill().frame(width: size, height: size).clipShape(Circle()) }
+            }
             .overlay { if let ring { Circle().stroke(ring, lineWidth: 2) } }
+            .task(id: photoUrl) {
+                photo = nil
+                guard let photoUrl, !photoUrl.isEmpty, let url = try? await AttachmentStore.imageURL(photoUrl, name: "photo.jpg") else { return }
+                photo = UIImage(contentsOfFile: url.path)
+            }
             .accessibilityHidden(true)
     }
 }
@@ -78,7 +92,7 @@ struct SectionHeader: View {
         HStack {
             Text(title).font(HFont.section).foregroundStyle(Sage.ink)
             Spacer()
-            if let action { Button(action, action: onAction).font(HFont.bodyStrong).foregroundStyle(Sage.primary) }
+            if let action { Button(action, action: onAction).font(HFont.bodyStrong).foregroundStyle(Sage.accent) }
         }
     }
 }
@@ -93,17 +107,19 @@ struct SageChip: View {
     let label: String
     let selected: Bool
     var onHeader = false
+    /// Half height (20 pt) with smaller text, for the landing page's role filter.
+    var compact = false
     let action: () -> Void
     var body: some View {
         let (bg, fg, border): (Color, Color, Color) = switch (onHeader, selected) {
-        case (true, true): (.white, Sage.primary, .white)
-        case (true, false): (Sage.primaryRaised, .white, Sage.primaryRaised)
-        case (false, true): (Sage.primary, .white, Sage.primary)
+        case (true, true): (.white, Sage.accent, .white)
+        case (true, false): (Sage.primaryRaised, Sage.onPrimary, Sage.primaryRaised)
+        case (false, true): (Sage.primary, Sage.onPrimary, Sage.primary)
         case (false, false): (Sage.surface, Sage.ink, Sage.border)
         }
         Button(action: action) {
-            Text(label).font(HFont.captionStrong).foregroundStyle(fg)
-                .padding(.horizontal, 14).frame(minHeight: 40)
+            Text(label).font(compact ? HFont.smallStrong : HFont.captionStrong).foregroundStyle(fg)
+                .padding(.horizontal, compact ? 10 : 14).frame(minHeight: compact ? 20 : 40)
                 .background(bg, in: Capsule())
                 .overlay(Capsule().stroke(border, lineWidth: 1))
         }
@@ -140,7 +156,7 @@ struct HeaderIconButton: View {
     let action: () -> Void
     var body: some View {
         Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 17, weight: .semibold)).foregroundStyle(.white)
+            Image(systemName: symbol).font(.system(size: 17, weight: .semibold)).foregroundStyle(Sage.onPrimary)
                 .frame(width: 44, height: 44).background(Sage.primaryRaised, in: Circle())
         }
         .accessibilityLabel(label)
@@ -160,7 +176,7 @@ struct PinnedHeader<Trailing: View>: View {
         HStack(spacing: 12) {
             HeaderIconButton(symbol: backSymbol, label: backLabel, action: onBack)
             VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(HFont.headerTitle).foregroundStyle(.white).lineLimit(1)
+                Text(title).font(HFont.headerTitle).foregroundStyle(Sage.onPrimary).lineLimit(1)
                 Text(subtitle).font(HFont.small).foregroundStyle(Sage.onPrimarySoft).lineLimit(1)
             }
             Spacer(minLength: 0)
@@ -175,7 +191,7 @@ struct PinnedHeader<Trailing: View>: View {
 
 struct PrimaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label.font(HFont.bodyStrong).foregroundStyle(.white)
+        configuration.label.font(HFont.bodyStrong).foregroundStyle(Sage.onPrimary)
             .frame(maxWidth: .infinity, minHeight: 50)
             .background(configuration.isPressed ? Sage.primaryPressed : Sage.primary, in: Capsule())
     }
@@ -183,10 +199,10 @@ struct PrimaryButtonStyle: ButtonStyle {
 
 struct SecondaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label.font(HFont.bodyStrong).foregroundStyle(Sage.primary)
+        configuration.label.font(HFont.bodyStrong).foregroundStyle(Sage.accent)
             .frame(maxWidth: .infinity, minHeight: 50)
             .background(configuration.isPressed ? Sage.sageTint : Sage.surface, in: Capsule())
-            .overlay(Capsule().stroke(Sage.primary, lineWidth: 1))
+            .overlay(Capsule().stroke(Sage.accent, lineWidth: 1))
     }
 }
 
@@ -203,7 +219,7 @@ struct RowDivider: View {
 }
 
 struct LoadingView: View {
-    var body: some View { ProgressView().tint(Sage.primary).frame(maxWidth: .infinity).padding(32) }
+    var body: some View { ProgressView().tint(Sage.accent).frame(maxWidth: .infinity).padding(32) }
 }
 
 struct ErrorView: View {

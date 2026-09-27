@@ -60,7 +60,7 @@ fun OperationBar(ops: ResolvedOperations, onOperation: (String) -> Unit, selecte
 
 @Composable
 private fun BarButton(label: String, icon: ImageVector, on: Boolean, onClick: () -> Unit) {
-    val color = if (on) Sage.Primary else Sage.Muted
+    val color = if (on) Sage.Accent else Sage.Muted
     Column(
         Modifier.width(68.dp).height(56.dp).clip(RoundedCornerShape(12.dp))
             .clickable(role = Role.Tab, onClick = onClick).semantics { selected = on },
@@ -76,6 +76,6 @@ private fun BarButton(label: String, icon: ImageVector, on: Boolean, onClick: ()
 @Composable
 private fun OverflowItem(op: PageOperation, onClick: () -> Unit) = DropdownMenuItem(
     text = { Text(op.label, style = HType.body, color = Sage.Ink) },
-    leadingIcon = { Icon(operationIcon(op.icon), contentDescription = null, tint = Sage.Primary) },
+    leadingIcon = { Icon(operationIcon(op.icon), contentDescription = null, tint = Sage.Accent) },
     onClick = onClick,
 )

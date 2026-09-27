@@ -42,7 +42,7 @@ fun ConversationsScreen(onOpenDiscussion: (itemId: String) -> Unit, onTab: (Tab)
             Box(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(bottomStart = Radius.header, bottomEnd = Radius.header))
                     .background(Sage.Primary).statusBarsPadding().padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 20.dp),
-            ) { Text("Messages", style = HType.screenTitle, color = Color.White) }
+            ) { Text("Messages", style = HType.screenTitle, color = Sage.OnPrimary) }
 
             ScrollbarLazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 val l = vm.list

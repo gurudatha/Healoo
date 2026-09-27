@@ -24,9 +24,9 @@ struct AdminView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     if let notice {
                         HStack {
-                            Text(notice).font(HFont.caption).foregroundStyle(Sage.primary)
+                            Text(notice).font(HFont.caption).foregroundStyle(Sage.accent)
                             Spacer()
-                            Button("OK") { self.notice = nil }.font(HFont.captionStrong).foregroundStyle(Sage.primary)
+                            Button("OK") { self.notice = nil }.font(HFont.captionStrong).foregroundStyle(Sage.accent)
                         }
                         .padding(12).background(Sage.sageTint, in: RoundedRectangle(cornerRadius: 12))
                     }
@@ -80,7 +80,7 @@ struct AdminView: View {
 
     private func addButton(_ label: String, _ symbol: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Label(label, systemImage: symbol).font(HFont.bodyStrong).foregroundStyle(Sage.primary)
+            Label(label, systemImage: symbol).font(HFont.bodyStrong).foregroundStyle(Sage.accent)
                 .frame(maxWidth: .infinity, minHeight: 60)
                 .background(Sage.surface, in: RoundedRectangle(cornerRadius: 14))
                 .overlay(RoundedRectangle(cornerRadius: 14).stroke(Sage.border))

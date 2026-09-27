@@ -47,7 +47,7 @@ fun LoginScreen(onSignedIn: suspend () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 // Decorative: the name next to it is the accessible label.
                 Image(painterResource(R.drawable.healoo_mark), contentDescription = null, modifier = Modifier.size(52.dp))
-                Text("Healoo", style = HType.screenTitle.copy(fontSize = HType.screenTitle.fontSize * 1.4f), color = Color.White)
+                Text("Healoo", style = HType.screenTitle.copy(fontSize = HType.screenTitle.fontSize * 1.4f), color = Sage.OnPrimary)
             }
             Text("Your reports, doctors and messages in one place. You decide who sees what.",
                 style = HType.body, color = Sage.OnPrimarySoft)
@@ -130,7 +130,7 @@ private fun DevSignInSection(busy: Boolean, setBusy: (Boolean) -> Unit, onSigned
         when {
             loadError != null -> {
                 Text(loadError!!, style = HType.small, color = Sage.Clay)
-                Text("Try again", style = HType.bodyStrong, color = Sage.Primary,
+                Text("Try again", style = HType.bodyStrong, color = Sage.Accent,
                     modifier = Modifier.clickable(enabled = !busy) { reload++ }.padding(vertical = 4.dp))
             }
             accounts == null -> Text("Loading test accounts…", style = HType.small, color = Sage.Muted)
@@ -170,7 +170,7 @@ private fun DemoAccountRow(u: UserProfile, enabled: Boolean, onClick: () -> Unit
             .clickable(enabled = enabled, onClick = onClick).padding(12.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Avatar(u.initials, 44.dp)
+        Avatar(u.initials, 44.dp, photoUrl = u.photoUri)
         Column {
             Text(u.displayName, style = HType.bodyStrong, color = Sage.Ink)
             Text("${u.headline} · ${u.publicId}", style = HType.small, color = Sage.Muted)
