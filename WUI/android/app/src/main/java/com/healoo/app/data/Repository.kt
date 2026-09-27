@@ -8,8 +8,9 @@ import com.healoo.app.BuildConfig
 interface HealooRepository {
     suspend fun me(): UserProfile
     suspend fun dashboard(): Dashboard
-    suspend fun items(status: ItemStatus = ItemStatus.OPEN, limit: Int = 20): List<DataItem>
-    suspend fun openItems(limit: Int = 20): List<DataItem> = items(ItemStatus.OPEN, limit)
+    /** Visible items; [kind] (a PartKind) keeps only items containing that part, as GET /v1/items?kind= does. */
+    suspend fun items(status: ItemStatus = ItemStatus.OPEN, limit: Int = 20, kind: String? = null): List<DataItem>
+    suspend fun openItems(limit: Int = 20, kind: String? = null): List<DataItem> = items(ItemStatus.OPEN, limit, kind)
     /** Full item with its messages, attachments, appointments and alerts. */
     suspend fun item(id: String): DataItem
     suspend fun user(id: String): UserProfile

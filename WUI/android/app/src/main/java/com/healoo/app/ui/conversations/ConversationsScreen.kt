@@ -44,7 +44,7 @@ fun ConversationsScreen(onOpenDiscussion: (itemId: String) -> Unit, onTab: (Tab)
                     .background(Sage.Primary).statusBarsPadding().padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 20.dp),
             ) { Text("Messages", style = HType.screenTitle, color = Color.White) }
 
-            LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            ScrollbarLazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 val l = vm.list
                 when {
                     l == null -> item { LoadingBox() }

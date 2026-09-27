@@ -15,7 +15,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     mkdir -p /out && cp target/release/care-api target/release/care-worker target/release/care-seed target/release/devtoken /out/
 
 FROM debian:trixie-slim AS runtime
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libsasl2-2 libcurl4 curl && rm -rf /var/lib/apt/lists/* \
+# poppler-utils: pdftoppm renders the first page of PDFs as a thumbnail (care-worker, care-seed).
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libsasl2-2 libcurl4 curl poppler-utils && rm -rf /var/lib/apt/lists/* \
     && useradd -r -u 10001 healoo && mkdir -p /data && chown healoo /data
 COPY --from=build /out/ /usr/local/bin/
 USER healoo

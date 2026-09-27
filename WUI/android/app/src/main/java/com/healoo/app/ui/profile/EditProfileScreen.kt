@@ -62,7 +62,7 @@ fun EditProfileScreen(onClose: () -> Unit, vm: EditProfileViewModel = viewModel(
         bottomBar = { BottomActionBar { PrimaryButton(if (vm.saving) "Saving…" else "Save changes", { vm.save(onClose) }, Modifier.weight(1f), enabled = !vm.saving) } },
     ) { padding ->
         if (me == null) { LoadingBox(Modifier.padding(padding)); return@Scaffold }
-        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        ScrollbarLazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             item {
                 Column(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(Radius.card)).background(Sage.Surface).padding(20.dp),

@@ -37,6 +37,17 @@ Download **Fraunces** and **Figtree** from fonts.google.com and use the files in
 - In `gradle.properties`, `healoo.useFakeData=true` uses the seeded data, demo accounts and bundled sample files. This is the default.
 - Set it to `false` to call the local stack at `API_BASE_URL = https://10.0.2.2/`, which is Caddy/Nginx on your host (doc 9.4). Install the Caddy/mkcert root CA on the emulator. The debug network config trusts user CAs; the release config does not.
 
+**App size.** Release builds are shrunk with R8 (rules in `app/proguard-rules.pro`): about 4.7 MB
+instead of 70 MB. Debug builds are not shrunk, so they build faster (44 MB).
+- To test a shrunk build against the trial server, build debug with
+  `gradle :app:assembleDebug -Phealoo.minifyDebug=true`. Release builds have developer sign-in off,
+  so they can't sign in to the trial server.
+- R8 needs about 2 GB of free memory. If Gradle crashes with "insufficient memory", close the
+  emulator or Android Studio, or add `--no-daemon -Dorg.gradle.jvmargs=-Xmx2g`.
+- Icons: the app uses `material-icons-core`, plus the icons it needs from the extended set, copied
+  into `ui/icons`. The full extended library adds 34 MB. To use another extended icon, copy its file
+  from the `material-icons-extended` sources jar into `ui/icons` the same way.
+
 
 ## 3. iOS
 

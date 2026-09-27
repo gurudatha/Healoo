@@ -11,10 +11,19 @@ import java.io.File
 import java.security.MessageDigest
 
 /**
- * PdfRenderer needs a real file descriptor, so every PDF is resolved to a cached local file first.
+ * Full images and PDFs shown in the viewer, as local files (PdfRenderer needs a real file descriptor).
  * Handles bundled samples (file:///android_asset/...), picked files (content://) and presigned URLs (https://).
+ *
+ * The cache keeps only the [MAX_FILES] most recently used files and at most [MAX_BYTES] together:
+ * each download evicts the least recently used ones. Thumbnails are cached separately by Coil
+ * (see HealooApplication), so the two stay within about 100 MB.
  */
 object AttachmentFiles {
+    const val MAX_FILES = 15
+    const val MAX_BYTES = 90L * 1024 * 1024
+    /** The newest files are never evicted, even over the byte limit (they may be on screen). */
+    private const val KEEP_NEWEST = 3
+
     private val http by lazy { OkHttpClient() }
 
     suspend fun localFile(context: Context, uri: String, name: String): File = withContext(Dispatchers.IO) {
@@ -22,7 +31,10 @@ object AttachmentFiles {
         // Presigned URLs change on every fetch; key the cache on the path without the query string.
         val key = sha1(uri.substringBefore('?'))
         val target = File(dir, "$key-${name.replace(Regex("[^A-Za-z0-9._-]"), "_")}")
-        if (target.exists() && target.length() > 0) return@withContext target
+        if (target.exists() && target.length() > 0) {
+            target.setLastModified(System.currentTimeMillis())   // recently used: evicted last
+            return@withContext target
+        }
 
         val tmp = File(dir, "${target.name}.part")
         when {
@@ -40,7 +52,21 @@ object AttachmentFiles {
             }
         }
         tmp.renameTo(target)
+        target.setLastModified(System.currentTimeMillis())
+        trim(dir)
         target
+    }
+
+    /** Deletes the least recently used files beyond [MAX_FILES] or [MAX_BYTES]. */
+    @Synchronized
+    fun trim(dir: File) {
+        val files = dir.listFiles { f: File -> f.isFile && !f.name.endsWith(".part") }.orEmpty()
+            .sortedByDescending { it.lastModified() }
+        var bytes = 0L
+        files.forEachIndexed { i, f ->
+            bytes += f.length()
+            if (i >= KEEP_NEWEST && (i >= MAX_FILES || bytes > MAX_BYTES)) f.delete()
+        }
     }
 
     /** Name + size of a picked file, for validation against Limits before upload. */
@@ -59,4 +85,13 @@ object AttachmentFiles {
 
     private fun sha1(s: String) = MessageDigest.getInstance("SHA-1").digest(s.toByteArray())
         .joinToString("") { "%02x".format(it) }.take(16)
+}
+
+/**
+ * Coil request for a thumbnail (or a card's image). Presigned URLs change on every fetch, so the
+ * cache key is the URL without its query string; otherwise every visit would download it again.
+ */
+fun thumbnailRequest(context: Context, uri: String): coil.request.ImageRequest {
+    val key = uri.substringBefore('?')
+    return coil.request.ImageRequest.Builder(context).data(uri).diskCacheKey(key).memoryCacheKey(key).crossfade(true).build()
 }

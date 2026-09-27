@@ -2,7 +2,8 @@
 
 | File | What it is | Read it when |
 | --- | --- | --- |
-| [`Healoo_Design_Document.docx`](Healoo_Design_Document.docx) | The system design: roles and access rules, screens, API and WebSocket protocol, Auth0, Kafka topics, Cassandra schema, push notifications, proxies, local trial and acceptance tests. | You need to understand how the system is meant to work, or before changing its behaviour. |
+| [`Healoo_Design_Document_v2.docx`](Healoo_Design_Document_v2.docx) | **The design document (version 2, 27 September 2026).** Part 1: user requirements — what the app shows, how it behaves, lists items and sends messages, and every user operation. Part 2: implementation — for the apps and the servers separately: minimum requirements, memory, request capacity, when data is fetched and refreshed, how it is stored and cached. | Start here: understanding what the app must do, or how it is built and what it needs to run. |
+| [`Healoo_Design_Document.docx`](Healoo_Design_Document.docx) | Version 1 (superseded by version 2), kept for history. The original system design: roles and access rules, screens, API and WebSocket protocol, Auth0, Kafka topics, Cassandra schema, push notifications, proxies, local trial and acceptance tests. | You need to understand how the system is meant to work, or before changing its behaviour. |
 | [`DataItem_Design.md`](DataItem_Design.md) | **Implemented** DataItem v2: an item as a container for one case (primary appointment, message, alert or report, plus messages, attachments, recurring appointments, alerts, closing feedback and rating). Fields, validation, recurrence rules, API, Cassandra tables, Rust/Kotlin types, migration. | Before implementing or reviewing the new item model. |
 | [`PageOperations_Design.md`](PageOperations_Design.md) | **Implemented** bottom-bar operations per page (user, doctor, hospital, global) from one config file, `WUI/page-operations.json`; the Filtered Search Bar; access rule 9 (referral to a doctor, hospital uploads); the new API; and the tests with their results. | Changing what a page offers, or reviewing sharing rules. |
 | [`Administration_Design.md`](Administration_Design.md) | **Implemented** hospital administration (access rule 10): administrators add users and doctors (with a designation), delete doctors by deactivating them and can reactivate them. Users can never be deleted. Covers the API, the database columns, the Settings → Administration screens and the tests. | Managing accounts, or reviewing who may create or remove them. |
@@ -20,10 +21,12 @@ The guides were written when the server and apps were separate downloads:
 - `healoo-backend` = [`../Server`](../Server)
 - `healoo-wui` = [`../WUI`](../WUI)
 
-## Changes since the design document was exported
+## Change history
 
-The Word document is an export of the design as it stood before implementation started.
-Since then:
+Version 2 of the design document (Healoo_Design_Document_v2.docx, 27 September 2026) is the current
+one; it reorganises everything into user requirements and implementation. Version 1 below:
+the Word document was first exported before implementation started. On 27 September 2026 it
+was revised to match the implementation (server v0.3, apps 0.5), including the changes below:
 
 - **Server implemented (v0.1):** sections 4–7. See `Server/README.md` for schema changes (for
   example, the `grant` type is named `item_grant` because GRANT is reserved in CQL) and for what
@@ -52,3 +55,7 @@ Since then:
   `users_by_email` table are added in place, so the trial database doesn't need recreating. The
   seed job adds nine accounts (3 patients, 4 doctors with designations, 2 labs) to existing
   trial databases.
+- **Landing page and navigation (apps 0.5):** the dashboard tiles filter the open items (the
+  selected tile is highlighted; tap again to clear), "See all" expands the list in place, Home
+  always returns to the landing page, and every list that can outgrow the screen shows a scroll
+  bar (including the developer sign-in list). Design document sections 3.2, 3.7 and 3.8.

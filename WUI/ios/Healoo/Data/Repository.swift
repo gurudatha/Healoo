@@ -6,7 +6,8 @@ import CryptoKit
 protocol HealooRepository: AnyObject {
     func me() async throws -> UserProfile
     func dashboard() async throws -> Dashboard
-    func items(status: ItemStatus, limit: Int) async throws -> [DataItem]
+    /// Visible items; `kind` (a PartKind) keeps only items containing that part, as GET /v1/items?kind= does.
+    func items(status: ItemStatus, limit: Int, kind: String?) async throws -> [DataItem]
     /// Full item with its messages, attachments, appointments and alerts.
     func item(_ id: String) async throws -> DataItem
     func user(_ id: String) async throws -> UserProfile
@@ -73,7 +74,8 @@ protocol HealooRepository: AnyObject {
 }
 
 extension HealooRepository {
-    func openItems(limit: Int = 20) async throws -> [DataItem] { try await items(status: .open, limit: limit) }
+    func items(status: ItemStatus, limit: Int) async throws -> [DataItem] { try await items(status: status, limit: limit, kind: nil) }
+    func openItems(limit: Int = 20, kind: String? = nil) async throws -> [DataItem] { try await items(status: .open, limit: limit, kind: kind) }
     func conversations() async throws -> [Conversation] { try await conversations(with: nil) }
 }
 
@@ -350,9 +352,9 @@ final class MockRepository: HealooRepository {
                          upcomingAppointments: open.flatMap(\.appointments).flatMap(\.visits).filter { $0.status == "SCHEDULED" && $0.date <= soon }.count)
     }
 
-    func items(status: ItemStatus, limit: Int) async throws -> [DataItem] {
+    func items(status: ItemStatus, limit: Int, kind: String?) async throws -> [DataItem] {
         await latency()
-        return Array(visible(status).compactMap { try? present($0) }.sorted { $0.updatedAt > $1.updatedAt }.prefix(limit))
+        return Array(visible(status).compactMap { try? present($0) }.filter { kind == nil || $0.kinds.contains(kind!) }.sorted { $0.updatedAt > $1.updatedAt }.prefix(limit))
     }
 
     func item(_ id: String) async throws -> DataItem { await latency(); return try present(try stored(id)) }
@@ -725,8 +727,8 @@ final class RemoteRepository: HealooRepository {
 
     func me() async throws -> UserProfile { try await request("GET", "v1/me") }
     func dashboard() async throws -> Dashboard { try await request("GET", "v1/dashboard") }
-    func items(status: ItemStatus, limit: Int) async throws -> [DataItem] {
-        let p: PageResult<DataItem> = try await request("GET", "v1/items", query: ["status": status.rawValue, "limit": String(limit)]); return p.data
+    func items(status: ItemStatus, limit: Int, kind: String?) async throws -> [DataItem] {
+        let p: PageResult<DataItem> = try await request("GET", "v1/items", query: ["status": status.rawValue, "limit": String(limit), "kind": kind]); return p.data
     }
     func item(_ id: String) async throws -> DataItem { try await request("GET", "v1/items/\(id)") }
     func user(_ id: String) async throws -> UserProfile { try await request("GET", "v1/users/\(id)") }
@@ -863,26 +865,71 @@ final class RemoteRepository: HealooRepository {
 // MARK: - Attachment files
 
 /// Resolves attachment URIs (bundle samples, local files, presigned https URLs) to local files.
+///
+/// Two size-limited caches, about 100 MB together (same limits as Android's AttachmentFiles):
+/// full images and PDFs keep the 15 most recently used files and at most 90 MB; thumbnails at
+/// most 10 MB. Each download evicts the least recently used files.
 enum AttachmentStore {
+    struct Limits { let folder: String; let maxFiles: Int; let maxBytes: Int64 }
+    static let full = Limits(folder: "attachments", maxFiles: 15, maxBytes: 90 * 1024 * 1024)
+    static let thumbs = Limits(folder: "thumbnails", maxFiles: .max, maxBytes: 10 * 1024 * 1024)
+    /// The newest files are never evicted, even over the byte limit (they may be on screen).
+    static let keepNewest = 3
+
+    /// The full image or PDF. Downloaded only when it is shown in the viewer (or when no thumbnail exists).
     static func localURL(for a: Attachment) async throws -> URL {
-        if a.uri.hasPrefix("bundle://") {
-            let name = String(a.uri.dropFirst("bundle://".count))
+        try await localFile(a.uri, name: a.name, cache: full)
+    }
+
+    /// The 320-px thumbnail the media worker made (images, and the first page of PDFs), for cards
+    /// and the viewer's strip. Nil when the server has no thumbnail (yet).
+    static func thumbnailURL(for a: Attachment) async throws -> URL? {
+        guard let t = a.thumbUri, !t.isEmpty else { return nil }
+        return try await localFile(t, name: "thumb-\((a.name as NSString).deletingPathExtension).jpg", cache: thumbs)
+    }
+
+    /// Deletes the least recently used files beyond the cache's file or byte limit.
+    static func trim(_ dir: URL, _ limits: Limits) {
+        let fm = FileManager.default
+        let keys: [URLResourceKey] = [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey]
+        guard let urls = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys) else { return }
+        let files = urls.compactMap { u -> (URL, Date, Int64)? in
+            guard let v = try? u.resourceValues(forKeys: Set(keys)), v.isRegularFile == true else { return nil }
+            return (u, v.contentModificationDate ?? .distantPast, Int64(v.fileSize ?? 0))
+        }.sorted { $0.1 > $1.1 }
+        var bytes: Int64 = 0
+        for (i, f) in files.enumerated() {
+            bytes += f.2
+            if i >= keepNewest && (i >= limits.maxFiles || bytes > limits.maxBytes) { try? fm.removeItem(at: f.0) }
+        }
+    }
+
+    private static func touch(_ url: URL) {
+        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
+    }
+
+    private static func localFile(_ uri: String, name: String, cache: Limits) async throws -> URL {
+        if uri.hasPrefix("bundle://") {
+            let name = String(uri.dropFirst("bundle://".count))
             let ext = (name as NSString).pathExtension, stem = (name as NSString).deletingPathExtension
             guard let url = Bundle.main.url(forResource: stem, withExtension: ext) else { throw URLError(.fileDoesNotExist) }
             return url
         }
-        guard let remote = URL(string: a.uri) else { throw URLError(.badURL) }
+        guard let remote = URL(string: uri) else { throw URLError(.badURL) }
         if remote.isFileURL { return remote }
 
-        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("attachments", isDirectory: true)
+        // Presigned URLs change on every fetch; key the cache on the path without the query string.
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent(cache.folder, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let key = SHA256.hash(data: Data(remote.path.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
-        let target = dir.appendingPathComponent("\(key)-\(a.name)")
-        if FileManager.default.fileExists(atPath: target.path) { return target }
+        let target = dir.appendingPathComponent("\(key)-\(name)")
+        if FileManager.default.fileExists(atPath: target.path) { touch(target); return target }   // recently used: evicted last
         let (tmp, resp) = try await URLSession.shared.download(from: remote)
         guard (resp as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) == true else { throw URLError(.badServerResponse) }
         try? FileManager.default.removeItem(at: target)
         try FileManager.default.moveItem(at: tmp, to: target)
+        touch(target)
+        trim(dir, cache)
         return target
     }
 }

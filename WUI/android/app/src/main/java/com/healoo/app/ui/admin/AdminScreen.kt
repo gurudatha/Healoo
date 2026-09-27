@@ -5,11 +5,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.PersonAdd
-import androidx.compose.material.icons.outlined.MedicalServices
+import com.healoo.app.ui.icons.outlined.PersonAdd
+import com.healoo.app.ui.icons.outlined.MedicalServices
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -76,7 +75,7 @@ fun AdminScreen(onBack: () -> Unit, vm: AdminViewModel = viewModel()) {
         containerColor = Sage.Background,
         topBar = { PinnedHeader("Administration", vm.me?.hospital ?: "Users and doctors", onBack) },
     ) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        ScrollbarLazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             vm.notice?.let { n ->
                 item {
                     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Sage.SageTint).padding(start = 12.dp),
@@ -164,7 +163,7 @@ private fun AccountSheet(doctor: Boolean, vm: AdminViewModel, onDismiss: () -> U
     var reg by remember { mutableStateOf("") }
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Sage.Background, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(
-            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).imePadding().padding(start = 20.dp, end = 20.dp, bottom = 24.dp),
+            Modifier.fillMaxWidth().verticalScrollWithBar(rememberScrollState()).imePadding().padding(start = 20.dp, end = 20.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Text(if (doctor) "Add a doctor" else "Add a user", style = HType.section, color = Sage.Ink)

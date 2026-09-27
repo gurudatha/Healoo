@@ -8,11 +8,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
-import androidx.compose.material.icons.automirrored.outlined.Logout
-import androidx.compose.material.icons.outlined.AdminPanelSettings
-import androidx.compose.material.icons.outlined.Language
-import androidx.compose.material.icons.outlined.People
-import androidx.compose.material.icons.outlined.Shield
+import com.healoo.app.ui.icons.automirrored.outlined.Logout
+import com.healoo.app.ui.icons.outlined.AdminPanelSettings
+import com.healoo.app.ui.icons.outlined.Language
+import com.healoo.app.ui.icons.outlined.People
+import com.healoo.app.ui.icons.outlined.Shield
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -96,7 +96,7 @@ fun SettingsScreen(
                 }
             }
 
-            LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            ScrollbarLazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         FieldLabel("Notifications")

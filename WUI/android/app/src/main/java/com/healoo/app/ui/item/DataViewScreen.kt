@@ -14,10 +14,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.*
+import com.healoo.app.ui.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalUriHandler
@@ -131,7 +133,7 @@ fun DataViewScreen(
         when {
             vm.error != null -> Box(Modifier.padding(padding)) { ErrorBox(vm.error!!, vm::load) }
             item == null || me == null -> LoadingBox(Modifier.padding(padding))
-            else -> LazyColumn(
+            else -> ScrollbarLazyColumn(
                 Modifier.fillMaxSize().padding(padding),
                 contentPadding = PaddingValues(20.dp),
                 verticalArrangement = Arrangement.spacedBy(18.dp),
@@ -385,8 +387,8 @@ private fun AttachmentsSection(attachments: List<Attachment>, canAdd: Boolean, o
                 ) {
                     Box(Modifier.fillMaxWidth().height(110.dp).background(Sage.Preview), contentAlignment = Alignment.Center) {
                         when {
-                            a.kind == AttachmentKind.IMAGE -> AsyncImage(a.thumbUri ?: a.uri, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                            a.thumbUri != null -> AsyncImage(a.thumbUri, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                            a.kind == AttachmentKind.IMAGE -> AsyncImage(thumbnailRequest(LocalContext.current, a.thumbUri ?: a.uri), null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                            a.thumbUri != null -> AsyncImage(thumbnailRequest(LocalContext.current, a.thumbUri), null, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter, modifier = Modifier.fillMaxSize())
                             else -> Icon(Icons.Outlined.PictureAsPdf, null, tint = Sage.Muted, modifier = Modifier.size(34.dp))
                         }
                     }

@@ -29,7 +29,7 @@ import retrofit2.http.Query
 interface HealooApi {
     @GET("v1/me") suspend fun me(): UserProfile
     @GET("v1/dashboard") suspend fun dashboard(): Dashboard
-    @GET("v1/items") suspend fun items(@Query("status") status: String, @Query("limit") limit: Int): PageResult<DataItem>
+    @GET("v1/items") suspend fun items(@Query("status") status: String, @Query("limit") limit: Int, @Query("kind") kind: String? = null): PageResult<DataItem>
     @GET("v1/items/{id}") suspend fun item(@Path("id") id: String): DataItem
     @POST("v1/items") suspend fun createItem(@Body body: NewItemRequest): DataItem
     @POST("v1/items/{id}/close") suspend fun close(@Path("id") id: String, @Body body: CloseRequest): DataItem
@@ -106,7 +106,7 @@ class RemoteRepository(
 
     override suspend fun me() = api.me()
     override suspend fun dashboard() = api.dashboard()
-    override suspend fun items(status: ItemStatus, limit: Int) = api.items(status.name, limit).data
+    override suspend fun items(status: ItemStatus, limit: Int, kind: String?) = api.items(status.name, limit, kind).data
     override suspend fun item(id: String) = api.item(id).let { it.copy(attachments = it.attachments.sortedBy { a -> a.position }) }
     override suspend fun user(id: String) = api.user(id)
     override suspend fun sharedItems(userId: String) = api.shared(userId).data

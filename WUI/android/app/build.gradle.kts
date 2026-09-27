@@ -150,8 +150,21 @@ android {
 
     buildTypes {
         // Debug: system + user-installed + bundled trial-server certificates (generated, see above).
-        debug { manifestPlaceholders["networkConfig"] = "@xml/network_security_config_dev" }
+        debug {
+            manifestPlaceholders["networkConfig"] = "@xml/network_security_config_dev"
+            // healoo.minifyDebug=true: shrink the debug build like release, to test R8 against the
+            // trial server (release builds have developer sign-in off).
+            if (prop("healoo.minifyDebug") == "true") {
+                isMinifyEnabled = true
+                isShrinkResources = true
+                proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            }
+        }
         release {
+            // R8: removes unused code and resources and optimises the rest (APK ~70 MB -> a few MB).
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             manifestPlaceholders["networkConfig"] = "@xml/network_security_config_release"
             buildConfigField("boolean", "DEV_SIGN_IN", "false")
             if (releaseStore.isNotEmpty()) signingConfig = signingConfigs.getByName("release")
@@ -176,7 +189,8 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-extended")
+    // Core icons only; the others the app uses are copied into ui/icons (the extended set is ~34 MB).
+    implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.compose.ui:ui-tooling-preview")
     debugImplementation("androidx.compose.ui:ui-tooling")
 

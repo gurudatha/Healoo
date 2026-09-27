@@ -6,7 +6,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Check
@@ -275,7 +274,7 @@ private fun NotConnected(user: UserProfile) {
 
 @Composable
 private fun SharedItems(items: List<DataItem>, onOpenItem: (String) -> Unit) {
-    LazyColumn(
+    ScrollbarLazyColumn(
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -289,7 +288,7 @@ private fun SharedItems(items: List<DataItem>, onOpenItem: (String) -> Unit) {
 /** Discussions with this person, newest first. New ones start from the Message operation. */
 @Composable
 private fun Conversations(list: List<Conversation>, onOpen: (String) -> Unit) {
-    LazyColumn(
+    ScrollbarLazyColumn(
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -304,7 +303,7 @@ private fun Conversations(list: List<Conversation>, onOpen: (String) -> Unit) {
 /** Hospital page: its doctors, narrowed with the Filtered Search Bar. */
 @Composable
 private fun HospitalDoctors(doctors: List<UserProfile>, focus: FocusRequester, onOpenUser: (String) -> Unit) {
-    LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    ScrollbarLazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { SectionHeader("Doctors · ${doctors.size}") }
         item {
             FilteredSearchBar(
@@ -324,7 +323,7 @@ private fun HospitalDoctors(doctors: List<UserProfile>, focus: FocusRequester, o
 private fun OperationSheet(title: String, onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Sage.Background, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(
-            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).imePadding().padding(start = 20.dp, end = 20.dp, bottom = 24.dp),
+            Modifier.fillMaxWidth().verticalScrollWithBar(rememberScrollState()).imePadding().padding(start = 20.dp, end = 20.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text(title, style = HType.section, color = Sage.Ink)

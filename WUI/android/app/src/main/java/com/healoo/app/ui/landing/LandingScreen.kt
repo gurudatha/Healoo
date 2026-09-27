@@ -1,9 +1,10 @@
 package com.healoo.app.ui.landing
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -33,6 +34,10 @@ class LandingViewModel : ViewModel() {
     var dashboard by mutableStateOf<Dashboard?>(null); private set
     var items by mutableStateOf<List<DataItem>?>(null); private set
     var error by mutableStateOf<String?>(null); private set
+    /** Dashboard filter: a PartKind (REPORT, MESSAGE or APPOINTMENT), or null for all open items. */
+    var filter by mutableStateOf<String?>(null); private set
+    /** "See all": every open item instead of the latest [PREVIEW]. */
+    var showAll by mutableStateOf(false); private set
 
     init {
         load()
@@ -40,14 +45,20 @@ class LandingViewModel : ViewModel() {
         viewModelScope.launch { repo.events.collect { if (it !is RealtimeEvent.ConnectionChanged) load() } }
     }
 
+    /** Tapping the selected counter again clears the filter. */
+    fun toggleFilter(kind: String) { filter = if (filter == kind) null else kind; items = null; load() }
+    fun toggleShowAll() { showAll = !showAll; load() }
+
     fun load() = viewModelScope.launch {
         error = null
         runCatching {
             me = repo.me()
             dashboard = repo.dashboard()
-            items = repo.openItems(limit = 20)
+            items = repo.openItems(limit = if (showAll) ALL else PREVIEW, kind = filter)
         }.onFailure { error = "Couldn't load your items. Check your connection and try again." }
     }
+
+    companion object { const val PREVIEW = 20; const val ALL = 100 }
 }
 
 @Composable
@@ -63,8 +74,8 @@ fun LandingScreen(
 
     Scaffold(containerColor = Sage.Background, bottomBar = { HealooBottomBar(Tab.HOME, onTab) }) { padding ->
         Column(Modifier.fillMaxSize().padding(bottom = padding.calculateBottomPadding())) {
-            DashboardHeader(vm.me, vm.dashboard, onOpenProfile)
-            LazyColumn(
+            DashboardHeader(vm.me, vm.dashboard, vm.filter, vm::toggleFilter, onOpenProfile)
+            ScrollbarLazyColumn(
                 contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -75,12 +86,22 @@ fun LandingScreen(
                         RoleFilterRow(selected = role, includeAll = false, onSelect = { role = it; onSearch(query, it) })
                     }
                 }
-                item { Spacer(Modifier.height(6.dp)); SectionHeader("Open items", "See all") { onSearch("", null) } }
+                item {
+                    Spacer(Modifier.height(6.dp))
+                    // "See all" expands the list in place (it used to open Search, which lists people, not items).
+                    val more = vm.showAll || (vm.items?.size ?: 0) >= LandingViewModel.PREVIEW
+                    SectionHeader(filterTitle(vm.filter), if (!more) null else if (vm.showAll) "Show fewer" else "See all", vm::toggleShowAll)
+                    vm.filter?.let { f ->
+                        Text("Clear filter", style = HType.small, color = Sage.Primary,
+                            modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { vm.toggleFilter(f) }.padding(vertical = 4.dp))
+                    }
+                }
                 when {
                     vm.error != null -> item { ErrorBox(vm.error!!, vm::load) }
                     vm.items == null -> item { LoadingBox() }
                     vm.items!!.isEmpty() -> item {
-                        Text("Nothing open right now. New reports, messages and bookings will appear here.",
+                        Text(if (vm.filter == null) "Nothing open right now. New reports, messages and bookings will appear here."
+                            else "No open items with ${filterNoun(vm.filter)}.",
                             style = HType.body, color = Sage.Muted, modifier = Modifier.padding(vertical = 16.dp))
                     }
                     else -> items(vm.items!!, key = { it.id }) { DataItemRow(it, onClick = { onOpenItem(it.id) }) }
@@ -91,7 +112,7 @@ fun LandingScreen(
 }
 
 @Composable
-private fun DashboardHeader(me: UserProfile?, d: Dashboard?, onOpenProfile: () -> Unit) {
+private fun DashboardHeader(me: UserProfile?, d: Dashboard?, filter: String?, onFilter: (String) -> Unit, onOpenProfile: () -> Unit) {
     val greeting = when (LocalTime.now().hour) { in 0..11 -> "Good morning"; in 12..16 -> "Good afternoon"; else -> "Good evening" }
     Column(
         Modifier.fillMaxWidth()
@@ -113,20 +134,37 @@ private fun DashboardHeader(me: UserProfile?, d: Dashboard?, onOpenProfile: () -
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Counter(d?.openReports, "Open reports", Modifier.weight(1f))
-            Counter(d?.unreadMessages, "Unread messages", Modifier.weight(1f))
-            Counter(d?.upcomingAppointments, "Appointments", Modifier.weight(1f))
+            Counter(d?.openReports, "Open reports", filter == PartKind.REPORT, Modifier.weight(1f)) { onFilter(PartKind.REPORT) }
+            Counter(d?.unreadMessages, "Unread messages", filter == PartKind.MESSAGE, Modifier.weight(1f)) { onFilter(PartKind.MESSAGE) }
+            Counter(d?.upcomingAppointments, "Appointments", filter == PartKind.APPOINTMENT, Modifier.weight(1f)) { onFilter(PartKind.APPOINTMENT) }
         }
     }
 }
 
 @Composable
-private fun Counter(value: Int?, label: String, modifier: Modifier) {
+private fun Counter(value: Int?, label: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    // The selected tile turns light, so it's clear which filter the list below uses.
     Column(
-        modifier.clip(RoundedCornerShape(14.dp)).background(Sage.PrimaryRaised).padding(horizontal = 12.dp, vertical = 10.dp),
+        modifier.clip(RoundedCornerShape(14.dp))
+            .background(if (selected) Color.White else Sage.PrimaryRaised)
+            .selectable(selected = selected, role = androidx.compose.ui.semantics.Role.Tab, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        Text(value?.toString() ?: "–", style = HType.counter, color = Color.White)
-        Text(label, style = HType.small, color = Sage.OnPrimarySoft, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(value?.toString() ?: "–", style = HType.counter, color = if (selected) Sage.Primary else Color.White)
+        Text(label, style = HType.small, color = if (selected) Sage.Ink else Sage.OnPrimarySoft, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
+}
+
+private fun filterTitle(kind: String?) = when (kind) {
+    PartKind.REPORT -> "Open items · Reports"
+    PartKind.MESSAGE -> "Open items · Messages"
+    PartKind.APPOINTMENT -> "Open items · Appointments"
+    else -> "Open items"
+}
+
+private fun filterNoun(kind: String?) = when (kind) {
+    PartKind.REPORT -> "reports"
+    PartKind.MESSAGE -> "messages"
+    else -> "appointments"
 }

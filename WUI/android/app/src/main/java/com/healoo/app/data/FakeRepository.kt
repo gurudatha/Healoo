@@ -240,8 +240,8 @@ class FakeRepository : HealooRepository {
         )
     }
 
-    override suspend fun items(status: ItemStatus, limit: Int) = latency {
-        visible(status).map { present(it) }.sortedByDescending { it.updatedAt }.take(limit)
+    override suspend fun items(status: ItemStatus, limit: Int, kind: String?) = latency {
+        visible(status).map { present(it) }.filter { kind == null || kind in it.kinds }.sortedByDescending { it.updatedAt }.take(limit)
     }
 
     override suspend fun item(id: String) = latency { present(stored(id)) }

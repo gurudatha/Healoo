@@ -1,5 +1,6 @@
 package com.healoo.app.ui.viewer
 
+import com.healoo.app.ui.components.ScrollbarLazyColumn
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
@@ -23,7 +24,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.PictureAsPdf
+import com.healoo.app.ui.icons.outlined.PictureAsPdf
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -141,8 +142,11 @@ private fun ZoomableImage(a: Attachment, onZoomChanged: (Boolean) -> Unit) {
         onZoomChanged(scale > 1f)
     }
 
+    // The full image comes from the size-limited attachment cache (AttachmentFiles), not Coil's disk cache.
+    val context = LocalContext.current
+    val file by produceState<File?>(null, a.uri) { value = runCatching { AttachmentFiles.localFile(context, a.uri, a.name) }.getOrNull() }
     AsyncImage(
-        model = a.uri, contentDescription = a.name, contentScale = ContentScale.Fit,
+        model = file ?: a.thumbUri?.let { thumbnailRequest(context, it) }, contentDescription = a.name, contentScale = ContentScale.Fit,
         modifier = Modifier.fillMaxSize()
             .pointerInput(a.uri) {
                 detectTapGestures(onDoubleTap = { if (scale > 1f) set(1f, Offset.Zero) else set(2.5f, Offset.Zero) })
@@ -196,7 +200,7 @@ private fun PdfPages(file: File, onPage: (Int, Int) -> Unit) {
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val widthPx = constraints.maxWidth - with(androidx.compose.ui.platform.LocalDensity.current) { 32.dp.roundToPx() }
-        LazyColumn(
+        ScrollbarLazyColumn(
             state = listState, contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxSize(),
         ) {
@@ -242,7 +246,7 @@ private fun ThumbnailStrip(files: List<Attachment>, current: Int, onPick: (Int) 
                 contentAlignment = Alignment.Center,
             ) {
                 if (a.kind == AttachmentKind.IMAGE || a.thumbUri != null)
-                    AsyncImage(a.thumbUri ?: a.uri, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                    AsyncImage(thumbnailRequest(LocalContext.current, a.thumbUri ?: a.uri), null, contentScale = ContentScale.Crop, alignment = if (a.kind == AttachmentKind.PDF) Alignment.TopCenter else Alignment.Center, modifier = Modifier.fillMaxSize())
                 else Icon(Icons.Outlined.PictureAsPdf, null, tint = Color.White)
             }
         }

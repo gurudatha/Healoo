@@ -3,10 +3,9 @@ package com.healoo.app.ui.item
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.outlined.StarOutline
+import com.healoo.app.ui.icons.outlined.StarOutline
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -153,7 +152,7 @@ private fun FormDialog(title: String, confirm: String, problem: String?, onDismi
         onDismissRequest = onDismiss, containerColor = Sage.Surface,
         title = { Text(title, style = HType.section) },
         text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.verticalScrollWithBar(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 content()
                 if (tried && problem != null) Text(problem, style = HType.small, color = Sage.Clay)
             }

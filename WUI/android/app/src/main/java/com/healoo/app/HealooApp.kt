@@ -62,7 +62,16 @@ import com.healoo.app.ui.user.UserPageScreen
 import com.healoo.app.ui.viewer.AttachmentViewer
 import android.net.Uri as AUri
 
-class HealooApplication : Application() {
+class HealooApplication : Application(), coil.ImageLoaderFactory {
+    /**
+     * Coil caches thumbnails only (full images and PDFs use AttachmentFiles, 90 MB / 15 files):
+     * 10 MB on disk, so the two caches stay within about 100 MB together.
+     */
+    override fun newImageLoader(): coil.ImageLoader = coil.ImageLoader.Builder(this)
+        .diskCache { coil.disk.DiskCache.Builder().directory(cacheDir.resolve("thumbnails")).maxSizeBytes(10L * 1024 * 1024).build() }
+        .respectCacheHeaders(false)   // presigned URLs carry no useful cache headers
+        .build()
+
     override fun onCreate() {
         super.onCreate()
         ServiceLocator.init(this)
@@ -159,6 +168,12 @@ object Routes {
 }
 
 private fun NavHostController.openTab(tab: Tab) {
+    // Home always means the landing page. Restoring Home's saved stack would bring back
+    // whatever was opened from it (e.g. Search), so pop straight back to it instead.
+    if (tab == Tab.HOME) {
+        if (!popBackStack(Routes.HOME, inclusive = false)) navigate(Routes.HOME) { launchSingleTop = true }
+        return
+    }
     val route = when (tab) {
         Tab.HOME -> Routes.HOME
         Tab.SEARCH -> Routes.search()

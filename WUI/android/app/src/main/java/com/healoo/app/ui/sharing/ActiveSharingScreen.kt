@@ -7,7 +7,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.LocalHospital
+import com.healoo.app.ui.icons.outlined.LocalHospital
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -55,7 +55,7 @@ fun ActiveSharingScreen(onBack: () -> Unit, onOpenItem: (String) -> Unit, vm: Ac
             PinnedHeader("Active sharing", total?.let { "$it share${if (it == 1) "" else "s"} across ${vm.groups!!.size} contacts" } ?: "", onBack)
         },
     ) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        ScrollbarLazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             val groups = vm.groups
             when {
                 vm.error != null -> item { ErrorBox(vm.error!!, vm::load) }

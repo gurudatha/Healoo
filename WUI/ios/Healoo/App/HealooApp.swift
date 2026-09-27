@@ -67,6 +67,10 @@ struct SessionGate: View {
                 RootView().id(me.id)          // new account -> fresh navigation and screens
             }
         }
+        // Scroll bars: show them on every vertical list, and flash them when a screen opens so
+        // it is obvious when there is more below.
+        .scrollIndicators(.visible, axes: .vertical)
+        .scrollIndicatorsFlash(onAppear: true)
         .task {
             guard env.auth.session == .checking else { return }
             if !env.useFakeData, await env.auth.restore(), (try? await env.completeSignIn()) != nil { return }
@@ -87,7 +91,11 @@ final class Router {
     /// Person pages showing; while one is, it draws its own operation bar instead of the global one.
     var personPages = 0
 
-    func openTab(_ t: AppTab) { tab = t }
+    /// Home always means the landing page: drop whatever was opened on top of it (e.g. Search).
+    func openTab(_ t: AppTab) {
+        if t == .home { home = NavigationPath() }
+        tab = t
+    }
 
     /// Push onto the navigation stack of the tab that is showing.
     func push(_ route: Route) {

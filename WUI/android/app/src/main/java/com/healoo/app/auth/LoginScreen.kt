@@ -3,6 +3,7 @@ package com.healoo.app.auth
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -21,6 +22,7 @@ import com.healoo.app.data.ServiceLocator
 import com.healoo.app.data.UserProfile
 import com.healoo.app.ui.components.Avatar
 import com.healoo.app.ui.components.PrimaryButton
+import com.healoo.app.ui.components.verticalScrollWithBar
 import com.healoo.app.ui.upload.SageTextField
 import com.healoo.app.ui.theme.*
 import kotlinx.coroutines.launch
@@ -51,7 +53,10 @@ fun LoginScreen(onSignedIn: suspend () -> Unit) {
                 style = HType.body, color = Sage.OnPrimarySoft)
         }
 
-        Column(Modifier.fillMaxWidth().padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(
+            Modifier.fillMaxWidth().weight(1f).verticalScrollWithBar(rememberScrollState()).navigationBarsPadding().imePadding().padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
             if (demo != null) {
                 Text("Demo mode — choose who to sign in as", style = HType.section, color = Sage.Ink)
                 Text("Sample data only. Switch accounts from Settings → Log out.", style = HType.caption, color = Sage.Muted)

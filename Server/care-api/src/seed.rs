@@ -295,7 +295,25 @@ pub async fn run(db: &Db, files: &dyn ObjectStore) -> Result<bool> {
         seed_base(db, files).await?;
         true
     };
-    Ok(seed_extra(db).await? > 0 || base)
+    let extra = seed_extra(db).await? > 0;
+    seed_media(db, files).await?;
+    Ok(extra || base)
+}
+
+/// Seeded files are written straight to the store, so they never pass through the media
+/// consumer: make their thumbnails and page counts here. Also fills in files seeded before
+/// thumbnails existed. Cheap when nothing is missing.
+async fn seed_media(db: &Db, files: &dyn ObjectStore) -> Result<()> {
+    let mut items = Vec::new();
+    let owners = people().into_iter().chain(extra_people()).filter(|p| p.role == Role::Patient).map(|p| p.id);
+    for owner in owners {
+        for status in [ItemStatus::Open, ItemStatus::Closed] {
+            items.extend(db.owner_partition(owner, status, 500).await?.into_iter().map(|s| s.id));
+        }
+    }
+    let n = crate::worker::backfill_media(db, files, &items).await?;
+    if n > 0 { tracing::info!("made thumbnails for {n} seeded files"); }
+    Ok(())
 }
 
 async fn seed_base(db: &Db, files: &dyn ObjectStore) -> Result<()> {
@@ -408,5 +426,14 @@ mod tests {
         for d in ["Cardiologist", "Urologist", "Paediatrician"] {
             assert!(extra.iter().any(|p| p.headline.is_some_and(|h| h.ends_with(d))), "{d}");
         }
+    }
+
+    #[test]
+    fn sample_pdf_first_page_becomes_a_320px_thumbnail() {
+        let pdf = sample_pdf("Reference ranges", 2).unwrap();
+        // None = pdftoppm isn't installed here (the Docker image has it); nothing to check then.
+        let Some(jpeg) = crate::worker::pdf_thumbnail(&pdf).unwrap() else { return };
+        let img = image::load_from_memory(&jpeg).unwrap();
+        assert_eq!(img.width().max(img.height()), 320);
     }
 }

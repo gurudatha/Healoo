@@ -358,8 +358,7 @@ struct DataItemView: View {
         VStack(alignment: .leading, spacing: 0) {
             ZStack {
                 Sage.preview
-                if a.kind == .image { AttachmentImage(attachment: a, contentMode: .fill) }
-                else { Image(systemName: "doc.richtext").font(.system(size: 30)).foregroundStyle(Sage.muted) }
+                AttachmentPreview(attachment: a)
             }
             .frame(width: 132, height: 110).clipped()
             VStack(alignment: .leading, spacing: 1) {
@@ -484,9 +483,12 @@ struct FlowLayout: Layout {
 }
 
 /// Loads an image attachment from the bundle, a local file or a presigned URL.
+/// `thumbnail: true` (cards, thumbnail strip) loads the small server thumbnail and falls back to
+/// the full image only when there is none, so opening an item doesn't download every photo.
 struct AttachmentImage: View {
     let attachment: Attachment
     var contentMode: ContentMode = .fit
+    var thumbnail = false
     @State private var image: UIImage?
     @State private var failed = false
 
@@ -496,12 +498,38 @@ struct AttachmentImage: View {
             else if failed { Image(systemName: "photo").foregroundStyle(Sage.muted) }
             else { ProgressView() }
         }
-        .task(id: attachment.uri) {
+        .task(id: "\(attachment.uri)|\(thumbnail)") {
             do {
-                let url = try await AttachmentStore.localURL(for: attachment)
-                image = UIImage(contentsOfFile: url.path)
+                var url: URL?
+                if thumbnail { url = try? await AttachmentStore.thumbnailURL(for: attachment) }
+                // No thumbnail: only an image falls back to its full file (never download a whole PDF for a card).
+                if url == nil {
+                    guard attachment.kind == .image else { failed = true; return }
+                    url = try await AttachmentStore.localURL(for: attachment)
+                }
+                image = url.flatMap { UIImage(contentsOfFile: $0.path) }
                 failed = image == nil
             } catch { failed = true }
+        }
+    }
+}
+
+/// Preview for a card or the viewer's strip: the thumbnail for images and PDFs; a PDF with no
+/// thumbnail yet shows an icon (the PDF itself downloads only when opened).
+struct AttachmentPreview: View {
+    let attachment: Attachment
+    var iconSize: CGFloat = 30
+    var iconColor: Color = Sage.muted
+
+    var body: some View {
+        if attachment.kind == .image {
+            AttachmentImage(attachment: attachment, contentMode: .fill, thumbnail: true)
+        } else if attachment.thumbUri?.isEmpty == false {
+            // A page is taller than the card: show its top, where the heading is.
+            AttachmentImage(attachment: attachment, contentMode: .fill, thumbnail: true)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).clipped()
+        } else {
+            Image(systemName: "doc.richtext").font(.system(size: iconSize)).foregroundStyle(iconColor)
         }
     }
 }
@@ -572,8 +600,7 @@ struct AttachmentViewer: View {
                         Button { withAnimation { index = i } } label: {
                             ZStack {
                                 Color.white.opacity(0.1)
-                                if a.kind == .image { AttachmentImage(attachment: a, contentMode: .fill) }
-                                else { Image(systemName: "doc.richtext").foregroundStyle(.white) }
+                                AttachmentPreview(attachment: a, iconSize: 17, iconColor: .white)
                             }
                             .frame(width: 56, height: 56).clipShape(RoundedRectangle(cornerRadius: 10))
                             .overlay(RoundedRectangle(cornerRadius: 10).stroke(i == index ? .white : .clear, lineWidth: 2))

@@ -11,6 +11,11 @@ struct LandingView: View {
     @State private var error: String?
     @State private var query = ""
     @State private var role: Role? = .doctor
+    /// Dashboard filter: a PartKind (REPORT, MESSAGE or APPOINTMENT), or nil for all open items.
+    @State private var filter: String?
+    /// "See all": every open item instead of the latest `preview`.
+    @State private var showAll = false
+    private let preview = 20, all = 100
 
     var body: some View {
         VStack(spacing: 0) {
@@ -24,13 +29,22 @@ struct LandingView: View {
                     }
                     .padding(.bottom, 6)
 
-                    SectionHeader(title: "Open items", action: "See all") { openSearch(nil) }
+                    // "See all" expands the list in place (it used to open Search, which lists people, not items).
+                    let more = showAll || (items?.count ?? 0) >= preview
+                    SectionHeader(title: filterTitle, action: more ? (showAll ? "Show fewer" : "See all") : nil) {
+                        showAll.toggle(); Task { await load() }
+                    }
+                    if let f = filter {
+                        Button("Clear filter") { toggleFilter(f) }
+                            .font(HFont.small).foregroundStyle(Sage.primary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
 
                     if let error {
                         ErrorView(message: error) { Task { await load() } }
                     } else if let items {
                         if items.isEmpty {
-                            Text("Nothing open right now. New reports, messages and bookings will appear here.")
+                            Text(filter == nil ? "Nothing open right now. New reports, messages and bookings will appear here." : "No open items with \(filterNoun).")
                                 .font(HFont.body).foregroundStyle(Sage.muted).padding(.vertical, 16)
                         }
                         ForEach(items) { item in
@@ -68,9 +82,9 @@ struct LandingView: View {
             }
             Spacer(minLength: 8)
             HStack(spacing: 8) {
-                counter(dashboard?.openReports, "Open reports")
-                counter(dashboard?.unreadMessages, "Unread messages")
-                counter(dashboard?.upcomingAppointments, "Appointments")
+                counter(dashboard?.openReports, "Open reports", kind: PartKind.report)
+                counter(dashboard?.unreadMessages, "Unread messages", kind: PartKind.message)
+                counter(dashboard?.upcomingAppointments, "Appointments", kind: PartKind.appointment)
             }
         }
         .padding(.horizontal, 20).padding(.top, 8).padding(.bottom, 16)
@@ -82,15 +96,41 @@ struct LandingView: View {
         switch Calendar.current.component(.hour, from: Date()) { case 0..<12: "Good morning"; case 12..<17: "Good afternoon"; default: "Good evening" }
     }
 
-    private func counter(_ value: Int?, _ label: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(value.map(String.init) ?? "–").font(HFont.counter).foregroundStyle(.white)
-            Text(label).font(HFont.small).foregroundStyle(Sage.onPrimarySoft).lineLimit(1).minimumScaleFactor(0.85)
+    /// A dashboard tile; tapping it filters the open items. The selected tile turns light, and
+    /// tapping it again clears the filter.
+    private func counter(_ value: Int?, _ label: String, kind: String) -> some View {
+        let selected = filter == kind
+        return Button { toggleFilter(kind) } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(value.map(String.init) ?? "–").font(HFont.counter).foregroundStyle(selected ? Sage.primary : .white)
+                Text(label).font(HFont.small).foregroundStyle(selected ? Sage.ink : Sage.onPrimarySoft).lineLimit(1).minimumScaleFactor(0.85)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            .background(selected ? Color.white : Sage.primaryRaised, in: RoundedRectangle(cornerRadius: 14))
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 12).padding(.vertical, 10)
-        .background(Sage.primaryRaised, in: RoundedRectangle(cornerRadius: 14))
+        .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    private func toggleFilter(_ kind: String) {
+        filter = filter == kind ? nil : kind
+        items = nil
+        Task { await load() }
+    }
+
+    private var filterTitle: String {
+        switch filter {
+        case PartKind.report: "Open items · Reports"
+        case PartKind.message: "Open items · Messages"
+        case PartKind.appointment: "Open items · Appointments"
+        default: "Open items"
+        }
+    }
+
+    private var filterNoun: String {
+        switch filter { case PartKind.report: "reports"; case PartKind.message: "messages"; default: "appointments" }
     }
 
     private func openSearch(_ role: Role?) { router.home.append(Route.search(query: query, role: role)) }
@@ -100,7 +140,7 @@ struct LandingView: View {
         do {
             me = try await env.repo.me()
             dashboard = try await env.repo.dashboard()
-            items = try await env.repo.openItems(limit: 20)
+            items = try await env.repo.openItems(limit: showAll ? all : preview, kind: filter)
         } catch { self.error = "Couldn't load your items. Check your connection and try again." }
     }
 }

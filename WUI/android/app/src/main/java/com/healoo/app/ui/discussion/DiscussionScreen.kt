@@ -93,7 +93,7 @@ fun DiscussionScreen(itemId: String, onBack: () -> Unit, onOpenItem: (String) ->
                 else -> {
                     val listState = rememberLazyListState()
                     LaunchedEffect(vm.messages.size) { if (vm.messages.isNotEmpty()) listState.animateScrollToItem(vm.messages.lastIndex) }
-                    LazyColumn(
+                    ScrollbarLazyColumn(
                         state = listState, modifier = Modifier.weight(1f),
                         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
