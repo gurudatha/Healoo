@@ -1,0 +1,34 @@
+{
+  "_comment": [
+    "Bottom-bar operations per page — the single place to change them for Android and iOS.",
+    "Both apps bundle this file at build time and read it at start-up.",
+    "pages: operations in display order. The first maxVisible whose 'requires' all hold are shown;",
+    "the rest go behind the three-dot (More) button. Unknown ids are ignored by older apps.",
+    "requires: connected | not_connected | viewer_patient | viewer_clinical (doctor, assistant, lab, hospital).",
+    "icon: a key each app maps to its own icon set (see ActionBar.kt / OperationBar.swift)."
+  ],
+  "version": 1,
+  "maxVisible": 4,
+  "pageForRole": { "DOCTOR": "doctor", "HOSPITAL": "hospital", "*": "user" },
+  "operations": {
+    "home":             { "label": "Home",        "icon": "home" },
+    "search":           { "label": "Search",      "icon": "search" },
+    "upload":           { "label": "Upload",      "icon": "upload" },
+    "messages":         { "label": "Messages",    "icon": "chat" },
+    "settings":         { "label": "Settings",    "icon": "settings" },
+
+    "connect":          { "label": "Add contact", "icon": "person_add", "requires": ["not_connected"] },
+    "message":          { "label": "Message",     "icon": "chat",       "requires": ["connected"] },
+    "history":          { "label": "History",     "icon": "history",    "requires": ["connected"] },
+    "share_document":   { "label": "Share",       "icon": "share",      "requires": ["connected"] },
+    "upload_for":       { "label": "Upload",      "icon": "upload",     "requires": ["connected"] },
+    "book_appointment": { "label": "Book",        "icon": "event" },
+    "search_doctors":   { "label": "Doctors",     "icon": "doctor" }
+  },
+  "pages": {
+    "global":   ["home", "search", "upload", "messages", "settings"],
+    "user":     ["connect", "message", "history", "share_document", "upload_for"],
+    "doctor":   ["connect", "message", "history", "share_document", "book_appointment", "upload_for"],
+    "hospital": ["search_doctors", "book_appointment"]
+  }
+}
