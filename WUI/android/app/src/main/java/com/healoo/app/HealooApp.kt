@@ -88,8 +88,7 @@ class HealooApplication : Application(), coil.ImageLoaderFactory {
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
-        // Headers are light (#AAB5AD), so the status bar uses dark icons.
-        enableEdgeToEdge(statusBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT))
+        enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
         super.onCreate(savedInstanceState)
         DeepLinks.handle(intent)
         setContent { HealooTheme { HealooRoot() } }

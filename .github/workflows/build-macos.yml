@@ -1,0 +1,73 @@
+# Builds the Healoo iPhone app (WUI/ios) on a GitHub-hosted Mac, in Debug and Release, for the
+# iOS Simulator. No Apple developer account or signing certificate is needed for this.
+# The compiled apps are uploaded as the "macos-executable" artifact (Actions run page → Artifacts).
+name: Build macOS App
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "WUI/ios/**"
+      - "WUI/page-operations.json"
+      - ".github/workflows/build-macos.yml"
+  pull_request:
+    paths:
+      - "WUI/ios/**"
+      - "WUI/page-operations.json"
+      - ".github/workflows/build-macos.yml"
+  workflow_dispatch:        # "Run workflow" button on the Actions tab
+
+jobs:
+  build-macos:
+    # macos-13 runners were retired by GitHub (December 2025); macos-15 has Xcode 16.
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      XCODE_VERSION: "16.4"
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Select Xcode Version
+        run: |
+          if [ -d "/Applications/Xcode_${XCODE_VERSION}.app" ]; then
+            sudo xcode-select -s "/Applications/Xcode_${XCODE_VERSION}.app"
+          else
+            echo "Xcode ${XCODE_VERSION} is not on this runner; using the default: $(xcode-select -p)"
+          fi
+          xcodebuild -version
+
+      # The Xcode project is generated from WUI/ios/project.yml (it is not kept in git).
+      - name: Generate Xcode Project
+        working-directory: WUI/ios
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Compile with Xcodebuild
+        working-directory: WUI/ios
+        run: |
+          set -o pipefail
+          for configuration in Debug Release; do
+            echo "::group::xcodebuild $configuration"
+            xcodebuild build \
+              -project Healoo.xcodeproj \
+              -scheme "Healoo" \
+              -configuration "$configuration" \
+              -sdk iphonesimulator \
+              -destination "generic/platform=iOS Simulator" \
+              SYMROOT="$GITHUB_WORKSPACE/build" \
+              CODE_SIGNING_ALLOWED=NO
+            echo "::endgroup::"
+          done
+          # build/Debug-iphonesimulator/Healoo.app and build/Release-iphonesimulator/Healoo.app
+          ls -la "$GITHUB_WORKSPACE/build"
+
+      - name: Upload Compiled Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-executable
+          path: build/
+          if-no-files-found: error
+          retention-days: 14

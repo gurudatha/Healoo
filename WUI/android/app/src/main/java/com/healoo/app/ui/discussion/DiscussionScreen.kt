@@ -141,7 +141,7 @@ private fun Bubble(m: Message, mine: Boolean, name: String) {
         ) {
             Text(m.body, style = HType.body.copy(fontSize = 14.sp), color = if (mine) Sage.OnPrimary else Sage.Ink)
             Text("$name · ${m.sentAt.drop(11).take(5)}", style = HType.tiny.copy(fontWeight = FontWeight.Normal),
-                color = if (mine) Sage.OnPrimarySoft else Sage.Muted)
+                color = if (mine) Sage.OnPrimaryLine else Sage.Muted)
         }
     }
 }

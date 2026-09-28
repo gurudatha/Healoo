@@ -20,6 +20,8 @@ targets:
   Healoo:
     type: application
     platform: iOS
+    # A shared "Healoo" scheme, so `xcodebuild -scheme Healoo` also works on CI (.github/workflows).
+    scheme: {}
     sources:
       - path: Healoo
       # Bottom-bar operations per page, shared with Android (read by Components/OperationBar.swift).

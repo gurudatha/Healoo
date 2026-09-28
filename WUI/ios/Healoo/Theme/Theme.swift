@@ -10,20 +10,19 @@ extension Color {
     }
 }
 
-/// Sage Clinic tokens — mirrors design-tokens.json. Theme colour #AAB5AD (grey-green).
+/// Sage Clinic tokens — mirrors design-tokens.json. Theme colour #2F6B5E (sage green).
 ///
-/// Primary is light, so the roles are split (same as Android's Theme.kt):
-/// - `primary` / `primaryRaised` are surfaces (headers, buttons, selected chips, tiles), with
-///   `onPrimary` / `onPrimarySoft` text and icons on them (white on #AAB5AD would be ~2:1 contrast).
-/// - `accent`, a darker shade of the same colour, is for links, icons and text on light backgrounds.
+/// Roles (same as Android's Theme.kt): `primary` / `primaryRaised` are surfaces, with `onPrimary` /
+/// `onPrimarySoft` text and icons on them; `accent` is for links, icons and text on light
+/// backgrounds. With this dark green, accent is the primary colour itself and onPrimary is white.
 enum Sage {
-    static let primary = Color(hex: 0xAAB5AD)
-    static let primaryRaised = Color(hex: 0xC3CBC5)
-    static let primaryPressed = Color(hex: 0x97A39A)
-    static let onPrimary = Color(hex: 0x1F2A27)
-    static let onPrimarySoft = Color(hex: 0x34403A)
-    static let onPrimaryLine = Color(hex: 0x7F8C84)
-    static let accent = Color(hex: 0x4B5A51)
+    static let primary = Color(hex: 0x2F6B5E)
+    static let primaryRaised = Color(hex: 0x3C7A6C)
+    static let primaryPressed = Color(hex: 0x1F4A40)
+    static let onPrimary = Color.white
+    static let onPrimarySoft = Color(hex: 0xE4EFEB)
+    static let onPrimaryLine = Color(hex: 0xCFE3DC)
+    static let accent = Color(hex: 0x2F6B5E)
     /// Background of closed items (open ones are white).
     static let closed = Color(hex: 0xE3E4E2)
 
@@ -41,8 +40,8 @@ enum Sage {
     static let divider = Color(hex: 0xE4E0D6)
     static let rowDivider = Color(hex: 0xEEEBE4)
 
-    static let sageTint = Color(hex: 0xE4E9E5)
-    static let avatar = Color(hex: 0xE6EBE7)
+    static let sageTint = Color(hex: 0xE3EEEA)
+    static let avatar = Color(hex: 0xE7EFEC)
     static let clay = Color(hex: 0x9A4A26)
     static let clayTint = Color(hex: 0xF6E6DC)
     static let clayBorder = Color(hex: 0xE8CFC0)
@@ -50,7 +49,7 @@ enum Sage {
     static let sandTint = Color(hex: 0xEFEADF)
     static let sandInk = Color(hex: 0x4A4436)
     static let switchOff = Color(hex: 0xCFCAC0)
-    static let dashed = Color(hex: 0xB8C1BA)
+    static let dashed = Color(hex: 0xB9C9C3)
     static let viewerBackground = Color(hex: 0x141A18)
 }
 

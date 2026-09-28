@@ -14,21 +14,20 @@ import androidx.compose.ui.unit.sp
 import com.healoo.app.R
 
 /**
- * Sage Clinic tokens — mirrors design-tokens.json. Theme colour #AAB5AD (grey-green).
+ * Sage Clinic tokens — mirrors design-tokens.json. Theme colour #2F6B5E (sage green).
  *
- * Primary is light, so the roles are split:
- * - [Primary] and [PrimaryRaised] are surfaces (headers, buttons, selected chips, tiles), with
- *   [OnPrimary] / [OnPrimarySoft] text and icons on them (white on #AAB5AD would be ~2:1 contrast).
- * - [Accent], a darker shade of the same colour, is for links, icons and text on light backgrounds.
+ * Roles: [Primary] / [PrimaryRaised] are surfaces (headers, buttons, selected chips, tiles), with
+ * [OnPrimary] / [OnPrimarySoft] text and icons on them; [Accent] is for links, icons and text on
+ * light backgrounds. With this dark green, Accent is the primary colour itself and OnPrimary is white.
  */
 object Sage {
-    val Primary = Color(0xFFAAB5AD)
-    val PrimaryRaised = Color(0xFFC3CBC5)
-    val PrimaryPressed = Color(0xFF97A39A)
-    val OnPrimary = Color(0xFF1F2A27)
-    val OnPrimarySoft = Color(0xFF34403A)
-    val OnPrimaryLine = Color(0xFF7F8C84)
-    val Accent = Color(0xFF4B5A51)
+    val Primary = Color(0xFF2F6B5E)
+    val PrimaryRaised = Color(0xFF3C7A6C)
+    val PrimaryPressed = Color(0xFF1F4A40)
+    val OnPrimary = Color(0xFFFFFFFF)
+    val OnPrimarySoft = Color(0xFFE4EFEB)
+    val OnPrimaryLine = Color(0xFFCFE3DC)
+    val Accent = Color(0xFF2F6B5E)
     /** Background of closed items (open ones are white). */
     val Closed = Color(0xFFE3E4E2)
 
@@ -46,8 +45,8 @@ object Sage {
     val Divider = Color(0xFFE4E0D6)
     val RowDivider = Color(0xFFEEEBE4)
 
-    val SageTint = Color(0xFFE4E9E5)
-    val Avatar = Color(0xFFE6EBE7)
+    val SageTint = Color(0xFFE3EEEA)
+    val Avatar = Color(0xFFE7EFEC)
     val Clay = Color(0xFF9A4A26)
     val ClayTint = Color(0xFFF6E6DC)
     val ClayBorder = Color(0xFFE8CFC0)
@@ -55,7 +54,7 @@ object Sage {
     val SandTint = Color(0xFFEFEADF)
     val SandInk = Color(0xFF4A4436)
     val SwitchOff = Color(0xFFCFCAC0)
-    val Dashed = Color(0xFFB8C1BA)
+    val Dashed = Color(0xFFB9C9C3)
     val ViewerBackground = Color(0xFF141A18)
 }
 
