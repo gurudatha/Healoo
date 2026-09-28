@@ -1,0 +1,6 @@
+// Copy to Local.xcconfig (same folder) and put your own team ID here. Local.xcconfig is not in git.
+//
+// Where to find it: in Xcode, Settings → Accounts, sign in with your Apple ID; your team shows as
+// "Your Name (Personal Team)". Select the team in the Healoo target's Signing & Capabilities once,
+// then Build Settings → search "Development Team" shows the 10-character ID (e.g. A1B2C3D4E5).
+DEVELOPMENT_TEAM = A1B2C3D4E5

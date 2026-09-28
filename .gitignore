@@ -26,6 +26,7 @@ WUI/android/app/google-services.json
 WUI/ios/*.xcodeproj/
 WUI/ios/DerivedData/
 WUI/ios/Healoo/GoogleService-Info.plist
+WUI/ios/Configs/Local.xcconfig
 xcuserdata/
 
 # ---- Editors / OS ----

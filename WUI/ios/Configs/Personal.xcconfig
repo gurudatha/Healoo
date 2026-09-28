@@ -1,0 +1,6 @@
+// Settings for the "Personal" configuration (Xcode's free Personal Team, your own iPhone).
+// Your team ID goes in Local.xcconfig next to this file, which is not in git:
+//   cp Configs/Local.xcconfig.example Configs/Local.xcconfig   and edit it.
+// Without it, pick your team in Xcode (target Healoo → Signing & Capabilities); that choice is
+// lost the next time xcodegen runs, which is why Local.xcconfig exists.
+#include? "Local.xcconfig"

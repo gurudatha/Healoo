@@ -59,6 +59,40 @@ instead of 70 MB. Debug builds are not shrunk, so they build faster (44 MB).
 
 The camera needs a real device. On the simulator the Camera button explains this, and Images and PDFs still work.
 
+### iPhone with a Personal Team (free Apple ID)
+
+For testing on your own iPhone without a paid Apple Developer account. Needs a Mac with Xcode 16,
+an iPhone with iOS 17 or later, and a cable (or the same Wi-Fi after the first run).
+
+1. In Xcode, Settings → Accounts → **+** → Apple ID, and sign in. Your team appears as
+   "Your Name (Personal Team)".
+2. `cp Configs/Local.xcconfig.example Configs/Local.xcconfig` and put your team ID in it (the file
+   explains where to find it; it is not in git). Then `xcodegen generate` and open `Healoo.xcodeproj`.
+3. Choose the **Healoo Personal Team** scheme and your iPhone as the destination, then Run.
+4. On the iPhone, the first time:
+   - Settings → Privacy & Security → **Developer Mode** → on (the phone restarts).
+   - Settings → General → **VPN & Device Management** → your Apple ID → **Trust**.
+
+The **Personal** configuration (used by that scheme) is a Debug build that:
+
+- signs automatically with your team, from `Configs/Local.xcconfig`;
+- uses the bundle ID `com.healoo.app.dev.<your team ID>`, because `com.healoo.app` may already
+  belong to someone else;
+- leaves out the Push Notifications capability, which Personal Teams can't use. Everything else
+  works, including the camera and QR scanning.
+
+Apple's limits for Personal Teams: the app stops opening after **7 days** (run it from Xcode again
+to renew), at most 3 apps per device, and it can't be built by the GitHub workflow (a free account
+can't sign on CI). The normal Debug and Release configurations are unchanged.
+
+**Demo data or the trial server.** By default (`HealooUseFakeData: true`) the app runs on demo
+data, with no server. To use the LAN trial server instead, set `HealooUseFakeData: false` and
+`HealooAPIBaseURL: https://<computer's LAN IP>:8443/` in `project.yml`, run `xcodegen generate`,
+and trust the server's certificate on the phone: AirDrop or email yourself
+`Server/deploy/lan/healoo-local-ca.crt`, open it, install the profile in Settings, then turn it on
+under Settings → General → About → Certificate Trust Settings. Developer sign-in works, since this
+is a Debug build.
+
 ## 4. Screens → design document
 
 | Screen | Android | iOS | Doc |
