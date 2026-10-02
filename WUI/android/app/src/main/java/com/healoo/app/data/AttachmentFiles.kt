@@ -19,8 +19,9 @@ import java.security.MessageDigest
  * (see HealooApplication), so the two stay within about 100 MB.
  */
 object AttachmentFiles {
-    const val MAX_FILES = 15
-    const val MAX_BYTES = 90L * 1024 * 1024
+    /** From file_cache in WUI/app-config.json (defaults: 15 files, 90 MB). */
+    val MAX_FILES: Int get() = AppConfig.current.fileCache.maxFiles
+    val MAX_BYTES: Long get() = AppConfig.current.fileCache.maxMb * 1024L * 1024L
     /** The newest files are never evicted, even over the byte limit (they may be on screen). */
     private const val KEEP_NEWEST = 3
 

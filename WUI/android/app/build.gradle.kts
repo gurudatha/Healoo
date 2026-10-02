@@ -75,23 +75,24 @@ val healooDevNetworkConfig = tasks.register<HealooDevNetworkConfig>("healooDevNe
     outputDir.set(layout.buildDirectory.dir("generated/healoo/devNetworkConfig"))
 }
 
-/** Bundles WUI/page-operations.json (bottom-bar operations, shared with iOS) as an asset. */
+/** Bundles the files shared with iOS as assets: page-operations.json (bottom bar) and app-config.json (settings). */
 abstract class HealooSharedAssets : DefaultTask() {
-    @get:InputFile @get:PathSensitive(PathSensitivity.NAME_ONLY)
-    abstract val operationsFile: RegularFileProperty
+    @get:InputFiles @get:PathSensitive(PathSensitivity.NAME_ONLY)
+    abstract val sharedFiles: ConfigurableFileCollection
 
     @get:OutputDirectory
     abstract val outputDir: DirectoryProperty
 
     @TaskAction
     fun copy() {
-        val src = operationsFile.get().asFile
-        src.copyTo(File(outputDir.get().asFile, src.name), overwrite = true)
+        val out = outputDir.get().asFile
+        out.listFiles()?.forEach { it.delete() }
+        sharedFiles.files.forEach { src -> src.copyTo(File(out, src.name), overwrite = true) }
     }
 }
 
 val healooSharedAssets = tasks.register<HealooSharedAssets>("healooSharedAssets") {
-    operationsFile.set(rootProject.file("../page-operations.json"))
+    sharedFiles.from(rootProject.file("../page-operations.json"), rootProject.file("../app-config.json"))
     outputDir.set(layout.buildDirectory.dir("generated/healoo/sharedAssets"))
 }
 

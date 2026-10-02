@@ -34,7 +34,16 @@ class PageOperationsTest {
 
     @Test fun b2_user_page_is_for_that_user() =
         assertEquals(listOf("message", "history", "share_document", "upload_for") to emptyList<String>(),
-            ids(PageKind.USER, doctorViewer, user(Role.PATIENT)))
+            ids(PageKind.USER, user(Role.LAB), user(Role.PATIENT)))
+
+    /** Vitals_Design.md: only a doctor gets Vitals on a patient's page (Upload moves to More). */
+    @Test fun b8_vitals_is_for_a_doctor_on_a_patients_page() {
+        assertEquals(listOf("message", "history", "share_document", "vitals") to listOf("upload_for"), ids(PageKind.USER, doctorViewer, user(Role.PATIENT)))
+        for (viewer in listOf(patient, user(Role.LAB), user(Role.HOSPITAL), user(Role.ASSISTANT)))
+            assertTrue("${viewer.primaryRole}", "vitals" !in ids(PageKind.USER, viewer, user(Role.PATIENT)).let { it.first + it.second })
+        assertTrue("vitals" !in ids(PageKind.USER, doctorViewer, user(Role.LAB)).let { it.first + it.second })               // not a patient
+        assertTrue("vitals" !in ids(PageKind.USER, doctorViewer, user(Role.PATIENT, connected = false)).let { it.first + it.second })
+    }
 
     @Test fun b3_doctor_page_adds_booking_and_moves_the_fifth_to_more() =
         assertEquals(listOf("message", "history", "share_document", "book_appointment") to listOf("upload_for"),

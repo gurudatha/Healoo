@@ -9,6 +9,7 @@ import com.healoo.app.auth.AuthManager
 import com.healoo.app.realtime.RealtimeClient
 import retrofit2.http.PUT
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -28,6 +29,7 @@ import retrofit2.http.Query
 /** Endpoints from design doc 4.3 and DataItem_Design.md section 4. */
 interface HealooApi {
     @GET("v1/me") suspend fun me(): UserProfile
+    @GET("v1/config") suspend fun serverConfig(): ServerConfig
     @GET("v1/dashboard") suspend fun dashboard(): Dashboard
     @GET("v1/items") suspend fun items(@Query("status") status: String, @Query("limit") limit: Int, @Query("kind") kind: String? = null): PageResult<DataItem>
     @GET("v1/items/{id}") suspend fun item(@Path("id") id: String): DataItem
@@ -50,6 +52,15 @@ interface HealooApi {
     @GET("v1/search") suspend fun search(@Query("q") q: String, @Query("type") type: String?): PageResult<UserProfile>
     @GET("v1/hospitals/{id}/doctors") suspend fun hospitalDoctors(@Path("id") id: String): PageResult<UserProfile>
     @GET("v1/connections") suspend fun connections(): PageResult<UserProfile>
+    @GET("v1/vitals/types") suspend fun vitalTypes(@Query("user") user: String?): PageResult<VitalType>
+    @POST("v1/vitals/types") suspend fun addVitalType(@Body body: NewVitalType): VitalType
+    @GET("v1/vitals/latest") suspend fun vitalLatest(@Query("user") user: String?): PageResult<VitalReading>
+    @GET("v1/vitals/readings") suspend fun vitalReadings(@Query("user") user: String?, @Query("code") code: String?, @Query("limit") limit: Int): PageResult<VitalReading>
+    @POST("v1/vitals/readings") suspend fun recordVital(@Body body: NewVitalReading): VitalReading
+    @GET("v1/vitals/config") suspend fun vitalSettings(): VitalSettings
+    @PUT("v1/vitals/ranges/{user}/{code}") suspend fun setVitalRange(@Path("user") user: String, @Path("code") code: String, @Body body: VitalRangeUpdate): VitalType
+    @GET("v1/vitals/alerts") suspend fun vitalAlerts(@Query("severity") severity: String?, @Query("sort") sort: String): VitalAlertPage
+    @POST("v1/vitals/alerts/{id}/read") suspend fun readVitalAlert(@Path("id") id: String)
     @GET("v1/admin/doctors") suspend fun adminDoctors(): PageResult<AdminAccount>
     @POST("v1/admin/users") suspend fun adminCreateUser(@Body body: NewAccount): AdminAccount
     @POST("v1/admin/doctors") suspend fun adminCreateDoctor(@Body body: NewAccount): AdminAccount
@@ -77,7 +88,9 @@ class RemoteRepository(
 ) : HealooRepository {
     private val token: () -> String? = { TokenStore.accessToken }
 
-    private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
+    // Tolerant on purpose (forward/backward compatibility): unknown fields are ignored, and a
+    // null or unknown enum value falls back to the field's default instead of failing the call.
+    private val json = Json { ignoreUnknownKeys = true; explicitNulls = false; coerceInputValues = true }
 
     private val http = OkHttpClient.Builder()
         .addInterceptor { chain ->
@@ -106,10 +119,27 @@ class RemoteRepository(
         .build()
         .create(HealooApi::class.java)
 
-    override suspend fun me() = api.me()
+    // ---- offline copy of what the Messages screens need (OfflineCache; limits in WUI/app-config.json) ----
+    private val offline = OfflineCache.create(context)
+    override fun clearOfflineCache() = offline.clear()
+
+    /** Loads from the server and keeps a copy; when the server can't be reached, returns the copy. */
+    private suspend fun <T> cached(key: String, serializer: kotlinx.serialization.KSerializer<T>, date: (T) -> Long = { System.currentTimeMillis() }, load: suspend () -> T): T =
+        try {
+            load().also { withContext(Dispatchers.IO) { offline.put(key, serializer, it, date(it)) } }
+        } catch (e: java.io.IOException) {
+            withContext(Dispatchers.IO) { offline.get(key, serializer) } ?: throw e
+        }
+
+    override suspend fun me() = cached(OfflineCache.ME, UserProfile.serializer()) {
+        // Signing in is also when the app picks up the server's upload limits.
+        api.me().also { runCatching { Limits.apply(api.serverConfig().limits) } }
+    }
     override suspend fun dashboard() = api.dashboard()
     override suspend fun items(status: ItemStatus, limit: Int, kind: String?) = api.items(status.name, limit, kind).data
-    override suspend fun item(id: String) = api.item(id).let { it.copy(attachments = it.attachments.sortedBy { a -> a.position }) }
+    override suspend fun item(id: String) = cached(OfflineCache.item(id), DataItem.serializer()) {
+        api.item(id).let { it.copy(attachments = it.attachments.sortedBy { a -> a.position }) }
+    }
     override suspend fun user(id: String) = api.user(id)
     override suspend fun sharedItems(userId: String) = api.shared(userId).data
     override suspend fun search(query: String, role: Role?) = api.search(query, role?.name).data
@@ -144,8 +174,16 @@ class RemoteRepository(
 
     // ---- add to an item ----
 
-    override suspend fun itemMessages(itemId: String) = api.messages(itemId).data
-    override suspend fun sendItemMessage(itemId: String, body: String) = api.send(itemId, NewMessage(body, clientId()))
+    override suspend fun itemMessages(itemId: String) =
+        cached(OfflineCache.messages(itemId), ListSerializer(Message.serializer()), OfflineCache::dateOf) { api.messages(itemId).data }
+    override suspend fun sendItemMessage(itemId: String, body: String) = api.send(itemId, NewMessage(body, clientId())).also { sent ->
+        // Keep the offline copy of this discussion current.
+        withContext(Dispatchers.IO) {
+            val key = OfflineCache.messages(itemId)
+            val list = offline.get(key, ListSerializer(Message.serializer())).orEmpty().filterNot { it.id == sent.id } + sent
+            offline.put(key, ListSerializer(Message.serializer()), list, OfflineCache.dateOf(list))
+        }
+    }
     override suspend fun addAttachments(itemId: String, files: List<PendingAttachment>, isReport: Boolean): DataItem {
         api.addAttachments(itemId, AddAttachmentsRequest(uploadFiles(files), isReport)); return item(itemId)
     }
@@ -161,8 +199,25 @@ class RemoteRepository(
     override suspend fun closeItem(itemId: String, feedback: String?, rating: Int?) = api.close(itemId, CloseRequest(feedback, rating))
     override suspend fun reopenItem(itemId: String) = api.reopen(itemId)
 
-    override suspend fun conversations(withUser: String?) = api.conversations(withUser).data
+    override suspend fun conversations(withUser: String?): List<Conversation> =
+        if (withUser != null) try { api.conversations(withUser).data } catch (e: java.io.IOException) {
+            // Offline: the saved full list, narrowed to this person.
+            withContext(Dispatchers.IO) { offline.get(OfflineCache.CONVERSATIONS, ListSerializer(Conversation.serializer())) }?.filter { it.other.id == withUser } ?: throw e
+        }
+        else cached(OfflineCache.CONVERSATIONS, ListSerializer(Conversation.serializer())) { api.conversations(null).data }
     override suspend fun calendar(from: String, to: String) = api.calendar(from, to).data
+
+    // ---- vitals ----
+
+    override suspend fun vitalTypes(userId: String?) = api.vitalTypes(userId).data
+    override suspend fun vitalLatest(userId: String?) = api.vitalLatest(userId).data
+    override suspend fun vitalReadings(userId: String?, code: String?, limit: Int) = api.vitalReadings(userId, code, limit).data
+    override suspend fun recordVital(reading: NewVitalReading) = api.recordVital(reading)
+    override suspend fun vitalSettings() = api.vitalSettings()
+    override suspend fun setVitalRange(userId: String, code: String, update: VitalRangeUpdate) = api.setVitalRange(userId, code, update)
+    override suspend fun addVitalType(type: NewVitalType) = api.addVitalType(type)
+    override suspend fun vitalAlerts(severity: Severity?, sort: AlertSort) = api.vitalAlerts(severity?.name, sort.key)
+    override suspend fun readVitalAlert(alertId: String) = api.readVitalAlert(alertId)
 
     // ---- administration ----
 

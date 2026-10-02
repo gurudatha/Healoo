@@ -21,6 +21,8 @@ pub mod net;
 pub mod policy;
 pub mod recurrence;
 pub mod seed;
+pub mod settings;
+pub mod vitals;
 pub mod store;
 pub mod worker;
 pub mod ws;

@@ -8,7 +8,7 @@ use crate::{
     recurrence,
     store::{
         items::Item,
-        parts::{local_millis, today_in, AlertRow, AppointmentRow, AttachmentRow, DEFAULT_TZ},
+        parts::{local_millis, today_in, AlertRow, AppointmentRow, AttachmentRow, default_tz},
         users::NewUser,
         Db,
     },
@@ -193,7 +193,7 @@ async fn appointment(db: &Db, it: &Item, doctor: Uuid, hospital: Option<Uuid>, d
         hospital_id: hospital,
         start_date: recurrence::fmt_date(date),
         start_time: time.into(),
-        timezone: Some(DEFAULT_TZ.into()),
+        timezone: Some(default_tz().into()),
         duration_min: Some(15),
         notes: Some(notes.into()),
         frequency: rec.map(|r| r.0.to_string()),
@@ -212,8 +212,8 @@ async fn alert(db: &Db, it: &Item, for_user: Uuid, kind: &str, text: &str, date:
         kind: Some(kind.into()),
         text: Some(text.into()),
         for_user,
-        fires_at: scylla::frame::value::CqlTimestamp(local_millis(date, t, DEFAULT_TZ)),
-        timezone: Some(DEFAULT_TZ.into()),
+        fires_at: scylla::frame::value::CqlTimestamp(local_millis(date, t, default_tz())),
+        timezone: Some(default_tz().into()),
         frequency: rec.map(|r| r.0.to_string()),
         period: rec.and_then(|r| r.1).map(str::to_string),
         appointment_id: None,
@@ -329,7 +329,7 @@ async fn seed_base(db: &Db, files: &dyn ObjectStore) -> Result<()> {
         db.connect_users(a, ra, na, b, rb, nb).await?;
     }
 
-    let today = today_in(DEFAULT_TZ);
+    let today = today_in(default_tz());
     let days = |n: i64| today + chrono::Duration::days(n);
     let rao = || grant(GranteeType::User, DR_RAO, "Dr. Anitha Rao", LAKSHMI);
     let mut count = 0;

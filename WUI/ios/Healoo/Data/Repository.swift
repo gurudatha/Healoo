@@ -49,6 +49,25 @@ protocol HealooRepository: AnyObject {
     /// Upcoming visits across items (YYYY-MM-DD, up to 62 days).
     func calendar(from: String, to: String) async throws -> [CalendarVisit]
 
+    // Vitals (Documentation/Vitals_Design.md); userId nil = the caller
+    /// Vitals the person has; ranges are filled in only when the caller is their doctor.
+    func vitalTypes(_ userId: String?) async throws -> [VitalType]
+    /// The newest reading of each vital (home tiles).
+    func vitalLatest(_ userId: String?) async throws -> [VitalReading]
+    /// Readings, newest entry first; `code` narrows to one vital.
+    func vitalReadings(_ userId: String?, code: String?, limit: Int) async throws -> [VitalReading]
+    /// The caller records their own reading; the server colours it and tells their doctors.
+    func recordVital(_ reading: NewVitalReading) async throws -> VitalReading
+    func vitalSettings() async throws -> VitalSettings
+    /// Doctor only: this patient's range for one vital.
+    func setVitalRange(_ userId: String, code: String, _ update: VitalRangeUpdate) async throws -> VitalType
+    /// Doctor only: a new vital for this patient.
+    func addVitalType(_ type: NewVitalType) async throws -> VitalType
+    /// Doctor dashboard: unread alerts and the red / yellow / green counts.
+    func vitalAlerts(severity: Severity?, sort: AlertSort) async throws -> VitalAlertPage
+    /// Removes an alert from the caller's active list.
+    func readVitalAlert(_ alertId: String) async throws
+
     // Administration (hospital administrators; users can't be deleted)
     /// The administrator's hospital's doctors, deactivated ones included.
     func adminDoctors() async throws -> [AdminAccount]
@@ -75,12 +94,15 @@ protocol HealooRepository: AnyObject {
     var events: AnyPublisher<RealtimeEvent, Never> { get }
     func startRealtime()
     func stopRealtime()
+    /// Removes everything kept on the phone for offline reading (called on sign-out).
+    func clearOfflineCache()
 }
 
 extension HealooRepository {
     func items(status: ItemStatus, limit: Int) async throws -> [DataItem] { try await items(status: status, limit: limit, kind: nil) }
     func openItems(limit: Int = 20, kind: String? = nil) async throws -> [DataItem] { try await items(status: .open, limit: limit, kind: kind) }
     func conversations() async throws -> [Conversation] { try await conversations(with: nil) }
+    func clearOfflineCache() {}
 }
 
 struct RepoError: LocalizedError {
@@ -115,6 +137,7 @@ final class AppEnvironment {
         Drafts.clear()   // another account must not see this one's unsent text
         await PushManager.shared.unregister(repo: repo)
         repo.stopRealtime()
+        repo.clearOfflineCache()   // another account must not read this one's saved messages
         if !useFakeData { await auth.logout() } else { auth.signedOut() }
     }
 }
@@ -591,6 +614,160 @@ final class MockRepository: HealooRepository {
         try await change(itemId) { s in s.item.accessList.removeAll { $0.grantId == grantId } }
     }
 
+    // MARK: Vitals (demo copy of the server's rule: green in range, yellow up to the margin, red beyond)
+    private static func vital(_ code: String, _ label: String, _ icon: String, _ unit: String, _ low: Double? = nil, _ high: Double? = nil, _ pos: Int) -> VitalType {
+        VitalType(code: code, label: label, icon: icon, unit: unit, components: [VitalComponent(key: "value", label: label, low: low, high: high)], marginPct: 30, position: pos)
+    }
+    private static let demoVitals: [VitalType] = [
+        vital("water", "Water", "water", "ml", nil, nil, 0),
+        VitalType(code: "bp", label: "BP", icon: "bp", unit: "mmHg", components: [
+            VitalComponent(key: "sys", label: "Systolic", low: 90, high: 120), VitalComponent(key: "dia", label: "Diastolic", low: 60, high: 80)], marginPct: 30, position: 1),
+        vital("sugar", "Sugar", "sugar", "mg/dL", 80, 120, 2),
+        vital("heart_rate", "Heart rate", "heart", "bpm", 60, 100, 3),
+        VitalType(code: "urine", label: "Urine", icon: "urine", unit: "ml", components: [
+            VitalComponent(key: "intake", label: "Water intake"), VitalComponent(key: "output", label: "Urine output")], marginPct: 30, position: 4,
+            ratio: VitalRatio(numerator: "output", denominator: "intake", greenMinPct: 85, yellowMinPct: 70)),
+        vital("weight", "Weight", "weight", "kg", nil, nil, 5),
+        vital("temperature", "Temperature", "temperature", "°F", 97, 99, 6),
+        vital("spo2", "Oxygen", "oxygen", "%", 95, 100, 7),
+        vital("sleep", "Sleep", "sleep", "hours", 6, 9, 8),
+    ]
+    private var customVitals: [String: [VitalType]] = [:]            // patient -> added by a doctor
+    private var vitalRanges: [String: VitalType] = [:]               // "patient|code" -> with the doctor's range
+    private var vitalLog: [VitalReading] = []                        // newest first
+    private var vitalInbox: [(doctor: String, alert: VitalAlert, read: Bool)] = []
+
+    private func isMyPatient(_ userId: String) -> Bool { raw(meId).primaryRole == .doctor && isConnected(meId, userId) }
+    private func vitalOwner(_ userId: String?) throws -> String {
+        let owner = userId ?? meId
+        guard owner == meId || isMyPatient(owner) else { throw RepoError("Vitals are visible to the person and to doctors in their contacts") }
+        return owner
+    }
+    private func fullTypes(_ owner: String) -> [VitalType] {
+        (Self.demoVitals + (customVitals[owner] ?? [])).map { vitalRanges["\(owner)|\($0.code)"] ?? $0 }.sorted { $0.position < $1.position }
+    }
+    private func colour(_ t: VitalType, _ values: [String: Double]) -> Severity {
+        let margin = Double(t.marginPct ?? 30) + 1e-9
+        var worst = Severity.green
+        for c in t.components {
+            guard let v = values[c.key] else { continue }
+            var pct: Double?
+            if let low = c.low, v < low { pct = low == 0 ? .infinity : (low - v) / low * 100 }
+            else if let high = c.high, v > high { pct = high == 0 ? .infinity : (v - high) / high * 100 }
+            guard let pct else { continue }
+            if pct > margin { return .red }
+            worst = .yellow
+        }
+        // Urine: output as a percentage of intake (85% or more green, from 70% yellow, less red).
+        if let r = t.ratio, let pct = r.percent(values) {
+            if pct + 1e-9 < (r.yellowMinPct ?? 0) { return .red }
+            if pct + 1e-9 < (r.greenMinPct ?? 0) { worst = .yellow }
+        }
+        return worst
+    }
+
+    func vitalSettings() async throws -> VitalSettings {
+        VitalSettings(icons: ["water", "bp", "sugar", "heart", "urine", "weight", "temperature", "oxygen", "sleep", "steps", "pain", "breath", "pill", "lab", "mood", "other"])
+    }
+
+    func vitalTypes(_ userId: String?) async throws -> [VitalType] {
+        await latency()
+        let owner = try vitalOwner(userId)
+        return fullTypes(owner).map { t in
+            guard owner == meId else { return t }            // ranges are not shown to the person themselves
+            var own = t
+            own.components = t.components.map { VitalComponent(key: $0.key, label: $0.label) }
+            own.marginPct = nil
+            own.ratio?.greenMinPct = nil
+            own.ratio?.yellowMinPct = nil
+            return own
+        }
+    }
+
+    func vitalReadings(_ userId: String?, code: String?, limit: Int) async throws -> [VitalReading] {
+        await latency()
+        let owner = try vitalOwner(userId)
+        return Array(vitalLog.filter { $0.userId == owner && (code == nil || $0.code == code) }.prefix(limit))
+    }
+
+    func vitalLatest(_ userId: String?) async throws -> [VitalReading] {
+        await latency()
+        let owner = try vitalOwner(userId)
+        var seen = Set<String>()
+        return vitalLog.filter { $0.userId == owner && seen.insert($0.code).inserted }
+    }
+
+    func recordVital(_ reading: NewVitalReading) async throws -> VitalReading {
+        await latency()
+        guard let t = fullTypes(meId).first(where: { $0.code == reading.code }) else { throw RepoError("No such vital for you") }
+        guard t.components.allSatisfy({ c in reading.values[c.key].map { $0.isFinite && (0...100_000).contains($0) } ?? false }) else {
+            throw RepoError("Enter a number for each value")
+        }
+        if let ratio = t.ratio, ratio.percent(reading.values) == nil {
+            throw RepoError("\(t.components.first { $0.key == ratio.denominator }?.label ?? ratio.denominator) must be more than 0")
+        }
+        // The time is chosen at entry (up to 12 hours back) and never changes afterwards.
+        var at = Date()
+        if let given = reading.takenAt {
+            guard let parsed = VitalText.date(given) else { throw RepoError("The time isn't valid") }
+            guard parsed <= Date().addingTimeInterval(300) else { throw RepoError("The time can't be in the future") }
+            guard parsed >= Date().addingTimeInterval(-12 * 3600) else { throw RepoError("The time can be at most 12 hours ago") }
+            at = parsed
+        }
+        let note = reading.note?.trimmingCharacters(in: .whitespaces)
+        let r = VitalReading(readingId: newId(), userId: meId, code: t.code, values: reading.values, takenAt: iso(at),
+                             note: note?.isEmpty == false ? note : nil, severity: colour(t, reading.values))
+        vitalLog.insert(r, at: 0)
+        for d in users where d.primaryRole == .doctor && !deactivated.contains(d.id) && isConnected(meId, d.id) {
+            vitalInbox.insert((d.id, VitalAlert(alertId: newId(), patientId: meId, patientName: raw(meId).displayName, type: t, reading: r), false), at: 0)
+        }
+        return r
+    }
+
+    func setVitalRange(_ userId: String, code: String, _ update: VitalRangeUpdate) async throws -> VitalType {
+        await latency()
+        guard userId != meId, isMyPatient(userId) else { throw RepoError("Only a doctor in the patient's contacts can set their ranges") }
+        guard var t = fullTypes(userId).first(where: { $0.code == code }) else { throw RepoError("No such vital for this patient") }
+        for b in update.components.values { if let l = b.low, let h = b.high, l > h { throw RepoError("The low end of a range can't be above the high end") } }
+        t.components = t.components.map { c in update.components[c.key].map { VitalComponent(key: c.key, label: c.label, low: $0.low, high: $0.high) } ?? c }
+        if let m = update.marginPct { t.marginPct = m }
+        vitalRanges["\(userId)|\(code)"] = t
+        return t
+    }
+
+    func addVitalType(_ type: NewVitalType) async throws -> VitalType {
+        await latency()
+        guard type.userId != meId, isMyPatient(type.userId) else { throw RepoError("Only a doctor in the patient's contacts can add vitals for them") }
+        let label = type.label.trimmingCharacters(in: .whitespaces)
+        let slug = label.lowercased().filter { $0.isLetter || $0.isNumber }
+        guard !slug.isEmpty else { throw RepoError("Give the vital a name") }
+        let all = fullTypes(type.userId)
+        guard !all.contains(where: { $0.label.caseInsensitiveCompare(label) == .orderedSame }) else { throw RepoError("This patient already has a vital with that name") }
+        let t = VitalType(code: "c_" + slug, label: label, icon: type.icon, unit: type.unit.trimmingCharacters(in: .whitespaces),
+                          components: [VitalComponent(key: "value", label: label, low: type.low, high: type.high)],
+                          marginPct: type.marginPct ?? 30, custom: true, position: (all.map(\.position).max() ?? 0) + 1)
+        customVitals[type.userId, default: []].append(t)
+        return t
+    }
+
+    func vitalAlerts(severity: Severity?, sort: AlertSort) async throws -> VitalAlertPage {
+        await latency()
+        let unread = vitalInbox.filter { $0.doctor == meId && !$0.read && isConnected(meId, $0.alert.patientId) }.map(\.alert)
+        var list = unread.filter { severity == nil || $0.severity == severity }
+        switch sort {
+        case .user: list.sort { $0.patientName.lowercased() < $1.patientName.lowercased() }
+        case .vital: list.sort { $0.label.lowercased() < $1.label.lowercased() }
+        case .time: break
+        }
+        let count = { (s: Severity) in unread.filter { $0.severity == s }.count }
+        return VitalAlertPage(counts: VitalAlertCounts(red: count(.red), yellow: count(.yellow), green: count(.green)), data: list)
+    }
+
+    func readVitalAlert(_ alertId: String) async throws {
+        await latency()
+        for i in vitalInbox.indices where vitalInbox[i].doctor == meId && vitalInbox[i].alert.id == alertId { vitalInbox[i].read = true }
+    }
+
     // MARK: Administration (rule 10: create users and doctors, deactivate doctors only)
     private func myHospital() throws -> String {
         guard let h = adminHospital[meId] else { throw RepoError("Only hospital administrators can manage accounts") }
@@ -746,12 +923,35 @@ final class RemoteRepository: HealooRepository {
     struct PresignBody: Encodable { struct File: Encodable { let name: String; let mime: String; let size: Int64 }; let files: [File] }
     struct PresignResponse: Decodable { struct Upload: Decodable { let uploadUrl: String; let uri: String }; let uploads: [Upload] }
 
-    func me() async throws -> UserProfile { try await request("GET", "v1/me") }
+    // Offline copy of what the Messages screens need (OfflineCache; limits in WUI/app-config.json)
+    private let offline = OfflineCache()
+    func clearOfflineCache() { offline.clear() }
+
+    /// Loads from the server and keeps a copy; when the server can't be reached, returns the copy.
+    private func cached<T: Codable>(_ key: String, date: (T) -> Date = { _ in Date() }, _ load: () async throws -> T) async throws -> T {
+        do {
+            let value = try await load()
+            offline.put(key, value, date: date(value))
+            return value
+        } catch let error as URLError {
+            guard let saved: T = offline.get(key) else { throw error }
+            return saved
+        }
+    }
+
+    func me() async throws -> UserProfile {
+        try await cached(OfflineCache.me) {
+            let profile: UserProfile = try await request("GET", "v1/me")
+            // Signing in is also when the app picks up the server's upload limits.
+            if let config: ServerConfig = try? await request("GET", "v1/config") { Limits.apply(config.limits) }
+            return profile
+        }
+    }
     func dashboard() async throws -> Dashboard { try await request("GET", "v1/dashboard") }
     func items(status: ItemStatus, limit: Int, kind: String?) async throws -> [DataItem] {
         let p: PageResult<DataItem> = try await request("GET", "v1/items", query: ["status": status.rawValue, "limit": String(limit), "kind": kind]); return p.data
     }
-    func item(_ id: String) async throws -> DataItem { try await request("GET", "v1/items/\(id)") }
+    func item(_ id: String) async throws -> DataItem { try await cached(OfflineCache.item(id)) { try await request("GET", "v1/items/\(id)") } }
     func user(_ id: String) async throws -> UserProfile { try await request("GET", "v1/users/\(id)") }
     func sharedItems(with userId: String) async throws -> [DataItem] {
         let p: PageResult<DataItem> = try await request("GET", "v1/users/\(userId)/shared-items", query: ["status": "OPEN"]); return p.data
@@ -794,10 +994,17 @@ final class RemoteRepository: HealooRepository {
 
     // Add to an item
     func itemMessages(_ itemId: String) async throws -> [Message] {
-        let p: PageResult<Message> = try await request("GET", "v1/items/\(itemId)/messages"); return p.data
+        try await cached(OfflineCache.messages(itemId), date: OfflineCache.date(of:)) {
+            let p: PageResult<Message> = try await request("GET", "v1/items/\(itemId)/messages"); return p.data
+        }
     }
     func sendItemMessage(_ itemId: String, body: String) async throws -> Message {
-        try await request("POST", "v1/items/\(itemId)/messages", body: NewMessage(body: body, clientMsgId: UUID().uuidString))
+        let sent: Message = try await request("POST", "v1/items/\(itemId)/messages", body: NewMessage(body: body, clientMsgId: UUID().uuidString))
+        // Keep the offline copy of this discussion current.
+        let saved: [Message] = offline.get(OfflineCache.messages(itemId)) ?? []
+        let list = saved.filter { $0.id != sent.id } + [sent]
+        offline.put(OfflineCache.messages(itemId), list, date: OfflineCache.date(of: list))
+        return sent
     }
     func addAttachments(_ itemId: String, files: [PendingAttachment], isReport: Bool) async throws -> DataItem {
         let attachments = try await uploadFiles(files)
@@ -828,22 +1035,43 @@ final class RemoteRepository: HealooRepository {
     func reopenItem(_ itemId: String) async throws -> DataItem { try await request("POST", "v1/items/\(itemId)/reopen") }
 
     func conversations(with withUser: String?) async throws -> [Conversation] {
-        let p: PageResult<Conversation> = try await request("GET", "v1/conversations", query: ["with": withUser]); return p.data
+        if let withUser {
+            do { let p: PageResult<Conversation> = try await request("GET", "v1/conversations", query: ["with": withUser]); return p.data }
+            catch let error as URLError {
+                // Offline: the saved full list, narrowed to this person.
+                guard let all: [Conversation] = offline.get(OfflineCache.conversations) else { throw error }
+                return all.filter { $0.otherUser.id == withUser }
+            }
+        }
+        return try await cached(OfflineCache.conversations) {
+            let p: PageResult<Conversation> = try await request("GET", "v1/conversations", query: ["with": nil]); return p.data
+        }
     }
     func calendar(from: String, to: String) async throws -> [CalendarVisit] {
         let p: PageResult<CalendarVisit> = try await request("GET", "v1/appointments", query: ["from": from, "to": to]); return p.data
     }
 
-    // Administration (hospital administrators; users can't be deleted)
-    /// The administrator's hospital's doctors, deactivated ones included.
-    func adminDoctors() async throws -> [AdminAccount]
-    func adminCreateUser(_ account: NewAccount) async throws -> AdminAccount
-    func adminCreateDoctor(_ account: NewAccount) async throws -> AdminAccount
-    /// "Delete" a doctor: deactivates the account and ends the hospital affiliation.
-    func adminDeactivateDoctor(_ doctorId: String) async throws
-    func adminReactivateDoctor(_ doctorId: String) async throws -> AdminAccount
+    // Vitals
+    func vitalTypes(_ userId: String?) async throws -> [VitalType] {
+        let p: PageResult<VitalType> = try await request("GET", "v1/vitals/types", query: ["user": userId]); return p.data
+    }
+    func vitalLatest(_ userId: String?) async throws -> [VitalReading] {
+        let p: PageResult<VitalReading> = try await request("GET", "v1/vitals/latest", query: ["user": userId]); return p.data
+    }
+    func vitalReadings(_ userId: String?, code: String?, limit: Int) async throws -> [VitalReading] {
+        let p: PageResult<VitalReading> = try await request("GET", "v1/vitals/readings", query: ["user": userId, "code": code, "limit": String(limit)]); return p.data
+    }
+    func recordVital(_ reading: NewVitalReading) async throws -> VitalReading { try await request("POST", "v1/vitals/readings", body: reading) }
+    func vitalSettings() async throws -> VitalSettings { try await request("GET", "v1/vitals/config") }
+    func setVitalRange(_ userId: String, code: String, _ update: VitalRangeUpdate) async throws -> VitalType {
+        try await request("PUT", "v1/vitals/ranges/\(userId)/\(code)", body: update)
+    }
+    func addVitalType(_ type: NewVitalType) async throws -> VitalType { try await request("POST", "v1/vitals/types", body: type) }
+    func vitalAlerts(severity: Severity?, sort: AlertSort) async throws -> VitalAlertPage {
+        try await request("GET", "v1/vitals/alerts", query: ["severity": severity?.rawValue, "sort": sort.rawValue])
+    }
+    func readVitalAlert(_ alertId: String) async throws { let _: Empty = try await request("POST", "v1/vitals/alerts/\(alertId)/read") }
 
-    // Account
     // Administration
     func adminDoctors() async throws -> [AdminAccount] {
         let p: PageResult<AdminAccount> = try await request("GET", "v1/admin/doctors"); return p.data
@@ -900,7 +1128,9 @@ final class RemoteRepository: HealooRepository {
 /// most 10 MB. Each download evicts the least recently used files.
 enum AttachmentStore {
     struct Limits { let folder: String; let maxFiles: Int; let maxBytes: Int64 }
-    static let full = Limits(folder: "attachments", maxFiles: 15, maxBytes: 90 * 1024 * 1024)
+    /// `file_cache` in WUI/app-config.json (defaults: 15 files, 90 MB).
+    static let full = Limits(folder: "attachments", maxFiles: AppConfig.current.fileCache.maxFiles,
+                             maxBytes: Int64(AppConfig.current.fileCache.maxMb) * 1024 * 1024)
     static let thumbs = Limits(folder: "thumbnails", maxFiles: .max, maxBytes: 10 * 1024 * 1024)
     /// The newest files are never evicted, even over the byte limit (they may be on screen).
     static let keepNewest = 3

@@ -203,6 +203,14 @@ To load test data there: `docker compose run --rm care-api care-seed` (test data
 
 ## 7. Configuration reference
 
+Limits and defaults (upload sizes, message length, rate limit, time zone, vitals ranges and
+colours) are in `config/server.json` and `config/vitals.json`, not in environment variables.
+`SERVER_CONFIG` and `VITALS_CONFIG` point the server at edited copies; the LAN compose file
+sets both, so edit the file and restart. See
+[`../Documentation/Configuration.md`](../Documentation/Configuration.md).
+
+Deployment settings are environment variables:
+
 | Variable | Meaning |
 | --- | --- |
 | `NETWORK_MODE` | `lan` or `internet` — picks all defaults below |

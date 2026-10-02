@@ -67,13 +67,14 @@ final class RealtimeClient {
         }
     }
 
-    private struct Frame: Decodable { let type: String; let message: Message?; let itemId: String? }
+    private struct Frame: Decodable { let type: String; let message: Message?; let itemId: String?; let patientId: String?; let severity: String? }
 
     private func handle(_ text: String, on t: URLSessionWebSocketTask) {
         guard let frame = try? decoder.decode(Frame.self, from: Data(text.utf8)) else { return }
         switch frame.type {
         case "message.new": if let m = frame.message { subject.send(.newMessage(m)) }
         case "item.updated": if let id = frame.itemId { subject.send(.itemChanged(id)) }
+        case "vital.alert": subject.send(.vitalAlert(patientId: frame.patientId ?? "", severity: frame.severity ?? "GREEN"))
         case "ping": t.send(.string(#"{"type":"pong"}"#)) { _ in }
         default: break
         }

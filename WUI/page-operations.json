@@ -4,7 +4,7 @@
     "Both apps bundle this file at build time and read it at start-up.",
     "pages: operations in display order. The first maxVisible whose 'requires' all hold are shown;",
     "the rest go behind the three-dot (More) button. Unknown ids are ignored by older apps.",
-    "requires: connected | not_connected | viewer_patient | viewer_clinical (doctor, assistant, lab, hospital).",
+    "requires: connected | not_connected | viewer_patient | viewer_clinical (doctor, assistant, lab, hospital) | viewer_doctor | subject_patient.",
     "icon: a key each app maps to its own icon set (see ActionBar.kt / OperationBar.swift)."
   ],
   "version": 1,
@@ -23,11 +23,12 @@
     "share_document":   { "label": "Share",       "icon": "share",      "requires": ["connected"] },
     "upload_for":       { "label": "Upload",      "icon": "upload",     "requires": ["connected"] },
     "book_appointment": { "label": "Book",        "icon": "event" },
-    "search_doctors":   { "label": "Doctors",     "icon": "doctor" }
+    "search_doctors":   { "label": "Doctors",     "icon": "doctor" },
+    "vitals":           { "label": "Vitals",      "icon": "vitals",     "requires": ["connected", "viewer_doctor", "subject_patient"] }
   },
   "pages": {
     "global":   ["home", "search", "upload", "messages", "settings"],
-    "user":     ["connect", "message", "history", "share_document", "upload_for"],
+    "user":     ["connect", "message", "history", "share_document", "vitals", "upload_for"],
     "doctor":   ["connect", "message", "history", "share_document", "book_appointment", "upload_for"],
     "hospital": ["search_doctors", "book_appointment"]
   }

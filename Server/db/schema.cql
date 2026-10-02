@@ -179,6 +179,41 @@ CREATE TABLE IF NOT EXISTS notification_prefs (  -- v0.2: Settings screen
   user_id uuid PRIMARY KEY, push_messages boolean, push_reports boolean,
   quiet_hours boolean, quiet_start text, quiet_end text);
 
+-- ---------- vitals (v0.4, Documentation/Vitals_Design.md) ----------
+-- Not DataItems: small, frequent, per-person measurements. Every table carries schema_version
+-- and an `extra` map, so later app or server versions can add data without a migration; readers
+-- ignore keys they don't know. Add columns only with ALTER TABLE ... ADD IF NOT EXISTS.
+
+CREATE TABLE IF NOT EXISTS vital_readings (          -- one person's readings, newest entry first
+  user_id uuid, reading_id timeuuid, code text, vals map<text, double>, taken_at timestamp,
+  note text, entered_by uuid, severity text, schema_version int, extra map<text, text>,
+  PRIMARY KEY ((user_id), reading_id)) WITH CLUSTERING ORDER BY (reading_id DESC);
+
+CREATE TABLE IF NOT EXISTS vital_readings_by_type (  -- the same readings, per vital (history, latest value)
+  user_id uuid, code text, reading_id timeuuid, vals map<text, double>, taken_at timestamp,
+  note text, entered_by uuid, severity text, schema_version int, extra map<text, text>,
+  PRIMARY KEY ((user_id), code, reading_id)) WITH CLUSTERING ORDER BY (code ASC, reading_id DESC);
+
+CREATE TABLE IF NOT EXISTS vital_types_by_user (     -- vitals a doctor added for one patient
+  user_id uuid, code text, label text, icon text, unit text,
+  spec text,                                         -- JSON: [{key,label,low?,high?}]
+  margin_pct int, position int, created_by uuid, created_at timestamp, active boolean,
+  schema_version int, extra map<text, text>,
+  PRIMARY KEY ((user_id), code));
+
+CREATE TABLE IF NOT EXISTS vital_ranges (            -- a doctor's range for one patient and vital
+  user_id uuid, code text,
+  spec text,                                         -- JSON: {component key: {low?,high?}}
+  margin_pct int, set_by uuid, set_at timestamp, schema_version int, extra map<text, text>,
+  PRIMARY KEY ((user_id), code));
+
+CREATE TABLE IF NOT EXISTS vital_alerts_by_doctor (  -- each connected doctor's inbox (dashboard)
+  doctor_id uuid, alert_id timeuuid, patient_id uuid, patient_name text,
+  code text, label text, icon text, unit text, vals map<text, double>, severity text,
+  is_read boolean, reading_id timeuuid, taken_at timestamp, schema_version int, extra map<text, text>,
+  PRIMARY KEY ((doctor_id), alert_id)) WITH CLUSTERING ORDER BY (alert_id DESC)
+  AND default_time_to_live = 7776000;                -- 90 days
+
 -- ---------- events ----------
 CREATE TABLE IF NOT EXISTS outbox (
   shard int, event_id text, topic text, event_key text, payload text, created_at timestamp,

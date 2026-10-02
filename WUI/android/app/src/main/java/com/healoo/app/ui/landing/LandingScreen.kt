@@ -21,8 +21,9 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.healoo.app.data.*
 import com.healoo.app.ui.components.*
-import com.healoo.app.ui.search.RoleFilterRow
-import com.healoo.app.ui.search.SearchField
+import com.healoo.app.ui.vitals.AlertDashboardRow
+import com.healoo.app.ui.vitals.VitalEntrySheet
+import com.healoo.app.ui.vitals.VitalTileGrid
 import com.healoo.app.ui.theme.*
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -50,6 +51,20 @@ class LandingViewModel : ViewModel() {
     fun toggleFilter(kind: String) { filter = if (filter == kind) null else kind; items = null; load() }
     fun toggleShowAll() { showAll = !showAll; load() }
 
+    // ---- vitals: a user's own tiles, or a doctor's alert counts (Vitals_Design.md) ----
+    var vitalTypes by mutableStateOf<List<VitalType>>(emptyList()); private set
+    var vitalLatest by mutableStateOf<Map<String, VitalReading>>(emptyMap()); private set
+    var vitalSettings by mutableStateOf(VitalSettings()); private set
+    var alertCounts by mutableStateOf<VitalAlertCounts?>(null); private set
+    /** The vital being entered, with its recent entries once loaded. */
+    var entering by mutableStateOf<VitalType?>(null); private set
+    var enteringRecent by mutableStateOf<List<VitalReading>?>(null); private set
+    var saving by mutableStateOf(false); private set
+    var entryError by mutableStateOf<String?>(null); private set
+
+    val isDoctor get() = me?.primaryRole == Role.DOCTOR
+    val isUser get() = me?.primaryRole == Role.PATIENT
+
     fun load() = viewModelScope.launch {
         error = null
         runCatching {
@@ -57,21 +72,56 @@ class LandingViewModel : ViewModel() {
             dashboard = repo.dashboard()
             items = repo.openItems(limit = if (showAll) ALL else PREVIEW, kind = filter)
         }.onFailure { error = "Couldn't load your items. Check your connection and try again." }
+        loadVitals()
     }
 
-    companion object { const val PREVIEW = 20; const val ALL = 100 }
+    /** Kept apart from the items: a server without vitals just leaves this section out. */
+    private suspend fun loadVitals() {
+        runCatching {
+            if (isDoctor) alertCounts = repo.vitalAlerts().counts
+            else if (isUser) {
+                vitalSettings = repo.vitalSettings()
+                vitalTypes = repo.vitalTypes()
+                vitalLatest = repo.vitalLatest().associateBy { it.code }
+            }
+        }
+    }
+
+    fun startEntry(t: VitalType) {
+        entering = t; enteringRecent = null; entryError = null
+        viewModelScope.launch { enteringRecent = runCatching { repo.vitalReadings(code = t.code, limit = 5) }.getOrNull() }
+    }
+    fun cancelEntry() { entering = null }
+
+    fun saveEntry(values: Map<String, Double>, note: String?, takenAt: String?) {
+        val t = entering ?: return
+        saving = true; entryError = null
+        viewModelScope.launch {
+            runCatching { repo.recordVital(NewVitalReading(t.code, values, note, takenAt)) }
+                .onSuccess { r -> vitalLatest = vitalLatest + (t.code to r); entering = null }
+                .onFailure { entryError = "That didn't save: ${it.message}. Try again." }
+            saving = false
+        }
+    }
+
+    /** `lists` in WUI/app-config.json. */
+    companion object {
+        val PREVIEW: Int get() = AppConfig.current.lists.homePreview
+        val ALL: Int get() = AppConfig.current.lists.homeAll
+    }
 }
 
 @Composable
 fun LandingScreen(
     onOpenItem: (String) -> Unit,
-    onSearch: (query: String, role: Role?) -> Unit,
     onOpenProfile: () -> Unit,
+    onOpenVitals: () -> Unit,
+    onOpenAlerts: (Severity) -> Unit,
     onTab: (Tab) -> Unit,
     vm: LandingViewModel = viewModel(),
 ) {
-    var query by remember { mutableStateOf("") }
-    var role by remember { mutableStateOf<Role?>(Role.DOCTOR) }
+    // Coming back from the vitals or alerts screens: counts and colours may have changed.
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) { vm.load(); onPauseOrDispose {} }
 
     Scaffold(containerColor = Sage.Background, bottomBar = { HealooBottomBar(Tab.HOME, onTab) }) { padding ->
         Column(Modifier.fillMaxSize().padding(bottom = padding.calculateBottomPadding())) {
@@ -80,15 +130,21 @@ fun LandingScreen(
                 contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        FieldLabel("Find doctors, patients, hospitals or labs")
-                        SearchField(query, { query = it }, placeholder = "Search by name or Healoo ID", onSubmit = { onSearch(query, role) }, compact = true)
-                        RoleFilterRow(selected = role, includeAll = true, compact = true, onSelect = { role = it; onSearch(query, it) })
+                // Search lives in the bottom bar; this space is for vitals.
+                if (vm.isUser && vm.vitalTypes.isNotEmpty()) item {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        FieldLabel("Vitals · tap to enter today's value")
+                        VitalTileGrid(vm.vitalTypes, vm.vitalLatest, vm.vitalSettings, onTile = vm::startEntry, onMore = onOpenVitals)
+                    }
+                }
+                if (vm.isDoctor) item {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        FieldLabel("Patient alerts")
+                        AlertDashboardRow(vm.alertCounts, onOpenAlerts)
                     }
                 }
                 item {
-                    // A fine line between Find and Open items, drawn inside the gap that was already there.
+                    // A fine line between the section above and Open items, drawn inside the gap that was already there.
                     HorizontalDivider(Modifier.padding(vertical = 2.5.dp), thickness = 1.dp, color = Sage.Border)
                     // "See all" expands the list in place (it used to open Search, which lists people, not items).
                     val more = vm.showAll || (vm.items?.size ?: 0) >= LandingViewModel.PREVIEW
@@ -110,6 +166,10 @@ fun LandingScreen(
                 }
             }
         }
+    }
+
+    vm.entering?.let { t ->
+        VitalEntrySheet(t, vm.enteringRecent, vm.saving, vm.entryError, vm.vitalSettings.backdateHours, onDismiss = vm::cancelEntry, onSave = vm::saveEntry)
     }
 }
 

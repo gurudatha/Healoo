@@ -143,6 +143,7 @@ fun UserPageScreen(
     onOpenUser: (String) -> Unit,
     onUploadFor: (userId: String) -> Unit,
     onBook: (doctorId: String, hospitalId: String?) -> Unit,
+    onOpenVitals: (userId: String) -> Unit = {},
 ) {
     val vm: UserPageViewModel = viewModel(key = "user-$userId") { UserPageViewModel(userId, startOnMessages) }
     val user = vm.user
@@ -159,6 +160,7 @@ fun UserPageScreen(
             OpId.UPLOAD_FOR -> onUploadFor(u.id)
             OpId.BOOK_APPOINTMENT -> if (vm.page == PageKind.HOSPITAL) sheet = Sheet.BOOK_AT_HOSPITAL else onBook(u.id, null)
             OpId.SEARCH_DOCTORS -> runCatching { doctorSearch.requestFocus() }
+            OpId.VITALS -> onOpenVitals(u.id)
         }
     }
 

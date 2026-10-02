@@ -3,19 +3,20 @@
 //! /v1/appointments (calendar) and /v1/conversations (Messages tab).
 
 use super::{
-    items::{load_full, load_item, require_open, upload_prefix, IMAGE_MAX, MAX_ATTACHMENTS, PDF_MAX},
+    items::{image_max, load_full, load_item, max_attachments, pdf_max, require_open, upload_prefix},
     principal::Principal,
     users::load_user,
     ApiError, ApiResult, AppState,
 };
 use crate::{
+    settings::default_tz,
     events::{topics, Envelope},
     files::{key_of, safe_key},
     model::*,
     recurrence::{self, ExceptionAction, Recurrence, VisitException},
     store::{
         items::Item,
-        parts::{exception_udts, iso_in, local_millis, today_in, AlertRow, AppointmentRow, AttachmentRow, DEFAULT_TZ},
+        parts::{exception_udts, iso_in, local_millis, today_in, AlertRow, AppointmentRow, AttachmentRow},
     },
 };
 use axum::{
@@ -29,8 +30,6 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-pub const MAX_BODY_CHARS: usize = 4000;
-const UPCOMING_VISITS: usize = 12;
 
 /// Sends `item.updated {item_id, change}` to everyone with access (WebSocket fan-out).
 pub async fn notify_change(st: &AppState, p: &Principal, item: &Item, change: &str) -> ApiResult<()> {
@@ -63,14 +62,15 @@ pub struct NewAttachment {
 
 /// Checks limits and that every file was uploaded by the caller.
 pub fn validate_attachments(p: &Principal, list: &[NewAttachment]) -> ApiResult<Vec<NewAttachment>> {
-    if list.len() > MAX_ATTACHMENTS { return Err(ApiError::bad_request(format!("at most {MAX_ATTACHMENTS} attachments per request"))); }
+    let max_files = max_attachments();
+    if list.len() > max_files { return Err(ApiError::bad_request(format!("at most {max_files} attachments per request"))); }
     let prefix = upload_prefix(p.id());
     for a in list {
         let key = key_of(&a.uri).ok_or_else(|| ApiError::bad_request("attachment uri must come from /v1/uploads/presign"))?;
         if !key.starts_with(&prefix) || safe_key(key).is_err() { return Err(ApiError::forbidden("attachments must be files you uploaded")); }
         let (max, ok_mime) = match a.kind.as_str() {
-            "IMAGE" => (IMAGE_MAX, a.mime.starts_with("image/")),
-            "PDF" => (PDF_MAX, a.mime == "application/pdf"),
+            "IMAGE" => (image_max(), a.mime.starts_with("image/")),
+            "PDF" => (pdf_max(), a.mime == "application/pdf"),
             _ => return Err(ApiError::bad_request("attachment kind must be IMAGE or PDF")),
         };
         if !ok_mime || a.size <= 0 || a.size > max {
@@ -177,8 +177,9 @@ pub async fn attachments_post(State(st): State<AppState>, p: Principal, Path(id)
 /// Idempotent on `client_msg_id`.
 pub async fn send_message(st: &AppState, p: &Principal, item: &Item, body: &str, client_msg_id: &str, attachment_ids: Vec<Uuid>) -> ApiResult<MessageDto> {
     let body = body.trim();
-    if body.is_empty() || body.chars().count() > MAX_BODY_CHARS {
-        return Err(ApiError::bad_request(format!("message must be 1–{MAX_BODY_CHARS} characters")));
+    let max_chars = crate::settings::settings().messages.max_chars;
+    if body.is_empty() || body.chars().count() > max_chars {
+        return Err(ApiError::bad_request(format!("message must be 1–{max_chars} characters")));
     }
     if client_msg_id.is_empty() || client_msg_id.len() > 64 {
         return Err(ApiError::bad_request("client_msg_id is required (max 64 chars)"));
@@ -274,7 +275,7 @@ pub async fn validate_appointment(st: &AppState, owner_id: Uuid, a: &NewAppointm
     let doctor = load_user(st, a.doctor_id).await?;
     if !doctor.roles.contains(&Role::Doctor) { return Err(ApiError::bad_request("doctor_id must be a doctor")); }
     let (d, _) = parse_dt(a)?;
-    let tz = a.timezone.as_deref().unwrap_or(DEFAULT_TZ);
+    let tz = a.timezone.as_deref().unwrap_or(default_tz());
     if tz.parse::<chrono_tz::Tz>().is_err() { return Err(ApiError::bad_request("timezone must be an IANA name such as Asia/Kolkata")); }
     if d < today_in(tz) { return Err(ApiError::bad_request("the first visit can't be in the past")); }
     if let Some(m) = a.duration_min { if !(5..=240).contains(&m) { return Err(ApiError::bad_request("duration_min must be 5–240")); } }
@@ -291,7 +292,7 @@ fn may_book(p: &Principal, item: &Item, a: &NewAppointment) -> bool {
 
 pub async fn store_appointment(st: &AppState, p: &Principal, item: &Item, a: NewAppointment) -> ApiResult<AppointmentDto> {
     if !may_book(p, item, &a) { return Err(ApiError::forbidden("only the patient, the doctor or the doctor's assistant can book")); }
-    let tz = a.timezone.clone().unwrap_or_else(|| DEFAULT_TZ.to_string());
+    let tz = a.timezone.clone().unwrap_or_else(|| default_tz().to_string());
     let row = AppointmentRow {
         appointment_id: Uuid::new_v4(),
         patient_id: a.patient_id,
@@ -356,7 +357,7 @@ async fn create_reminders(st: &AppState, item: &Item, a: &AppointmentRow) -> Api
 
 pub async fn appointment_dto(st: &AppState, item_id: Uuid, a: &AppointmentRow, metadata_only: bool) -> ApiResult<AppointmentDto> {
     let today = today_in(a.tz());
-    let visits = a.visits(today, today + ChronoDuration::days(3660), UPCOMING_VISITS).into_iter().map(|(v, s)| VisitDto {
+    let visits = a.visits(today, today + ChronoDuration::days(3660), crate::settings::settings().appointments.upcoming_visits).into_iter().map(|(v, s)| VisitDto {
         date: recurrence::fmt_date(v.date),
         time: recurrence::fmt_time(v.time),
         original_date: recurrence::fmt_date(v.original_date),
@@ -541,14 +542,14 @@ pub fn validate_alert(a: &NewAlert) -> ApiResult<()> {
     if t.is_empty() || t.chars().count() > 200 { return Err(ApiError::bad_request("text must be 1–200 characters")); }
     let d = recurrence::parse_date(&a.date).ok_or_else(|| ApiError::bad_request("date must be YYYY-MM-DD"))?;
     recurrence::parse_time(&a.time).ok_or_else(|| ApiError::bad_request("time must be HH:MM"))?;
-    if a.timezone.as_deref().unwrap_or(DEFAULT_TZ).parse::<chrono_tz::Tz>().is_err() { return Err(ApiError::bad_request("timezone must be an IANA name")); }
+    if a.timezone.as_deref().unwrap_or(default_tz()).parse::<chrono_tz::Tz>().is_err() { return Err(ApiError::bad_request("timezone must be an IANA name")); }
     recurrence::validate(d, a.recurrence.as_ref()).map_err(ApiError::bad_request)
 }
 
 pub async fn store_alert(st: &AppState, p: &Principal, item: &Item, a: NewAlert) -> ApiResult<AlertDto> {
     let for_user = a.for_user.unwrap_or(p.id());
     if !item.participants().contains(&for_user) { return Err(ApiError::bad_request("for_user must have access to this item")); }
-    let tz = a.timezone.clone().unwrap_or_else(|| DEFAULT_TZ.to_string());
+    let tz = a.timezone.clone().unwrap_or_else(|| default_tz().to_string());
     let (d, t) = (recurrence::parse_date(&a.date).unwrap_or_default(), recurrence::parse_time(&a.time).unwrap_or_default());
     let row = AlertRow {
         alert_id: Uuid::new_v4(),
@@ -615,7 +616,7 @@ pub struct CalendarQ { from: Option<String>, to: Option<String> }
 
 /// GET /v1/appointments?from=&to= : visits across items (doctor: theirs; others: own), max 62 days.
 pub async fn calendar(State(st): State<AppState>, p: Principal, Query(q): Query<CalendarQ>) -> ApiResult<Json<Value>> {
-    let today = today_in(DEFAULT_TZ);
+    let today = today_in(default_tz());
     let from = q.from.as_deref().map(|s| recurrence::parse_date(s).ok_or_else(|| ApiError::bad_request("from must be YYYY-MM-DD"))).transpose()?.unwrap_or(today);
     let to = q.to.as_deref().map(|s| recurrence::parse_date(s).ok_or_else(|| ApiError::bad_request("to must be YYYY-MM-DD"))).transpose()?.unwrap_or(from + ChronoDuration::days(30));
     if to < from || (to - from).num_days() > 62 { return Err(ApiError::bad_request("choose a range of up to 62 days")); }
@@ -627,7 +628,7 @@ pub async fn calendar(State(st): State<AppState>, p: Principal, Query(q): Query<
         let title = st.db.item(item_id).await?.map(|i| i.title).unwrap_or_default();
         let other_name = st.db.user(other).await?.map(|u| u.display_name).unwrap_or_default();
         out.push(json!({
-            "starts_at": iso_in(ms, DEFAULT_TZ), "appointment_id": appointment_id, "item_id": item_id,
+            "starts_at": iso_in(ms, default_tz()), "appointment_id": appointment_id, "item_id": item_id,
             "item_title": title, "with_user_id": other, "with_user_name": other_name, "status": status,
         }));
     }

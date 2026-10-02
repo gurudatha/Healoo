@@ -47,6 +47,9 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.healoo.app.data.Role
+import com.healoo.app.data.Severity
+import com.healoo.app.ui.vitals.VitalAlertsScreen
+import com.healoo.app.ui.vitals.VitalsScreen
 import com.healoo.app.data.ServiceLocator
 import com.healoo.app.ui.components.Tab
 import com.healoo.app.ui.item.DataViewScreen
@@ -112,6 +115,7 @@ private suspend fun signOut(context: Context) {
     com.healoo.app.data.Drafts.clear()   // another account must not see this one's unsent text
     PushRegistrar.unregister(context)
     ServiceLocator.repository.stopRealtime()
+    ServiceLocator.repository.clearOfflineCache()   // another account must not read this one's saved messages
     val auth = ServiceLocator.auth
     if (!BuildConfig.USE_FAKE_DATA) auth.logout(context) else auth.signedOut()
 }
@@ -154,6 +158,8 @@ object Routes {
     const val EDIT_PROFILE = "profile/edit"
     const val SHARING = "sharing"
     const val ADMIN = "admin"
+    const val VITALS = "vitals?user={user}"
+    const val VITAL_ALERTS = "vital-alerts/{severity}"
 
     fun search(q: String = "", role: Role? = null) = "search?q=${AUri.encode(q)}&role=${role?.name ?: ""}"
     /** New item; [to] is the person whose page it came from (always a recipient). */
@@ -166,6 +172,9 @@ object Routes {
     fun user(id: String, messages: Boolean = false) = "user/$id?messages=$messages"
     fun item(id: String) = "item/$id"
     fun viewer(id: String, index: Int) = "viewer/$id/$index"
+    /** A person's vitals; no id = the signed-in user's own. */
+    fun vitals(userId: String? = null) = "vitals?user=${userId ?: ""}"
+    fun vitalAlerts(severity: Severity) = "vital-alerts/${severity.name}"
 }
 
 private fun NavHostController.openTab(tab: Tab) {
@@ -218,7 +227,8 @@ fun HealooNavHost(onSignOut: () -> Unit) {
         composable(Routes.HOME) {
             LandingScreen(
                 onOpenItem = { nav.navigate(Routes.item(it)) },
-                onSearch = { q, role -> nav.navigate(Routes.search(q, role)) },
+                onOpenVitals = { nav.navigate(Routes.vitals()) },
+                onOpenAlerts = { nav.navigate(Routes.vitalAlerts(it)) },
                 onOpenProfile = { nav.openTab(Tab.SETTINGS) },
                 onTab = nav::openTab,
             )
@@ -274,6 +284,16 @@ fun HealooNavHost(onSignOut: () -> Unit) {
         }
         composable(Routes.EDIT_PROFILE) { EditProfileScreen(onClose = { nav.popBackStack() }) }
         composable(Routes.ADMIN) { com.healoo.app.ui.admin.AdminScreen(onBack = { nav.popBackStack() }) }
+        composable(Routes.VITALS, arguments = listOf(navArgument("user") { type = NavType.StringType; defaultValue = "" })) { entry ->
+            VitalsScreen(userId = entry.arguments?.getString("user")?.takeIf { it.isNotBlank() }, onBack = { nav.popBackStack() })
+        }
+        composable(Routes.VITAL_ALERTS, arguments = listOf(navArgument("severity") { type = NavType.StringType })) { entry ->
+            VitalAlertsScreen(
+                initial = Severity.of(entry.arguments?.getString("severity")),
+                onBack = { nav.popBackStack() },
+                onOpenUser = { nav.navigate(Routes.user(it)) },
+            )
+        }
         composable(Routes.SHARING) {
             ActiveSharingScreen(onBack = { nav.popBackStack() }, onOpenItem = { nav.navigate(Routes.item(it)) })
         }
@@ -293,6 +313,7 @@ fun HealooNavHost(onSignOut: () -> Unit) {
                 onOpenUser = { nav.navigate(Routes.user(it)) },
                 onUploadFor = { nav.navigate(Routes.upload(it)) },
                 onBook = { doctor, hospital -> nav.navigate(Routes.book(doctor, hospital)) },
+                onOpenVitals = { nav.navigate(Routes.vitals(it)) },
             )
         }
         composable(Routes.ITEM, arguments = listOf(navArgument("id") { type = NavType.StringType })) { entry ->

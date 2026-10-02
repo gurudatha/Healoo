@@ -2,7 +2,8 @@ import UIKit
 
 /// Profile pictures are resized on the phone before upload: at most `maxPixels` on the long side, JPEG.
 enum ProfilePhotos {
-    static let maxPixels: CGFloat = 512
+    /// `profile_photo.max_px` in WUI/app-config.json
+    static var maxPixels: CGFloat { CGFloat(AppConfig.current.profilePhoto.maxPx) }
 
     /// Scales the picked or captured image down and writes a JPEG into the caches folder, ready to upload.
     static func prepare(_ image: UIImage) throws -> PendingAttachment {

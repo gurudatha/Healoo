@@ -50,6 +50,8 @@ enum Route: Hashable {
     case editProfile
     case activeSharing
     case administration
+    case vitals(String?)                // a person's vitals; nil = the signed-in user's own
+    case vitalAlerts(String)            // a doctor's unread alerts of one colour
 }
 
 /// Chooses between splash, sign-in and the app, based on the Auth0 / demo session.
@@ -183,6 +185,8 @@ extension Route {
         case .editProfile: EditProfileView()
         case .activeSharing: ActiveSharingView()
         case .administration: AdminView()
+        case .vitals(let userId): VitalsView(userId: userId)
+        case .vitalAlerts(let severity): VitalAlertsView(initial: Severity.of(severity))
         }
     }
 }

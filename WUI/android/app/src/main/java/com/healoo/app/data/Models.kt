@@ -379,6 +379,8 @@ sealed interface RealtimeEvent {
     data class NewMessage(val message: Message) : RealtimeEvent
     data class ItemChanged(val itemId: String) : RealtimeEvent
     data class ConnectionChanged(val connected: Boolean) : RealtimeEvent
+    /** A patient in the doctor's contacts recorded a vital (doctor dashboard refreshes). */
+    data class VitalAlert(val patientId: String, val severity: String) : RealtimeEvent
 }
 
 /** Can create items for a patient in their contacts (the patient owns them). */

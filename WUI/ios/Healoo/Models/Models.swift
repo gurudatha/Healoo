@@ -340,9 +340,23 @@ struct ReportDraft {
 }
 
 enum Limits {
-    static let maxAttachments = 20
-    static let imageMaxBytes: Int64 = 10 * 1024 * 1024
-    static let pdfMaxBytes: Int64 = 25 * 1024 * 1024
+    // The server decides these (uploads in Server/config/server.json); the app takes them from
+    // GET /v1/config after sign-in. Until then, and in demo mode, these defaults apply.
+    nonisolated(unsafe) static var maxAttachments = 20
+    nonisolated(unsafe) static var imageMaxBytes: Int64 = 10 * 1024 * 1024
+    nonisolated(unsafe) static var pdfMaxBytes: Int64 = 25 * 1024 * 1024
+
+    /// Takes the server's values; anything missing or not positive keeps the current one.
+    static func apply(_ server: ServerLimits?) {
+        if let n = server?.attachmentsPerItem, n > 0 { maxAttachments = n }
+        if let n = server?.imageMaxBytes, n > 0 { imageMaxBytes = n }
+        if let n = server?.pdfMaxBytes, n > 0 { pdfMaxBytes = n }
+    }
+}
+
+/// The `limits` part of GET /v1/config.
+struct ServerLimits: Decodable { var attachmentsPerItem: Int?; var imageMaxBytes: Int64?; var pdfMaxBytes: Int64? }
+struct ServerConfig: Decodable { var limits: ServerLimits?
 }
 
 enum DateText {
@@ -417,6 +431,8 @@ enum RealtimeEvent {
     case newMessage(Message)
     case itemChanged(String)
     case connection(Bool)
+    /// A patient in the doctor's contacts recorded a vital (doctor dashboard refreshes).
+    case vitalAlert(patientId: String, severity: String)
 }
 
 extension UserProfile {

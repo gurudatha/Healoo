@@ -4,7 +4,9 @@ These are native client apps for the **Sage Clinic** theme and the behaviour set
 
 ```
 healoo-wui/
-├── design-tokens.json        colours, type, radii, header ratios, limits (shared source of truth)
+├── design-tokens.json        colours, type, radii (design reference; the apps mirror it by hand)
+├── app-config.json           settings both apps read: header sizes, list sizes, caches, designations
+├── page-operations.json      bottom-bar operations per page, read by both apps
 ├── android/                  Kotlin + Jetpack Compose, minSdk 29
 └── ios/                      Swift + SwiftUI, iOS 17, generated with XcodeGen
 ```

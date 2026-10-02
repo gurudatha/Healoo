@@ -24,9 +24,10 @@ use serde_json::json;
 use std::collections::HashSet;
 use uuid::Uuid;
 
-pub const MAX_ATTACHMENTS: usize = 20;
-pub const IMAGE_MAX: i64 = 10 * 1024 * 1024;
-pub const PDF_MAX: i64 = 25 * 1024 * 1024;
+// Upload limits come from Server/config/server.json (settings.rs).
+pub fn max_attachments() -> usize { crate::settings::settings().uploads.max_attachments }
+pub fn image_max() -> i64 { crate::settings::settings().uploads.image_max_bytes() }
+pub fn pdf_max() -> i64 { crate::settings::settings().uploads.pdf_max_bytes() }
 
 // ---------------- policy glue ----------------
 
@@ -219,7 +220,7 @@ pub async fn list(State(st): State<AppState>, p: Principal, Query(q): Query<List
 pub async fn dashboard(State(st): State<AppState>, p: Principal) -> ApiResult<Json<DashboardDto>> {
     let open = visible(&st, &p, ItemStatus::Open, 200).await?;
     let unread: i32 = st.db.conversations_of(p.id()).await?.iter().map(|c| c.unread).sum();
-    let today = crate::store::parts::today_in(crate::store::parts::DEFAULT_TZ);
+    let today = crate::store::parts::today_in(crate::settings::default_tz());
     let week = today + chrono::Duration::days(7);
     let visits = if p.has(Role::Doctor) { st.db.doctor_visits(p.id(), today, week).await? } else { st.db.patient_visits(p.id(), today, week).await? };
     let now = chrono::Utc::now().timestamp_millis();
@@ -484,12 +485,13 @@ pub fn upload_prefix(user: Uuid) -> String { format!("uploads/{user}/") }
 
 /// One call for many files (doc 4.3). Returns an upload URL and the `obj:` URI to use in the item.
 pub async fn presign(State(st): State<AppState>, p: Principal, Json(b): Json<PresignReq>) -> ApiResult<Json<serde_json::Value>> {
-    if b.files.is_empty() || b.files.len() > MAX_ATTACHMENTS {
-        return Err(ApiError::bad_request(format!("send 1–{MAX_ATTACHMENTS} files")));
+    let max_files = max_attachments();
+    if b.files.is_empty() || b.files.len() > max_files {
+        return Err(ApiError::bad_request(format!("send 1–{max_files} files")));
     }
     let mut uploads = Vec::new();
     for f in &b.files {
-        let max = if f.mime == "application/pdf" { PDF_MAX } else if f.mime.starts_with("image/") { IMAGE_MAX } else {
+        let max = if f.mime == "application/pdf" { pdf_max() } else if f.mime.starts_with("image/") { image_max() } else {
             return Err(ApiError::bad_request(format!("{}: only images and PDFs are accepted", f.name)));
         };
         if f.size <= 0 || f.size > max {

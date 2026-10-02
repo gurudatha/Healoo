@@ -230,6 +230,46 @@ the result of each step in that section.
  33. Hospital upload: sign in as Test Hospital A, open Lakshmi's page, Upload
      a report. Sign in as Lakshmi: the report is on Home.
 
+Vitals (Documentation/Vitals_Design.md, section 8.3). Record the result of each
+step in that section.
+
+ 34. Home as a user (Lakshmi): no search section; a Vitals block of two rows of
+     five tiles (Water ... Sleep, More). The bottom bar is only as tall as its
+     icons and labels.
+ 35. Enter a reading: tap Sugar, enter 100, Save. The tile turns green and shows
+     100. Enter 150: yellow. Enter 300: red.
+ 36. BP: tap BP, enter 118 and 78: green. Enter 150 and 95: yellow.
+ 37. Urine: tap Urine. It asks for Water intake and Urine output and shows the
+     percentage. 1000 and 900 is green, 1000 and 750 yellow, 1000 and 500 red.
+     With intake 0 Save stays disabled.
+ 38. Time: in any entry sheet choose Earlier, set a time 3 hours ago, Save. The
+     entry shows that time. Try a time more than 12 hours ago: it is refused
+     and Now is used. There is no way to edit a saved entry.
+ 39. More: opens the vitals page with every vital and the History list, newest
+     entry first; the chips filter by vital.
+ 40. Doctor dashboard: sign in as Dr. Anitha Rao. Home shows Red, Yellow and
+     Green with counts matching steps 35-37 (no search section).
+ 41. Alert list: tap Red. The red alerts are listed. Sort by Patient and by
+     Vital. Swipe one left: it disappears and the count drops. Swipe one
+     right: Lakshmi's profile opens and the alert is still there on return.
+ 42. Read state is per doctor: an alert removed by Dr. Anitha Rao is still
+     unread for Dr. Srinivas Rao.
+ 43. Ranges: on Lakshmi's page tap Vitals. Tap Sugar, set 80 to 160, Save. Sign
+     in as Lakshmi and enter 150: green now. Lakshmi sees no range anywhere.
+ 44. Add a vital: as Dr. Anitha Rao on Lakshmi's vitals page, Add a vital "Peak
+     flow", pick an icon, unit L/min, range 400 to 600. As Lakshmi, Home ->
+     More shows Peak flow; enter 300: yellow.
+ 45. Configuration (trial server): in Server/config/vitals.json change
+     yellow_margin_pct to 10, run "docker compose restart care-api", enter
+     Sugar 140: red instead of yellow. Put it back afterwards.
+
+ 46. Offline messages (trial server): open two discussions, then stop the
+     server (docker compose stop care-api). Close and reopen the app: the
+     Messages tab and those two discussions still open; a discussion that was
+     never opened shows an error; sending fails. Start the server again and
+     log out: after logging in as someone else nothing of the first account
+     is shown while offline.
+
 Items that need extra setup:
   - QR scanning: on Android it needs the Play Store emulator image; the camera
     can be pointed at a virtual scene. On iOS it needs a real iPhone. To test

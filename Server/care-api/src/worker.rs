@@ -46,7 +46,6 @@ pub struct MediaProcessor {
     pub publisher: Publisher,
 }
 
-const THUMB_PX: u32 = 320;
 
 /// Result of processing one file.
 pub struct Media { pub sha256: String, pub size: i64, pub page_count: Option<i32>, pub thumb_uri: Option<String> }
@@ -91,7 +90,8 @@ pub async fn process_media(files: &dyn ObjectStore, a: &AttachmentRow) -> Result
 
 fn image_thumbnail(data: &[u8]) -> Result<Vec<u8>> {
     let img = image::load_from_memory(data)?;
-    let thumb = img.thumbnail(THUMB_PX, THUMB_PX).to_rgb8();
+    let px = crate::settings::settings().uploads.thumbnail_px;
+    let thumb = img.thumbnail(px, px).to_rgb8();
     let mut buf = Vec::new();
     thumb.write_to(&mut Cursor::new(&mut buf), image::ImageFormat::Jpeg)?;
     Ok(buf)
@@ -108,7 +108,7 @@ pub(crate) fn pdf_thumbnail(data: &[u8]) -> Result<Option<Vec<u8>>> {
         std::fs::write(&input, data)?;
         let out = dir.join("page");
         let status = match std::process::Command::new("pdftoppm")
-            .args(["-jpeg", "-f", "1", "-l", "1", "-singlefile", "-scale-to", &THUMB_PX.to_string()])
+            .args(["-jpeg", "-f", "1", "-l", "1", "-singlefile", "-scale-to", &crate::settings::settings().uploads.thumbnail_px.to_string()])
             .arg(&input).arg(&out)
             .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped())
             .output()

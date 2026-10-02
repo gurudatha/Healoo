@@ -9,6 +9,7 @@ pub mod meta;
 pub mod parts;
 pub mod principal;
 pub mod users;
+pub mod vitals;
 
 use crate::{
     auth::{DevVerifier, TokenVerifier},
@@ -114,7 +115,7 @@ impl IntoResponse for ApiError {
 // ---------------- router ----------------
 
 pub const MAX_BODY: usize = 20 * 1024 * 1024; // doc 4.5
-pub const MAX_FILE_BODY: usize = 26 * 1024 * 1024; // PDFs up to 25 MB through /files (disk store)
+
 
 pub fn router(state: AppState) -> Router {
     let cfg = &state.cfg;
@@ -130,6 +131,13 @@ pub fn router(state: AppState) -> Router {
         .route("/users/:id", get(users::profile))
         .route("/users/:id/shared-items", get(items::shared_items))
         .route("/hospitals/:id/doctors", get(users::hospital_doctors))
+        .route("/vitals/types", get(vitals::types).post(vitals::add_type))
+        .route("/vitals/config", get(vitals::settings))
+        .route("/vitals/latest", get(vitals::latest))
+        .route("/vitals/readings", get(vitals::readings).post(vitals::record))
+        .route("/vitals/ranges/:user/:code", put(vitals::set_range))
+        .route("/vitals/alerts", get(vitals::alerts))
+        .route("/vitals/alerts/:id/read", post(vitals::read_alert))
         .route("/admin/users", post(admin::create_user))
         .route("/admin/users/:id", delete(admin::delete_user))
         .route("/admin/doctors", get(admin::doctors).post(admin::create_doctor))
@@ -174,7 +182,8 @@ pub fn router(state: AppState) -> Router {
         app = app.merge(
             Router::new()
                 .route("/files/*key", get(files::download).put(files::upload))
-                .layer(DefaultBodyLimit::max(MAX_FILE_BODY)),
+                // The largest allowed file through /files (disk store), from server.json.
+                .layer(DefaultBodyLimit::max(crate::settings::settings().uploads.file_body_bytes())),
         );
     }
 

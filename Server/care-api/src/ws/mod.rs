@@ -36,7 +36,6 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 pub const MAX_FRAME: usize = 64 * 1024;
-pub const MAX_SOCKETS_PER_USER: usize = 5;
 const PING_EVERY: Duration = Duration::from_secs(25);
 const SILENCE_LIMIT: Duration = Duration::from_secs(60);
 
@@ -54,7 +53,7 @@ impl Registry {
     fn register(&self, user: Uuid) -> Option<(u64, mpsc::Receiver<String>)> {
         let mut entry = self.sessions.entry(user).or_default();
         entry.retain(|(_, tx)| !tx.is_closed());
-        if entry.len() >= MAX_SOCKETS_PER_USER { return None; }
+        if entry.len() >= crate::settings::settings().realtime.max_sockets_per_user { return None; }
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::channel(256);
         entry.push((id, tx));
@@ -235,6 +234,15 @@ impl Fanout {
             (topics::CHAT, "message.created") => {
                 let msg = ev.payload.get("message").cloned().unwrap_or(Value::Null);
                 Some((json!({ "type": "message.new", "item_id": ev.subject_id, "message": msg }).to_string(), "message"))
+            }
+            // A patient's new vital reading, for the doctors in their contacts. Only red and
+            // yellow ask for a push; green just refreshes an open dashboard.
+            (topics::ALERTS, "vital.alert") => {
+                let severity = ev.payload.get("severity").and_then(Value::as_str).unwrap_or("GREEN");
+                Some((json!({
+                    "type": "vital.alert", "patient_id": ev.subject_id, "severity": severity,
+                    "code": ev.payload.get("code"), "label": ev.payload.get("label"),
+                }).to_string(), if severity == "GREEN" { "" } else { "vital" }))
             }
             (topics::ALERTS, _) => Some((json!({
                 "type": "alert", "item_id": ev.subject_id,

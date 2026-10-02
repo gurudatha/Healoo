@@ -24,8 +24,7 @@ import com.healoo.app.ui.theme.*
 import com.healoo.app.ui.upload.SageTextField
 import kotlinx.coroutines.launch
 
-/** Designations offered as chips; any other can be typed. There is no department field yet. */
-private val DESIGNATIONS = listOf("Cardiologist", "Urologist", "Paediatrician", "General Medicine")
+// Designations offered as chips come from `designations` in WUI/app-config.json; any other can be typed.
 
 class AdminViewModel : ViewModel() {
     private val repo = ServiceLocator.repository
@@ -175,7 +174,7 @@ private fun AccountSheet(doctor: Boolean, vm: AdminViewModel, onDismiss: () -> U
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     FieldLabel("Designation")
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        DESIGNATIONS.forEach { d -> SageChip(d, designation == d, { designation = if (designation == d) "" else d }) }
+                        AppConfig.current.designations.forEach { d -> SageChip(d, designation == d, { designation = if (designation == d) "" else d }) }
                     }
                     SageTextField("Or type one", designation, { designation = it }, placeholder = "e.g. Dermatologist")
                 }

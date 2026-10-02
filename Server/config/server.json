@@ -1,0 +1,42 @@
+{
+  "_comment": [
+    "Server settings that used to be constants in the code (Documentation/Configuration.md).",
+    "",
+    "How it is used: the file is compiled into the server as its defaults. To change values without",
+    "rebuilding, set SERVER_CONFIG to a copy of this file (the LAN compose file already mounts this",
+    "folder) and restart care-api and care-worker. A file that fails the checks stops the server at",
+    "start-up with the reason. Every setting is optional: one that is left out keeps its default.",
+    "",
+    "uploads: the apps read max_attachments, image_max_mb and pdf_max_mb from GET /v1/config, so they",
+    "follow this file without an app update.",
+    "appointments.default_timezone must be an IANA name such as Asia/Kolkata."
+  ],
+  "version": 1,
+
+  "uploads": {
+    "max_attachments": 20,
+    "image_max_mb": 10,
+    "pdf_max_mb": 25,
+    "thumbnail_px": 320,
+    "download_link_minutes": 10
+  },
+
+  "messages": {
+    "max_chars": 4000
+  },
+
+  "rate_limit": {
+    "per_second": 20,
+    "burst": 40
+  },
+
+  "appointments": {
+    "default_timezone": "Asia/Kolkata",
+    "calendar_days": 183,
+    "upcoming_visits": 12
+  },
+
+  "realtime": {
+    "max_sockets_per_user": 5
+  }
+}

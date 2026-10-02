@@ -8,6 +8,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends cmake pkg-confi
 WORKDIR /src
 COPY care-api/Cargo.toml care-api/Cargo.lock* ./care-api/
 COPY care-api/src ./care-api/src
+# Compiled-in defaults (server.json, vitals.json); SERVER_CONFIG / VITALS_CONFIG can point at replacements at run time.
+COPY config ./config
 WORKDIR /src/care-api
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/care-api/target \

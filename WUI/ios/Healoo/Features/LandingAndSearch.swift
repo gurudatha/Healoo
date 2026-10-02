@@ -9,26 +9,38 @@ struct LandingView: View {
     @State private var dashboard: Dashboard?
     @State private var items: [DataItem]?
     @State private var error: String?
-    @State private var query = ""
-    @State private var role: Role? = .doctor
+    // Vitals: a user's own tiles, or a doctor's alert counts (Vitals_Design.md)
+    @State private var vitalTypes: [VitalType] = []
+    @State private var vitalLatest: [String: VitalReading] = [:]
+    @State private var vitalSettings = VitalSettings()
+    @State private var alertCounts: VitalAlertCounts?
+    @State private var entering: VitalType?
     /// Dashboard filter: a PartKind (REPORT, MESSAGE or APPOINTMENT), or nil for all open items.
     @State private var filter: String?
     /// "See all": every open item instead of the latest `preview`.
     @State private var showAll = false
-    private let preview = 20, all = 100
+    /// `lists` in WUI/app-config.json
+    private let preview = AppConfig.current.lists.homePreview, all = AppConfig.current.lists.homeAll
 
     var body: some View {
         VStack(spacing: 0) {
             header
             ScrollView {
                 LazyVStack(spacing: 8) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        FieldLabel("Find doctors, patients, hospitals or labs")
-                        SearchField(text: $query, placeholder: "Search by name or Healoo ID", onSubmit: { openSearch(role) }, compact: true)
-                        RoleFilterRow(selected: role, includeAll: true, compact: true) { role = $0; openSearch($0) }
+                    // Search lives in the bottom bar; this space is for vitals.
+                    VStack(alignment: .leading, spacing: 6) {
+                        if me?.primaryRole == .patient, !vitalTypes.isEmpty {
+                            FieldLabel("Vitals · tap to enter today's value")
+                            VitalTileGrid(types: vitalTypes, latest: vitalLatest, settings: vitalSettings,
+                                          onTile: { entering = $0 }, onMore: { router.push(.vitals(nil)) })
+                        } else if me?.primaryRole == .doctor {
+                            FieldLabel("Patient alerts")
+                            AlertDashboardRow(counts: alertCounts)
+                        }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.bottom, 6)
-                    // A fine line between Find and Open items, drawn inside the gap that was already there.
+                    // A fine line above Open items, drawn inside the gap that was already there.
                     .overlay(alignment: .bottom) { Rectangle().fill(Sage.border).frame(height: 1).offset(y: 3) }
 
                     // "See all" expands the list in place (it used to open Search, which lists people, not items).
@@ -61,7 +73,14 @@ struct LandingView: View {
             .refreshable { await load() }
         }
         .background(Sage.background)
-        .task { if items == nil { await load() } }
+        // Also when coming back from the vitals or alerts screens: counts and colours may have changed.
+        .task { await load() }
+        .sheet(item: $entering) { t in
+            NavigationStack {
+                VitalEntrySheet(type: t, backdateHours: vitalSettings.backdateHours) { saved in vitalLatest[t.code] = saved; entering = nil }
+            }
+            .environment(env)
+        }
         // Keep counters and the list current when items or messages arrive live.
         .onReceive(env.repo.events) { event in
             if case .connection = event { return }
@@ -135,8 +154,6 @@ struct LandingView: View {
         switch filter { case PartKind.report: "reports"; case PartKind.message: "messages"; default: "appointments" }
     }
 
-    private func openSearch(_ role: Role?) { router.home.append(Route.search(query: query, role: role)) }
-
     private func load() async {
         error = nil
         do {
@@ -144,6 +161,19 @@ struct LandingView: View {
             dashboard = try await env.repo.dashboard()
             items = try await env.repo.openItems(limit: showAll ? all : preview, kind: filter)
         } catch { self.error = "Couldn't load your items. Check your connection and try again." }
+        await loadVitals()
+    }
+
+    /// Kept apart from the items: a server without vitals just leaves this section out.
+    private func loadVitals() async {
+        if me?.primaryRole == .doctor {
+            alertCounts = (try? await env.repo.vitalAlerts(severity: nil, sort: .time))?.counts ?? alertCounts
+        } else if me?.primaryRole == .patient {
+            vitalSettings = (try? await env.repo.vitalSettings()) ?? vitalSettings
+            guard let types = try? await env.repo.vitalTypes(nil), let latest = try? await env.repo.vitalLatest(nil) else { return }
+            vitalTypes = types
+            vitalLatest = Dictionary(latest.map { ($0.code, $0) }, uniquingKeysWith: { first, _ in first })
+        }
     }
 }
 

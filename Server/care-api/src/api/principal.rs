@@ -32,8 +32,6 @@ pub(crate) struct Cached {
 }
 
 const CACHE_TTL: Duration = Duration::from_secs(300);
-const RATE_PER_SEC: f64 = 20.0;
-const BURST: f64 = 40.0;
 
 pub fn bearer(headers: &axum::http::HeaderMap) -> Option<String> {
     headers.get(axum::http::header::AUTHORIZATION)?.to_str().ok()?
@@ -104,9 +102,11 @@ impl Inner {
 
     fn rate_limit(&self, user: Uuid) -> ApiResult<()> {
         let now = Instant::now();
-        let mut e = self.limiter.entry(user).or_insert((now, BURST));
+        // rate_limit in Server/config/server.json
+        let limit = &crate::settings::settings().rate_limit;
+        let mut e = self.limiter.entry(user).or_insert((now, limit.burst));
         let (last, tokens) = *e;
-        let refill = (tokens + now.duration_since(last).as_secs_f64() * RATE_PER_SEC).min(BURST);
+        let refill = (tokens + now.duration_since(last).as_secs_f64() * limit.per_second).min(limit.burst);
         if refill < 1.0 {
             *e = (now, refill);
             return Err(ApiError::too_many());

@@ -7,6 +7,7 @@ pub mod misc;
 pub mod parts;
 pub mod social;
 pub mod users;
+pub mod vitals;
 
 use anyhow::{Context, Result};
 use dashmap::DashMap;

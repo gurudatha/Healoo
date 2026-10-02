@@ -34,6 +34,7 @@ fun operationIcon(key: String): ImageVector = when (key) {
     "share" -> Icons.Outlined.Share
     "event" -> Icons.Outlined.Event
     "doctor" -> Icons.Outlined.MedicalServices
+    "vitals" -> com.healoo.app.ui.vitals.vitalIcon("heart")
     else -> Icons.Outlined.Circle
 }
 
@@ -46,7 +47,8 @@ fun OperationBar(ops: ResolvedOperations, onOperation: (String) -> Unit, selecte
     var more by remember { mutableStateOf(false) }
     Column(Modifier.background(Sage.Surface).navigationBarsPadding()) {
         HorizontalDivider(color = Sage.Divider)
-        Row(Modifier.fillMaxWidth().height(72.dp), horizontalArrangement = Arrangement.SpaceAround, verticalAlignment = Alignment.CenterVertically) {
+        // As tall as an icon with its label: no spare space above or below.
+        Row(Modifier.fillMaxWidth().height(46.dp), horizontalArrangement = Arrangement.SpaceAround, verticalAlignment = Alignment.CenterVertically) {
             ops.visible.forEach { op -> BarButton(op.label, operationIcon(op.icon), op.id == selected) { onOperation(op.id) } }
             if (ops.overflow.isNotEmpty()) Box {
                 BarButton("More", Icons.Outlined.MoreHoriz, ops.overflow.any { it.id == selected }) { more = true }
@@ -62,13 +64,13 @@ fun OperationBar(ops: ResolvedOperations, onOperation: (String) -> Unit, selecte
 private fun BarButton(label: String, icon: ImageVector, on: Boolean, onClick: () -> Unit) {
     val color = if (on) Sage.Accent else Sage.Muted
     Column(
-        Modifier.width(68.dp).height(56.dp).clip(RoundedCornerShape(12.dp))
+        Modifier.width(68.dp).height(44.dp).clip(RoundedCornerShape(10.dp))
             .clickable(role = Role.Tab, onClick = onClick).semantics { selected = on },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
         Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(22.dp))
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(1.dp))
         Text(label, style = HType.tiny, color = color, maxLines = 1)
     }
 }

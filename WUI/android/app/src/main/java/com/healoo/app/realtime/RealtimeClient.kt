@@ -80,6 +80,8 @@ class RealtimeClient(
                             ?.let { m -> _events.tryEmit(RealtimeEvent.NewMessage(m)) }
                     }
                     "item.updated" -> frame["item_id"]?.jsonPrimitive?.content?.let { _events.tryEmit(RealtimeEvent.ItemChanged(it)) }
+                    "vital.alert" -> _events.tryEmit(RealtimeEvent.VitalAlert(
+                        frame["patient_id"]?.jsonPrimitive?.content.orEmpty(), frame["severity"]?.jsonPrimitive?.content ?: "GREEN"))
                     "ping" -> webSocket.send("""{"type":"pong"}""")
                 }
             }

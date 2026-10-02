@@ -192,7 +192,7 @@ fun UploadScreen(
     var showLinkDialog by remember { mutableStateOf(false) }
 
     // Multiple images at once (system photo picker, no storage permission needed)
-    val pickImages = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(Limits.MAX_ATTACHMENTS)) {
+    val pickImages = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(Limits.MAX_ATTACHMENTS.coerceAtLeast(2))) {
         vm.addFiles(context, it)
     }
     // Multiple PDFs at once

@@ -16,7 +16,8 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use url::Url;
 
 pub const URI_PREFIX: &str = "obj:";
-pub const URL_TTL: Duration = Duration::from_secs(600); // 10-minute URLs (doc 7.4)
+/// How long download and upload links stay valid (doc 7.4): uploads.download_link_minutes in server.json.
+pub fn url_ttl() -> Duration { crate::settings::settings().uploads.link_ttl() }
 
 pub fn object_uri(key: &str) -> String { format!("{URI_PREFIX}{key}") }
 pub fn key_of(uri: &str) -> Option<&str> { uri.strip_prefix(URI_PREFIX) }
@@ -70,7 +71,7 @@ impl DiskStore {
     }
 
     fn url(&self, method: &str, key: &str, mime: &str) -> Result<String> {
-        let exp = chrono::Utc::now().timestamp() + URL_TTL.as_secs() as i64;
+        let exp = chrono::Utc::now().timestamp() + url_ttl().as_secs() as i64;
         let mut u = self.base.join("files/")?.join(key)?;
         u.query_pairs_mut()
             .append_pair("m", method)
@@ -135,7 +136,7 @@ impl S3Store {
     }
 
     fn presign_cfg() -> Result<aws_sdk_s3::presigning::PresigningConfig> {
-        Ok(aws_sdk_s3::presigning::PresigningConfig::expires_in(URL_TTL)?)
+        Ok(aws_sdk_s3::presigning::PresigningConfig::expires_in(url_ttl())?)
     }
 }
 

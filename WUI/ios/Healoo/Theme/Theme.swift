@@ -64,10 +64,11 @@ enum Radius {
 
 /// Header heights as a fraction of screen height (design doc 3.2 / 3.3).
 enum HeaderRatio {
-    static let landing: CGFloat = 0.20
-    static let userExpanded: CGFloat = 0.25
-    static let userCollapsed: CGFloat = 0.10
-    static let pinned: CGFloat = 0.10
+    // `layout` in WUI/app-config.json
+    static var landing: CGFloat { AppConfig.current.layout.homeHeader }
+    static var userExpanded: CGFloat { AppConfig.current.layout.personHeaderExpanded }
+    static var userCollapsed: CGFloat { AppConfig.current.layout.personHeaderCollapsed }
+    static var pinned: CGFloat { AppConfig.current.layout.pinnedHeader }
 }
 
 /// PostScript names of the bundled fonts. If a name doesn't match the file you added,

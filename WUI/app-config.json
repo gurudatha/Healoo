@@ -1,0 +1,49 @@
+{
+  "_comment": [
+    "App settings shared by Android and iOS — bundled into both apps at build time and read at",
+    "start-up, like page-operations.json. Change a value here and rebuild the apps.",
+    "A setting that is missing, or the whole file, falls back to the default written in the code,",
+    "so an older file keeps working with a newer app. See Documentation/Configuration.md.",
+    "",
+    "layout: share of the screen height each header takes (0.20 = 20%). The person page's header",
+    "  shrinks from person_header_expanded to person_header_collapsed while scrolling.",
+    "lists: how many open items Home shows, and how many after See all.",
+    "profile_photo: pictures are resized on the phone to at most max_px on the long side before upload.",
+    "designations: the choices offered when an administrator adds a doctor (any other can be typed).",
+    "message_cache: discussions kept on the phone so they can be read without the server.",
+    "  max_mb   total size allowed. trim_mb   how much of the oldest data is removed when it is full.",
+    "file_cache: full images and PDFs opened in the viewer (thumbnails are cached separately).",
+    "",
+    "Not here: upload limits (files per item, image and PDF size). The apps read those from the",
+    "server (Server/config/server.json), so they can change without rebuilding the apps."
+  ],
+  "version": 1,
+
+  "layout": {
+    "home_header": 0.20,
+    "person_header_expanded": 0.25,
+    "person_header_collapsed": 0.10,
+    "pinned_header": 0.10
+  },
+
+  "lists": {
+    "home_preview": 20,
+    "home_all": 100
+  },
+
+  "profile_photo": {
+    "max_px": 512
+  },
+
+  "designations": ["Cardiologist", "Urologist", "Paediatrician", "General Medicine"],
+
+  "message_cache": {
+    "max_mb": 40,
+    "trim_mb": 2
+  },
+
+  "file_cache": {
+    "max_files": 15,
+    "max_mb": 90
+  }
+}

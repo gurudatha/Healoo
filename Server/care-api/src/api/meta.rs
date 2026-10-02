@@ -25,9 +25,10 @@ pub async fn config(State(st): State<AppState>) -> Json<Value> {
         "ws_url": st.exposure.ws_url().to_string(),
         "auth": auth,
         "limits": {
-            "attachments_per_item": crate::api::items::MAX_ATTACHMENTS,
-            "image_max_bytes": crate::api::items::IMAGE_MAX,
-            "pdf_max_bytes": crate::api::items::PDF_MAX,
+            "attachments_per_item": crate::api::items::max_attachments(),
+            "image_max_bytes": crate::api::items::image_max(),
+            "pdf_max_bytes": crate::api::items::pdf_max(),
+            "message_max_chars": crate::settings::settings().messages.max_chars,
             "ws_frame_bytes": crate::ws::MAX_FRAME,
         },
     }))

@@ -9,6 +9,7 @@ async fn main() -> anyhow::Result<()> {
     care_api::install_crypto_provider();
     care_api::init_tracing(std::env::var("NETWORK_MODE").map(|m| m.eq_ignore_ascii_case("internet")).unwrap_or(false));
     let cfg = Config::from_env()?;
+    care_api::settings::settings();   // fail at start-up if Server/config/server.json (or SERVER_CONFIG) is wrong
     if cfg.bus == BusKind::Memory {
         anyhow::bail!("care-worker needs EVENT_BUS=kafka; with the memory bus the worker runs inside care-api");
     }
