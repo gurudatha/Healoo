@@ -97,34 +97,33 @@ fn image_thumbnail(data: &[u8]) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
-/// Renders page 1 with poppler's `pdftoppm` (package poppler-utils, installed in the Docker image).
-/// Returns None when the tool isn't installed (e.g. running natively without poppler): the apps
-/// then show a PDF icon.
+/// Renders page 1 as a JPEG, `uploads.thumbnail_px` on its longer side, with the `hayro` library
+/// (pure Rust, MIT / Apache-2.0), inside this process: no external program is needed.
+/// Returns None for a PDF without pages. A PDF that can't be rendered (encrypted, damaged) is an
+/// error; the caller logs it and the apps then show a PDF icon.
 pub(crate) fn pdf_thumbnail(data: &[u8]) -> Result<Option<Vec<u8>>> {
-    let dir = std::env::temp_dir().join(format!("healoo-pdf-{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&dir)?;
-    let result = (|| -> Result<Option<Vec<u8>>> {
-        let input = dir.join("in.pdf");
-        std::fs::write(&input, data)?;
-        let out = dir.join("page");
-        let status = match std::process::Command::new("pdftoppm")
-            .args(["-jpeg", "-f", "1", "-l", "1", "-singlefile", "-scale-to", &crate::settings::settings().uploads.thumbnail_px.to_string()])
-            .arg(&input).arg(&out)
-            .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped())
-            .output()
-        {
-            Ok(o) => o,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                tracing::debug!("pdftoppm not installed; skipping PDF thumbnail");
-                return Ok(None);
-            }
-            Err(e) => return Err(e.into()),
-        };
-        anyhow::ensure!(status.status.success(), "pdftoppm failed: {}", String::from_utf8_lossy(&status.stderr).trim());
-        Ok(Some(std::fs::read(dir.join("page.jpg"))?))
-    })();
-    let _ = std::fs::remove_dir_all(&dir);
-    result
+    use hayro::{hayro_interpret::InterpreterSettings, hayro_syntax::Pdf, vello_cpu::color::palette::css::WHITE};
+    let px = crate::settings::settings().uploads.thumbnail_px;
+    let data = data.to_vec();
+    // The file comes from a user. Whatever it does to the renderer must not take the worker down.
+    let rendered = std::panic::catch_unwind(move || -> Result<Option<(u32, u32, Vec<u8>)>> {
+        let pdf = Pdf::new(data).map_err(|e| anyhow::anyhow!("not a readable PDF: {e:?}"))?;
+        let Some(page) = pdf.pages().iter().next() else { return Ok(None) };
+        let (w, h) = page.render_dimensions();
+        anyhow::ensure!(w.is_finite() && h.is_finite() && w >= 1.0 && h >= 1.0, "page has no size");
+        let scale = px as f32 / w.max(h);
+        let pixmap = hayro::render(
+            page, &hayro::RenderCache::new(), &InterpreterSettings::default(), &hayro::RenderSettings::default(),
+            &hayro::PixmapSettings { x_scale: scale, y_scale: scale, bg_color: WHITE },
+        );
+        // Opaque white background, so the premultiplied RGBA is plain RGBA.
+        Ok(Some((pixmap.width() as u32, pixmap.height() as u32, pixmap.data_as_u8_slice().to_vec())))
+    }).map_err(|_| anyhow::anyhow!("the PDF renderer failed on this file"))??;
+    let Some((w, h, rgba)) = rendered else { return Ok(None) };
+    let img = image::RgbaImage::from_raw(w, h, rgba).ok_or_else(|| anyhow::anyhow!("unexpected thumbnail size"))?;
+    let mut buf = Vec::new();
+    image::DynamicImage::ImageRgba8(img).to_rgb8().write_to(&mut Cursor::new(&mut buf), image::ImageFormat::Jpeg)?;
+    Ok(Some(buf))
 }
 
 /// Makes the missing thumbnails, page counts and hashes for every attachment of `items`

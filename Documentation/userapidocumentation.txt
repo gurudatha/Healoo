@@ -370,7 +370,7 @@ or PDFs attached. Uploading takes three steps:
 
   Keep each "uri"; you need it in step 3. Upload URLs expire after 10
   minutes. On the internet profile upload_url points at the files host
-  (S3/MinIO) instead.
+  (S3-compatible storage) instead.
 
 5.2 Step 2: upload each file
       PUT <upload_url>

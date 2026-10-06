@@ -2,9 +2,9 @@
 //! `obj:<key>` URIs and the API hands out short-lived URLs only after the policy check.
 //!
 //! * [`DiskStore`] — files under FILES_DIR, served by this API at `/files/<key>` with
-//!   HMAC-signed, expiring URLs. Ideal for a LAN trial: no MinIO, no extra ports.
-//! * [`S3Store`] — S3 or MinIO with presigned URLs. For internet deployments; also works on
-//!   the LAN with the doc's MinIO container.
+//!   HMAC-signed, expiring URLs. Ideal for a LAN trial: no storage service, no extra ports.
+//! * [`S3Store`] — any S3-compatible store (SeaweedFS in the internet compose file, or AWS S3) with
+//!   presigned URLs. For internet deployments; also works on the LAN.
 
 use crate::config::{Config, StoreKind};
 use anyhow::{bail, Context, Result};
@@ -110,7 +110,7 @@ impl ObjectStore for DiskStore {
     }
 }
 
-// ---------------- S3 / MinIO (internet) ----------------
+// ---------------- S3-compatible store (internet) ----------------
 
 pub struct S3Store {
     bucket: String,
@@ -165,5 +165,57 @@ impl ObjectStore for S3Store {
         self.client.put_object().bucket(&self.bucket).key(key).content_type(mime)
             .body(aws_sdk_s3::primitives::ByteStream::from(data)).send().await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Runs the S3 code against a real S3-compatible store (the internet profile uses SeaweedFS):
+    /// what the worker does (put / get) and what the apps do (presigned upload and download).
+    ///
+    /// Needs a store, so it is skipped by default. To run it, set FILE_STORE=s3, S3_ENDPOINT,
+    /// S3_BUCKET, AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, then:
+    ///     cargo test --lib s3_store -- --ignored
+    #[tokio::test]
+    #[ignore = "needs an S3-compatible store; see the comment"]
+    async fn s3_store_round_trip_with_presigned_links() {
+        let cfg = Config::from_env().expect("configuration");
+        assert_eq!(cfg.store, StoreKind::S3, "set FILE_STORE=s3");
+        let store = S3Store::new(&cfg).await.expect("S3 client");
+        let http = reqwest::Client::new();
+        let id = ulid::Ulid::new();
+
+        // Worker side: the bucket is created on the first upload; thumbnails are written and read.
+        let direct = format!("thumbs/uploads/test/{id}-report.pdf.jpg");
+        store.put(&direct, Bytes::from_static(b"thumbnail bytes"), "image/jpeg").await.expect("direct put");
+        assert_eq!(&store.get(&direct).await.expect("direct get")[..], b"thumbnail bytes");
+
+        // App side: upload through a presigned link (a file bigger than one internal chunk)...
+        let key = format!("uploads/test/{id}-scan 1.jpg");
+        let body: Vec<u8> = (0..6_000_000u32).map(|i| (i % 251) as u8).collect();
+        let put_url = store.presign_put(&key, "image/jpeg").await.expect("presign put");
+        let put = http.put(&put_url).header("content-type", "image/jpeg").body(body.clone()).send().await.expect("upload");
+        assert!(put.status().is_success(), "presigned upload: {} {}", put.status(), put.text().await.unwrap_or_default());
+
+        // ...then download through a presigned link, and read it back as the worker would.
+        let get_url = store.presign_get(&key).await.expect("presign get");
+        let got = http.get(&get_url).send().await.expect("download");
+        assert!(got.status().is_success(), "presigned download: {}", got.status());
+        assert_eq!(got.bytes().await.unwrap().len(), body.len());
+        assert_eq!(&store.get(&key).await.expect("get uploaded")[..], &body[..]);
+
+        // Links are the only way in: no signature, a changed signature or another object are refused.
+        let plain = get_url.split('?').next().unwrap().to_string();
+        assert_eq!(http.get(&plain).send().await.unwrap().status(), 403, "anonymous read must be refused");
+        let forged = get_url.replacen("X-Amz-Signature=", "X-Amz-Signature=0", 1);
+        assert_eq!(http.get(&forged).send().await.unwrap().status(), 403, "a changed signature must be refused");
+        let other = get_url.replacen("scan%201.jpg", "scan%202.jpg", 1);
+        assert_ne!(other, get_url, "test is out of date: the key is not in the link as expected");
+        assert_eq!(http.get(&other).send().await.unwrap().status(), 403, "a link is valid for its own object only");
+        // An upload link can't be used to send a different type than the one it was made for.
+        let wrong_type = http.put(&put_url).header("content-type", "application/pdf").body(vec![1u8; 10]).send().await.unwrap();
+        assert_eq!(wrong_type.status(), 403, "the content type is part of the signed upload");
     }
 }

@@ -23,7 +23,7 @@ see the traits, and `NETWORK_MODE` picks the implementations and safe defaults.
 | --- | --- | --- | --- |
 | Network exposure | `Exposure` (`src/net/`) | `LanExposure`: listens on all interfaces, HTTPS with its own local CA (or behind local Caddy), mDNS `_healoo._tcp`, permissive CORS | `InternetExposure`: private port behind Caddy/Nginx, `X-Forwarded-For` trusted only from proxy ranges, strict CORS |
 | Identity | `TokenVerifier` (`src/auth/`) | `DevVerifier`: locally signed tokens, no internet needed (Auth0 optional) | `Auth0Verifier`: RS256 + JWKS cache (dev tokens refused) |
-| Files | `ObjectStore` (`src/files/`) | `DiskStore`: files on disk, served by the API at `/files` with signed, expiring URLs | `S3Store`: S3/MinIO presigned URLs on a files subdomain |
+| Files | `ObjectStore` (`src/files/`) | `DiskStore`: files on disk, served by the API at `/files` with signed, expiring URLs | `S3Store`: S3-compatible store (SeaweedFS) presigned URLs on a files subdomain |
 | Events | `EventBus` (`src/events/`) | `KafkaBus` (or `MemoryBus` for a Kafka-less quick run) | `KafkaBus` |
 
 | Setting | `NETWORK_MODE=lan` default | `NETWORK_MODE=internet` default |
@@ -193,13 +193,25 @@ Compatibility notes:
 
 ```bash
 cd deploy/internet
-cp .env.internet.example .env     # domains, ACME email, Auth0, MinIO credentials
+cp .env.internet.example .env     # domains, ACME email, Auth0, storage keys
 docker compose up -d --build
 ```
 
 Caddy gets Let's Encrypt certificates automatically; `proxy/nginx.conf` is the equivalent if
 you prefer Nginx. Only ports 80/443 are published. Point the apps at `https://api.example.com/`.
 To load test data there: `docker compose run --rm care-api care-seed` (test data only).
+
+**File storage** is SeaweedFS (Apache-2.0), reached through its S3 gateway. The server uses only
+the standard S3 protocol, so AWS S3 or another S3-compatible store works by setting
+`S3_ENDPOINT` and the two keys. The bucket is created on the first upload and nothing in it is
+public: files are reached only through signed, expiring links.
+
+- Use letters and digits only for `S3_ACCESS_KEY` and `S3_SECRET_KEY`.
+- A deployment that already stored files in the earlier MinIO service keeps them in its
+  `minio_data` volume. They are not moved automatically: copy them to the new store with any
+  S3 copy tool before removing that volume.
+- To check a store, run the round-trip test against it (see `src/files/mod.rs`):
+  `cargo test --lib s3_store -- --ignored`
 
 ## 7. Configuration reference
 
@@ -227,7 +239,7 @@ Deployment settings are environment variables:
 | `CASSANDRA_NODES`, `CASSANDRA_KEYSPACE` | Cassandra contact points, keyspace `careconnect` |
 | `EVENT_BUS`, `KAFKA_BROKERS` | `kafka` or `memory`; broker list |
 | `FILE_STORE`, `FILES_DIR`, `FILES_SECRET` | `disk` or `s3`; disk folder; URL signing key |
-| `S3_BUCKET`, `S3_ENDPOINT`, `S3_PUBLIC_ENDPOINT`, `S3_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | S3/MinIO |
+| `S3_BUCKET`, `S3_ENDPOINT`, `S3_PUBLIC_ENDPOINT`, `S3_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | S3-compatible storage (SeaweedFS in the compose file) |
 | `INSTANCE_ID` | names this instance's ws-fanout consumer group |
 | `DEBUG_ROUTES` | expose `/v1/check/access` |
 | `RUST_LOG` | log filter |

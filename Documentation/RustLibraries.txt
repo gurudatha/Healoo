@@ -94,11 +94,11 @@ rdkafka (0.36.2)
 
 aws-config (1.12.0)
   Loads AWS settings: region, credentials from environment or files.
-  Configures the S3 client when FILE_STORE=s3 (MinIO or AWS S3).
+  Configures the S3 client when FILE_STORE=s3 (SeaweedFS, AWS S3 or any S3-compatible store).
   Direct dependency.
 
 aws-sdk-s3 (1.149.0)
-  Official AWS SDK client for Amazon S3 (also works with MinIO).
+  Official AWS SDK client for Amazon S3 (also works with SeaweedFS and other S3-compatible stores).
   Presigned upload/download URLs and file reads/writes in S3Store.
   Direct dependency.
 
@@ -110,6 +110,11 @@ image (0.25.10)
 lopdf (0.33.0)
   Reads, edits and writes PDF files.
   Counts PDF pages in the media worker and builds seed sample PDFs.
+  Direct dependency.
+
+hayro (0.8.0)
+  Renders PDF pages to images, in pure Rust (MIT / Apache-2.0).
+  Makes the first-page thumbnail of uploaded PDFs in the media worker; replaces the external pdftoppm program.
   Direct dependency.
 
 rcgen (0.13.2)
@@ -955,7 +960,7 @@ aws-types (1.6.0)
 
 aws-credential-types (1.3.0)
   Types for AWS access keys and credential providers.
-  Carries AWS_ACCESS_KEY_ID/SECRET for MinIO or S3.
+  Carries AWS_ACCESS_KEY_ID/SECRET for the S3-compatible store.
   Used by the AWS SDK.
 
 aws-sigv4 (1.6.0)

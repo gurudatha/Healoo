@@ -31,7 +31,7 @@ The guides were written when the two parts were separate downloads. Where they m
 
 | Part | Stack |
 | --- | --- |
-| Server | Rust, Tokio, axum (REST + WebSocket), Auth0 JWT, Apache Kafka, Apache Cassandra 5, S3/MinIO or local disk for files, Docker Compose |
+| Server | Rust, Tokio, axum (REST + WebSocket), Auth0 JWT, Apache Kafka, Apache Cassandra 5, S3-compatible storage (SeaweedFS) or local disk for files, Docker Compose |
 | Android | Kotlin, Jetpack Compose, Gradle 9.3.0, Android Gradle plugin 9.0.1, JDK 17, min SDK 29, target SDK 35 |
 | iOS | Swift, SwiftUI, iOS 17+, XcodeGen |
 
@@ -43,3 +43,14 @@ These are created on each machine and are ignored by Git (see `.gitignore`):
 - `WUI/android/local.properties`, the Gradle wrapper jar, build folders
 - The app fonts (Fraunces, Figtree): download them as described in the Windows guide, section 5
 - Signing keys (`*.jks`) and your personal `~/.gradle/gradle.properties`
+
+## Licence
+
+Copyright (C) 2026 Gurudatha.
+
+Healoo is free software under the GNU General Public License, version 3 or (at your option)
+any later version, with an additional permission to combine it with Google Play services,
+ML Kit and Firebase. See [`COPYRIGHT.md`](COPYRIGHT.md) and [`LICENSE`](LICENSE).
+
+The third-party libraries, fonts and icons it uses keep their own licences; they are listed
+in [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).

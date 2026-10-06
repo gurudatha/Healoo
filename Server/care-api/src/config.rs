@@ -9,7 +9,7 @@
 //! | Public URL     | https://<LAN IP>:8443/ (auto-detected)   | PUBLIC_BASE_URL (required, https)         |
 //! | Discovery      | mDNS `_healoo._tcp` on the LAN           | none                                      |
 //! | Auth           | dev tokens (offline) or Auth0            | Auth0 only                                |
-//! | Files          | local disk, served by this API           | S3 / MinIO presigned URLs                 |
+//! | Files          | local disk, served by this API           | S3-compatible store, presigned URLs       |
 //! | Client IP      | socket peer (or proxy on the same host)  | X-Forwarded-For from trusted proxies only |
 //! | Debug routes   | on                                       | off                                       |
 //!
@@ -147,7 +147,7 @@ impl Config {
 
         let store = match var_or("FILE_STORE", if lan { "disk" } else { "s3" }).to_lowercase().as_str() {
             "disk" => StoreKind::Disk,
-            "s3" | "minio" => StoreKind::S3,
+            "s3" | "minio" => StoreKind::S3,   // "minio" is still accepted for older .env files
             other => bail!("FILE_STORE must be disk or s3, got '{other}'"),
         };
 

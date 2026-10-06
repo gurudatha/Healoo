@@ -431,9 +431,20 @@ mod tests {
     #[test]
     fn sample_pdf_first_page_becomes_a_320px_thumbnail() {
         let pdf = sample_pdf("Reference ranges", 2).unwrap();
-        // None = pdftoppm isn't installed here (the Docker image has it); nothing to check then.
-        let Some(jpeg) = crate::worker::pdf_thumbnail(&pdf).unwrap() else { return };
-        let img = image::load_from_memory(&jpeg).unwrap();
-        assert_eq!(img.width().max(img.height()), 320);
+        let jpeg = crate::worker::pdf_thumbnail(&pdf).unwrap().expect("a PDF with pages has a thumbnail");
+        let img = image::load_from_memory(&jpeg).unwrap().to_rgb8();
+        // A4 portrait: 320 on the long side (a pixel of rounding either way).
+        assert!((319..=320).contains(&img.height()) && img.width() < img.height(), "{}x{}", img.width(), img.height());
+        // The page is white with a line of dark text near the top: both must be in the picture.
+        let dark = img.pixels().filter(|p| p.0.iter().all(|c| *c < 110)).count();
+        let white = img.pixels().filter(|p| p.0.iter().all(|c| *c > 240)).count();
+        assert!(dark > 20, "the text was not drawn ({dark} dark pixels)");
+        assert!(white > (img.width() * img.height() / 2) as usize, "the page background is not white");
+    }
+
+    #[test]
+    fn a_file_that_is_not_a_pdf_is_an_error_not_a_crash() {
+        assert!(crate::worker::pdf_thumbnail(b"%PDF-1.5 this is not really a PDF").is_err());
+        assert!(crate::worker::pdf_thumbnail(&[]).is_err());
     }
 }
