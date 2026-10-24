@@ -36,3 +36,6 @@ xcuserdata/
 !.vscode/tasks.json
 .DS_Store
 Thumbs.db
+
+# ---- Personal Claude Code / MCP setup ----
+.mcp.json
