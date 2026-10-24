@@ -7,6 +7,11 @@ For the healoo-backend LAN trial server, copy its certificate authority here:
 (In the Healoo repository the build also finds Server/deploy/lan/healoo-local-ca.crt
  automatically; with separate zips, healoo-backend/deploy/lan/healoo-local-ca.crt.)
 
+For the internet profile run locally (Caddy with its own certificate authority), copy Caddy's
+root certificate here (in Server/deploy/internet, with the caddy container running):
+    docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ../../../WUI/android/certs/healoo-internet-local-ca.crt
+Copy root.crt only, not intermediate.crt (Caddy replaces that every 7 days).
+
 Rebuild after changing files here:  .\gradlew.bat installDebug
 The build output lists each bundled certificate.
 
