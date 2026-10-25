@@ -64,6 +64,10 @@ base64 = "0.22"
 hmac = "0.12"
 sha2 = "0.10"
 hex = "0.4"
+# Encrypted administrators file (config/admins/admins.enc): Argon2id turns the key phrase into a
+# key; ChaCha20-Poly1305 encrypts and authenticates the file.
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
 rand = "0.8"
 bytes = "1"
 
@@ -78,6 +82,10 @@ path = "src/bin/care-worker.rs"
 [[bin]]
 name = "care-seed"
 path = "src/bin/care-seed.rs"
+
+[[bin]]
+name = "care-admin"
+path = "src/bin/care-admin.rs"
 
 [[bin]]
 name = "devtoken"

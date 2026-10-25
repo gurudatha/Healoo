@@ -2,11 +2,14 @@
 //! `{"error": {"code", "message", "request_id"}}` with 400/401/403/404/409/429.
 
 pub mod admin;
+pub mod dashboard;
 pub mod files;
 pub mod grants;
+pub mod invites;
 pub mod items;
 pub mod meta;
 pub mod parts;
+pub mod platform;
 pub mod principal;
 pub mod users;
 pub mod vitals;
@@ -93,6 +96,7 @@ impl ApiError {
     pub fn not_found(m: impl Into<String>) -> Self { Self::new(StatusCode::NOT_FOUND, "NOT_FOUND", m) }
     pub fn conflict(m: impl Into<String>) -> Self { Self::new(StatusCode::CONFLICT, "CONFLICT", m) }
     pub fn too_many() -> Self { Self::new(StatusCode::TOO_MANY_REQUESTS, "RATE_LIMITED", "Too many requests; slow down") }
+    pub fn too_many_with(m: impl Into<String>) -> Self { Self::new(StatusCode::TOO_MANY_REQUESTS, "RATE_LIMITED", m) }
 }
 
 impl From<anyhow::Error> for ApiError {
@@ -143,6 +147,18 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/doctors", get(admin::doctors).post(admin::create_doctor))
         .route("/admin/doctors/:id", delete(admin::deactivate_doctor))
         .route("/admin/doctors/:id/reactivate", post(admin::reactivate_doctor))
+        .route("/admin/hospital", get(admin::hospital_profile).put(admin::update_hospital))
+        // Platform administrators only (rule 11): the web dashboard at /admin/ uses these.
+        .route("/admin/overview", get(platform::overview))
+        .route("/admin/accounts", get(platform::accounts))
+        .route("/admin/activity", get(platform::activity))
+        .route("/admin/usage", get(platform::usage))
+        .route("/admin/hospitals", get(platform::hospitals).post(platform::create_hospital))
+        .route("/admin/hospitals/:id/administrators", post(platform::appoint_admin))
+        .route("/admin/hospitals/:id/administrators/:user_id", delete(platform::remove_admin))
+        .route("/admin/hospitals/:id/invites", get(invites::list).post(invites::create))
+        .route("/admin/hospitals/:id/invites/:invite_id", delete(invites::revoke))
+        .route("/invites/redeem", post(invites::redeem))
         // DataItem v2 (Documentation/DataItem_Design.md section 4)
         .route("/items", get(items::list).post(items::create))
         .route("/items/:id", get(items::get_one).patch(items::patch))
@@ -175,6 +191,7 @@ pub fn router(state: AppState) -> Router {
         .route("/ws", get(ws::upgrade)) // doc 4.4 path; /v1/ws is what the apps use
         .route("/healthz", get(meta::healthz))
         .route("/readyz", get(meta::readyz))
+        .merge(dashboard::routes())
         .layer(DefaultBodyLimit::max(MAX_BODY));
 
     // Disk store: the API itself serves the signed /files URLs, with a larger body limit.

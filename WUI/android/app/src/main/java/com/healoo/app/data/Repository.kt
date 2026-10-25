@@ -85,6 +85,11 @@ interface HealooRepository {
     /** "Delete" a doctor: deactivates the account and ends the hospital affiliation. */
     suspend fun adminDeactivateDoctor(doctorId: String)
     suspend fun adminReactivateDoctor(doctorId: String): AdminAccount
+    /** The administrator's hospital: name, address, phone, registration number, headline. */
+    suspend fun adminHospital(): HospitalProfile
+    suspend fun adminUpdateHospital(update: HospitalUpdate): HospitalProfile
+    /** An invite code from a platform administrator makes this account a hospital's administrator. */
+    suspend fun redeemInvite(code: String): InviteRedeemed
 
     // ---- account ----
     suspend fun updateProfile(update: ProfileUpdate): UserProfile

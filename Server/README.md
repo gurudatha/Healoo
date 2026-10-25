@@ -104,6 +104,7 @@ admin (`HL-8A2D4`) and an assistant (`HL-8S5T7`):
 | HL-8N3V6 | Dr. Vikram Nair | Doctor at Test Hospital A · Urologist |
 | HL-5P9L4 | Sunrise Pathology | Lab |
 | HL-6G2L7 | Green Valley Labs | Lab |
+| HL-9A7D2 | Healoo Platform Admin | Platform administrator (dashboard at `/admin/`) |
 
 The last nine are added to an existing trial database too: the seed job creates any that are
 missing on the next `docker compose up -d --build`, without touching other data.
@@ -212,6 +213,44 @@ public: files are reached only through signed, expiring links.
   S3 copy tool before removing that volume.
 - To check a store, run the round-trip test against it (see `src/files/mod.rs`):
   `cargo test --lib s3_store -- --ignored`
+
+**Administrators.** The platform administrators (who can use the dashboard at
+`https://api.example.com/admin/`) and, optionally, hospital administrators are listed in an
+encrypted file, `config/admins/admins.enc`, which is never committed. It is read with the key
+phrase in `ADMINS_KEY` (`deploy/internet/.env`), and `care-api` applies it at every start:
+the platform administrators are exactly the people listed. Run these from `deploy/internet`
+(details: `Documentation/Administration_Design.md` section 10). Create the file once with
+`docker compose run --rm care-api care-admin config init`.
+
+List the administrators in the file:
+
+```bash
+docker compose run --rm care-api care-admin config show
+```
+
+Add a platform administrator (name, email, then a Healoo ID or `-` for none):
+
+```bash
+docker compose run --rm care-api care-admin config add-platform "Your Name" you@example.com -
+```
+
+Remove someone (by name, email or Healoo ID):
+
+```bash
+docker compose run --rm care-api care-admin config remove you@example.com
+```
+
+Apply the file now, without restarting care-api:
+
+```bash
+docker compose run --rm care-api care-admin config apply
+```
+
+Change the key phrase (then put the new phrase in `ADMINS_KEY` in `.env`):
+
+```bash
+docker compose run --rm -e ADMINS_NEW_KEY=newphrase care-api care-admin config rekey
+```
 
 ## 7. Configuration reference
 

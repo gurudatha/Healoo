@@ -63,7 +63,8 @@ class LandingViewModel : ViewModel() {
     var entryError by mutableStateOf<String?>(null); private set
 
     val isDoctor get() = me?.primaryRole == Role.DOCTOR
-    val isUser get() = me?.primaryRole == Role.PATIENT
+    /** Has their own vitals: every person, administrators included; not doctors, assistants, labs or hospitals. */
+    val isUser get() = me?.let { !it.isClinical } == true
 
     fun load() = viewModelScope.launch {
         error = null

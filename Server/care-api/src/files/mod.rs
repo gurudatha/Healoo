@@ -29,6 +29,8 @@ pub trait ObjectStore: Send + Sync + 'static {
     async fn presign_get(&self, key: &str) -> Result<String>;
     async fn get(&self, key: &str) -> Result<Bytes>;
     async fn put(&self, key: &str, data: Bytes, mime: &str) -> Result<()>;
+    /// How much is stored: (files, bytes). For the administrator dashboard; walks every object.
+    async fn usage(&self) -> Result<(u64, u64)>;
 }
 
 /// Returns the store, plus the concrete disk store when the API itself must serve `/files`.
@@ -108,6 +110,19 @@ impl ObjectStore for DiskStore {
         tokio::fs::write(p.with_extension("mime"), mime).await?;
         Ok(())
     }
+    async fn usage(&self) -> Result<(u64, u64)> {
+        fn walk(dir: &std::path::Path, acc: &mut (u64, u64)) {
+            let Ok(entries) = std::fs::read_dir(dir) else { return };
+            for e in entries.flatten() {
+                let Ok(meta) = e.metadata() else { continue };
+                if meta.is_dir() { walk(&e.path(), acc); }
+                // .mime files hold each object's content type; they are not uploads.
+                else if e.path().extension().is_none_or(|x| x != "mime") { acc.0 += 1; acc.1 += meta.len(); }
+            }
+        }
+        let root = self.root.clone();
+        Ok(tokio::task::spawn_blocking(move || { let mut acc = (0, 0); walk(&root, &mut acc); acc }).await?)
+    }
 }
 
 // ---------------- S3-compatible store (internet) ----------------
@@ -165,6 +180,21 @@ impl ObjectStore for S3Store {
         self.client.put_object().bucket(&self.bucket).key(key).content_type(mime)
             .body(aws_sdk_s3::primitives::ByteStream::from(data)).send().await?;
         Ok(())
+    }
+
+    async fn usage(&self) -> Result<(u64, u64)> {
+        let mut acc = (0u64, 0u64);
+        let mut pages = self.client.list_objects_v2().bucket(&self.bucket).into_paginator().send();
+        while let Some(page) = pages.next().await {
+            let page = match page {
+                Ok(p) => p,
+                // No upload yet: the bucket is created on the first one.
+                Err(e) if e.as_service_error().is_some_and(|s| s.is_no_such_bucket()) => return Ok(acc),
+                Err(e) => return Err(e.into()),
+            };
+            for o in page.contents() { acc.0 += 1; acc.1 += o.size().unwrap_or(0).max(0) as u64; }
+        }
+        Ok(acc)
     }
 }
 

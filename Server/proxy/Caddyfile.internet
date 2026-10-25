@@ -30,6 +30,10 @@
 	handle /healthz {
 		reverse_proxy care-api:8080
 	}
+	# Platform administrator dashboard (Administration_Design.md section 8).
+	handle /admin* {
+		reverse_proxy care-api:8080
+	}
 	handle {
 		respond 404
 	}

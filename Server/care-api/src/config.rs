@@ -70,6 +70,8 @@ pub struct Config {
     pub auth0_domain: String,
     pub auth0_audience: String,
     pub claims_namespace: String,
+    /// Auth0 client ID of the administrator dashboard (a Single Page Application), v0.4.
+    pub admin_client_id: String,
     pub dev_jwt_secret: String,
 
     pub cassandra_nodes: Vec<String>,
@@ -171,6 +173,7 @@ impl Config {
             auth0_domain: var_or("AUTH0_DOMAIN", ""),
             auth0_audience: var_or("AUTH0_AUDIENCE", "https://api.careconnect.local"),
             claims_namespace: var_or("CLAIMS_NAMESPACE", "https://careconnect.local/"),
+            admin_client_id: var_or("ADMIN_AUTH0_CLIENT_ID", ""),
             dev_jwt_secret: var_or("DEV_JWT_SECRET", DEFAULT_DEV_SECRET),
 
             cassandra_nodes: list("CASSANDRA_NODES", "127.0.0.1:9042"),

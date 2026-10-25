@@ -47,7 +47,7 @@ class FakeRepository : HealooRepository {
     fun signInAs(userId: String) { meId = userId }
 
     private val affiliation = mutableMapOf("u-rao" to "h-a", "u-menon" to "h-a")   // doctor -> current hospital
-    private val adminHospital = mapOf("a-admin" to "h-a")                              // administrator -> hospital
+    private val adminHospital = mutableMapOf("a-admin" to "h-a")                       // administrator -> hospital
     private val deactivated = mutableSetOf<String>()
     private val emails = mutableMapOf<String, String>()                                // user -> email (admin-created)
     private val homeHospital = mutableMapOf("u-rao" to "h-a", "u-menon" to "h-a")
@@ -598,6 +598,35 @@ class FakeRepository : HealooRepository {
         deactivated -= doctorId
         affiliation[doctorId] = h
         adminView(raw(doctorId))
+    }
+
+    private val hospitalDetails = mutableMapOf(
+        "h-a" to HospitalProfile("h-a", "HL-1H0A1", "Test Hospital A", "12 MG Road, Bengaluru", "+91 80 4000 1234", "KA-HOSP-2024-0117", "Multi-speciality hospital"),
+    )
+
+    override suspend fun adminHospital(): HospitalProfile = latency {
+        val h = myHospital()
+        hospitalDetails[h] ?: raw(h).let { HospitalProfile(it.id, it.publicId, it.displayName) }
+    }
+
+    override suspend fun adminUpdateHospital(update: HospitalUpdate): HospitalProfile = latency {
+        val h = myHospital()
+        val name = update.displayName.trim()
+        require(name.length in 1..80) { "display_name must be 1–80 characters" }
+        require(update.phone.orEmpty().all { it.isDigit() || it in " +-()" }) { "phone may contain digits, spaces, + - ( ) only" }
+        val i = users.indexOfFirst { it.id == h }
+        users[i] = users[i].copy(displayName = name, headline = update.headline?.trim()?.ifEmpty { null } ?: "Hospital")
+        HospitalProfile(h, users[i].publicId, name, update.location?.trim()?.ifEmpty { null }, update.phone?.trim()?.ifEmpty { null },
+            update.officialNumber?.trim()?.ifEmpty { null }, update.headline?.trim()?.ifEmpty { null }).also { hospitalDetails[h] = it }
+    }
+
+    /** Demo mode: the code ABCD-EFGH-JKMN makes the signed-in person Test Hospital A's administrator. */
+    override suspend fun redeemInvite(code: String): InviteRedeemed = latency {
+        require(code.filter { it.isLetterOrDigit() }.uppercase() == "ABCDEFGHJKMN") { "That invite code is not valid. Check it, or ask for a new one." }
+        val i = users.indexOfFirst { it.id == meId }
+        users[i] = users[i].copy(roles = listOf(Role.ADMINISTRATOR) + users[i].roles, headline = "Hospital administrator", hospital = "Test Hospital A")
+        adminHospital[meId] = "h-a"
+        InviteRedeemed("h-a", "Test Hospital A")
     }
 
     // ---- account ----

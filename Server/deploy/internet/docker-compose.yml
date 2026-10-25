@@ -14,8 +14,12 @@ x-app-env: &app-env
   KAFKA_BROKERS: kafka:9092
   EVENT_BUS: kafka
   AUTH_MODE: auth0
+  # Server settings (limits, administrators): edit Server/config/server.json and restart, no rebuild.
+  SERVER_CONFIG: /config/server.json
   AUTH0_DOMAIN: ${AUTH0_DOMAIN:?set AUTH0_DOMAIN}
   AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:-https://api.careconnect.local}
+  # Administrator dashboard at https://API_DOMAIN/admin/ (an Auth0 Single Page Application).
+  ADMIN_AUTH0_CLIENT_ID: ${ADMIN_AUTH0_CLIENT_ID:-}
   CLAIMS_NAMESPACE: ${CLAIMS_NAMESPACE:-https://careconnect.local/}
   FILE_STORE: s3
   S3_BUCKET: careconnect
@@ -91,7 +95,13 @@ services:
 
   care-api:
     build: { context: ../.., target: api }
-    environment: { <<: *app-env, INSTANCE_ID: api-1 }
+    environment:
+      <<: *app-env
+      INSTANCE_ID: api-1
+      # Encrypted administrators file (Administration_Design.md section 10), read at start-up.
+      ADMINS_FILE: /config/admins/admins.enc
+      ADMINS_KEY: ${ADMINS_KEY:-}
+    volumes: [../../config/admins:/config/admins, ../../config/server.json:/config/server.json:ro]
     depends_on:
       cassandra-init: { condition: service_completed_successfully }
       kafka-init: { condition: service_completed_successfully }
@@ -101,6 +111,7 @@ services:
   care-worker:
     build: { context: ../.., target: worker }
     environment: *app-env
+    volumes: [../../config/server.json:/config/server.json:ro]
     depends_on:
       cassandra-init: { condition: service_completed_successfully }
       kafka-init: { condition: service_completed_successfully }

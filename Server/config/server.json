@@ -9,7 +9,9 @@
     "",
     "uploads: the apps read max_attachments, image_max_mb and pdf_max_mb from GET /v1/config, so they",
     "follow this file without an app update.",
-    "appointments.default_timezone must be an IANA name such as Asia/Kolkata."
+    "appointments.default_timezone must be an IANA name such as Asia/Kolkata.",
+    "administrators: the most platform administrators (dashboard) in total, and hospital administrators per",
+    "hospital. Adding one more (file, care-admin, dashboard, invite code) is refused; existing ones stay."
   ],
   "version": 1,
 
@@ -38,5 +40,10 @@
 
   "realtime": {
     "max_sockets_per_user": 5
+  },
+
+  "administrators": {
+    "max_platform_admins": 3,
+    "max_admins_per_hospital": 2
   }
 }

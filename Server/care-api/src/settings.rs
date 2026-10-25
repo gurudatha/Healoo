@@ -77,6 +77,20 @@ impl Default for Realtime {
     fn default() -> Self { Realtime { max_sockets_per_user: 5 } }
 }
 
+/// How many administrators there may be (Administration_Design.md section 12).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct Administrators {
+    /// Platform administrators (the dashboard), in total.
+    pub max_platform_admins: usize,
+    /// Hospital administrators, per hospital.
+    pub max_admins_per_hospital: usize,
+}
+
+impl Default for Administrators {
+    fn default() -> Self { Administrators { max_platform_admins: 3, max_admins_per_hospital: 2 } }
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -85,6 +99,7 @@ pub struct Settings {
     pub rate_limit: RateLimit,
     pub appointments: Appointments,
     pub realtime: Realtime,
+    pub administrators: Administrators,
 }
 
 impl Settings {
@@ -111,6 +126,10 @@ impl Settings {
         if !(1..=732).contains(&a.calendar_days) { return Err("appointments: calendar_days must be 1–732".into()); }
         if !(1..=100).contains(&a.upcoming_visits) { return Err("appointments: upcoming_visits must be 1–100".into()); }
         if !(1..=50).contains(&self.realtime.max_sockets_per_user) { return Err("realtime: max_sockets_per_user must be 1–50".into()); }
+        let ad = &self.administrators;
+        if !(1..=100).contains(&ad.max_platform_admins) || !(1..=100).contains(&ad.max_admins_per_hospital) {
+            return Err("administrators: max_platform_admins and max_admins_per_hospital must be 1–100".into());
+        }
         Ok(())
     }
 }
@@ -146,6 +165,7 @@ mod tests {
         assert_eq!((s.uploads.thumbnail_px, s.uploads.link_ttl()), (320, Duration::from_secs(600)));
         assert_eq!(s.uploads.file_body_bytes(), 26 * 1024 * 1024);
         assert_eq!(s.messages.max_chars, 4000);
+        assert_eq!((s.administrators.max_platform_admins, s.administrators.max_admins_per_hospital), (3, 2));
         assert_eq!((s.rate_limit.per_second, s.rate_limit.burst), (20.0, 40.0));
         assert_eq!((s.appointments.default_timezone.as_str(), s.appointments.calendar_days, s.appointments.upcoming_visits), ("Asia/Kolkata", 183, 12));
         assert_eq!(s.realtime.max_sockets_per_user, 5);
@@ -181,6 +201,8 @@ mod tests {
         assert!(bad("\"burst\": 40", "\"burst\": 5").contains("burst"));
         assert!(bad("\"max_attachments\": 20", "\"max_attachments\": 5000").contains("max_attachments"));
         assert!(bad("\"max_sockets_per_user\": 5", "\"max_sockets_per_user\": 0").contains("max_sockets_per_user"));
+        assert!(bad("\"max_platform_admins\": 3", "\"max_platform_admins\": 0").contains("max_platform_admins"));
+        assert!(bad("\"max_admins_per_hospital\": 2", "\"max_admins_per_hospital\": 500").contains("max_admins_per_hospital"));
         assert!(Settings::parse("{ nope").unwrap_err().contains("not valid"));
     }
 }

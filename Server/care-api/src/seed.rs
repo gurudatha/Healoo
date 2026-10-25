@@ -39,10 +39,12 @@ pub const DR_MENON: Uuid = Uuid::from_u128(0x5eed_0000_0000_4000_8000_0000000000
 pub const DR_NAIR: Uuid = Uuid::from_u128(0x5eed_0000_0000_4000_8000_000000000011);
 pub const SUNRISE_LAB: Uuid = Uuid::from_u128(0x5eed_0000_0000_4000_8000_000000000012);
 pub const GREEN_VALLEY_LAB: Uuid = Uuid::from_u128(0x5eed_0000_0000_4000_8000_000000000013);
+/// Platform administrator for the dashboard at /admin/ (Administration_Design.md section 8).
+pub const APP_ADMIN: Uuid = Uuid::from_u128(0x5eed_0000_0000_4000_8000_000000000014);
 
-pub const SEED_PUBLIC_IDS: [&str; 19] = [
+pub const SEED_PUBLIC_IDS: [&str; 20] = [
     "HL-2M9P4", "HL-7R2C9", "HL-1H0A1", "HL-6L3D2", "HL-3K8M1", "HL-9P4T6", "HL-5W1Q3", "HL-4K7Q2", "HL-8A2D4", "HL-8S5T7",
-    "HL-3R7V2", "HL-6A4S9", "HL-9S2Y5", "HL-4M8D3", "HL-7F5K2", "HL-2D5M8", "HL-8N3V6", "HL-5P9L4", "HL-6G2L7",
+    "HL-3R7V2", "HL-6A4S9", "HL-9S2Y5", "HL-4M8D3", "HL-7F5K2", "HL-2D5M8", "HL-8N3V6", "HL-5P9L4", "HL-6G2L7", "HL-9A7D2",
 ];
 
 struct Person {
@@ -90,6 +92,7 @@ fn extra_people() -> Vec<Person> {
                  ..p(DR_NAIR, "HL-8N3V6", "Dr. Vikram Nair", Role::Doctor) },
         p(SUNRISE_LAB, "HL-5P9L4", "Sunrise Pathology", Role::Lab),
         p(GREEN_VALLEY_LAB, "HL-6G2L7", "Green Valley Labs", Role::Lab),
+        p(APP_ADMIN, "HL-9A7D2", "Healoo Platform Admin", Role::AppAdministrator),
     ]
 }
 

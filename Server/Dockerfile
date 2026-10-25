@@ -14,7 +14,7 @@ WORKDIR /src/care-api
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/care-api/target \
     cargo build --release --locked 2>/dev/null || cargo build --release; \
-    mkdir -p /out && cp target/release/care-api target/release/care-worker target/release/care-seed target/release/devtoken /out/
+    mkdir -p /out && cp target/release/care-api target/release/care-worker target/release/care-seed target/release/care-admin target/release/devtoken /out/
 
 FROM debian:trixie-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libsasl2-2 libcurl4 curl && rm -rf /var/lib/apt/lists/* \

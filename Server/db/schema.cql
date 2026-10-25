@@ -228,6 +228,43 @@ CREATE TABLE IF NOT EXISTS access_audit (      -- written by audit-writer (doc 6
   PRIMARY KEY ((item_id), decided_at)) WITH CLUSTERING ORDER BY (decided_at DESC)
   AND default_time_to_live = 7776000;         -- 90 days
 
+-- ---------- v0.4: platform administrator dashboard (Administration_Design.md section 8) ----------
+-- Written by the activity-log consumer. Who did what and when; never titles or message text.
+CREATE TABLE IF NOT EXISTS activity_by_day (
+  day text,                                   -- 'YYYY-MM-DD' (UTC)
+  at timeuuid,
+  occurred_at timestamp,
+  category text,                              -- RECORDS | SHARING | ACCOUNTS
+  event_type text,
+  actor_id uuid, actor_name text,
+  subject_id text, subject_name text,
+  detail text,
+  PRIMARY KEY ((day), at)) WITH CLUSTERING ORDER BY (at DESC)
+  AND default_time_to_live = 7776000;         -- 90 days
+
+CREATE TABLE IF NOT EXISTS activity_counts (  -- per-day totals: trend chart and day/week/month/year usage (kept)
+  day text, metric text, n counter,
+  PRIMARY KEY ((day), metric));
+
+CREATE TABLE IF NOT EXISTS active_users_by_day (  -- who did something that day: active users/hospitals
+  day text, user_id uuid,
+  PRIMARY KEY ((day), user_id)) WITH default_time_to_live = 34560000;   -- 400 days (a year, with margin)
+
+-- ---------- v0.4: hospital administrator invite codes (Administration_Design.md section 11) ----------
+-- Only a SHA-256 of each code is stored; the code itself is shown once, to the platform admin.
+CREATE TABLE IF NOT EXISTS admin_invites (
+  invite_id uuid PRIMARY KEY,
+  code_hash text, hospital_id uuid, note text,
+  created_by uuid, created_at timestamp, expires_at timestamp,
+  used_by uuid, used_at timestamp, revoked boolean);
+
+CREATE TABLE IF NOT EXISTS admin_invites_by_code (
+  code_hash text PRIMARY KEY, invite_id uuid);
+
+CREATE TABLE IF NOT EXISTS admin_invites_by_hospital (
+  hospital_id uuid, invite_id uuid,
+  PRIMARY KEY ((hospital_id), invite_id));
+
 -- ---------- search (Storage-Attached Indexes) ----------
 CREATE INDEX IF NOT EXISTS users_name_tokens_sai ON users (name_tokens) USING 'sai';
 CREATE INDEX IF NOT EXISTS conn_name_sai ON connections_by_user (other_name) USING 'sai';

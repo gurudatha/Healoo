@@ -417,6 +417,40 @@ data class NewAccount(
     @SerialName("official_number") val officialNumber: String? = null,
 )
 
+/** GET/PUT /v1/admin/hospital: the hospital profile its administrator edits (Administration_Design.md 9). */
+@Serializable
+data class HospitalProfile(
+    @SerialName("hospital_id") val id: String,
+    @SerialName("public_id") val publicId: String,
+    @SerialName("display_name") val displayName: String,
+    val location: String? = null,
+    val phone: String? = null,
+    /** Registration or licence number. */
+    @SerialName("official_number") val officialNumber: String? = null,
+    /** One line under the name, e.g. "Multi-speciality hospital". */
+    val headline: String? = null,
+)
+
+/** PUT /v1/admin/hospital. Every field is replaced; empty ones are cleared. */
+@Serializable
+data class HospitalUpdate(
+    @SerialName("display_name") val displayName: String,
+    val location: String? = null,
+    val phone: String? = null,
+    @SerialName("official_number") val officialNumber: String? = null,
+    val headline: String? = null,
+)
+
+/** POST /v1/invites/redeem (Administration_Design.md 11). */
+@Serializable
+data class RedeemInvite(val code: String)
+
+@Serializable
+data class InviteRedeemed(
+    @SerialName("hospital_id") val hospitalId: String,
+    @SerialName("hospital_name") val hospitalName: String,
+)
+
 /** Can pass an item they don't own on to a doctor (referral). */
 val UserProfile.canRefer: Boolean
     get() = primaryRole == Role.DOCTOR || primaryRole == Role.LAB || primaryRole == Role.HOSPITAL

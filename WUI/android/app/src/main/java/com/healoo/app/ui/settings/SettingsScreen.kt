@@ -39,12 +39,30 @@ class SettingsViewModel : ViewModel() {
     var me by mutableStateOf<UserProfile?>(null); private set
     var prefs by mutableStateOf<NotificationPrefs?>(null); private set
     var saveError by mutableStateOf<String?>(null); private set
+    var inviteError by mutableStateOf<String?>(null)
+    var inviteBusy by mutableStateOf(false); private set
+    var notice by mutableStateOf<String?>(null)
 
     init { refresh() }
 
     fun refresh() = viewModelScope.launch {
         runCatching { me = repo.me() }
         runCatching { prefs = repo.notificationPrefs() }
+    }
+
+    /** POST /v1/invites/redeem: a platform administrator's code makes this account a hospital's administrator. */
+    fun redeemInvite(code: String, onDone: () -> Unit) {
+        inviteBusy = true; inviteError = null
+        viewModelScope.launch {
+            runCatching { repo.redeemInvite(code) }
+                .onSuccess { r ->
+                    me = runCatching { repo.me() }.getOrDefault(me)
+                    notice = "You're now an administrator of ${r.hospitalName}. Open Administration below."
+                    onDone()
+                }
+                .onFailure { inviteError = it.message ?: "That didn't work. Try again." }
+            inviteBusy = false
+        }
     }
 
     /** Optimistic save to PUT /v1/me/notification-prefs; reverts if the server refuses. */
@@ -70,6 +88,7 @@ fun SettingsScreen(
     onAdministration: () -> Unit = {},
     vm: SettingsViewModel = viewModel(),
 ) {
+    var inviteDialog by remember { mutableStateOf(false) }
     Scaffold(containerColor = Sage.Background, bottomBar = { HealooBottomBar(Tab.SETTINGS, onTab) }) { padding ->
         Column(Modifier.fillMaxSize().padding(bottom = padding.calculateBottomPadding())) {
             Column(
@@ -111,10 +130,26 @@ fun SettingsScreen(
                         vm.saveError?.let { Text(it, style = HType.small, color = Sage.Clay) }
                     }
                 }
+                vm.notice?.let { n ->
+                    item {
+                        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Sage.SageTint).padding(start = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            Text(n, style = HType.caption, color = Sage.Accent, modifier = Modifier.weight(1f))
+                            TextButton({ vm.notice = null }) { Text("OK", color = Sage.Accent) }
+                        }
+                    }
+                }
                 if (vm.me?.isAdministrator == true) item {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         FieldLabel("Administration")
                         GroupCard { LinkRow(Icons.Outlined.AdminPanelSettings, "Users and doctors", vm.me?.hospital ?: "", onAdministration) }
+                    }
+                }
+                // Invite codes (Administration_Design.md 11): for people who aren't administrators or clinicians yet.
+                if (vm.me != null && vm.me?.isAdministrator != true && vm.me?.primaryRole == com.healoo.app.data.Role.PATIENT) item {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FieldLabel("Hospital administration")
+                        GroupCard { LinkRow(Icons.Outlined.AdminPanelSettings, "I have an invite code", "") { vm.inviteError = null; inviteDialog = true } }
                     }
                 }
                 item {
@@ -141,6 +176,7 @@ fun SettingsScreen(
             }
         }
     }
+    if (inviteDialog) InviteDialog(vm) { inviteDialog = false }
 }
 
 @Composable
@@ -159,6 +195,31 @@ private fun SwitchRow(label: String, note: String, checked: Boolean, onChange: (
                 uncheckedThumbColor = Color.White, uncheckedBorderColor = Sage.SwitchOff),
         )
     }
+}
+
+/** Enter the code a platform administrator sent; becomes that hospital's administrator. */
+@Composable
+private fun InviteDialog(vm: SettingsViewModel, onDismiss: () -> Unit) {
+    var code by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss, containerColor = Sage.Surface,
+        title = { Text("Invite code", style = HType.section) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("A platform administrator sends this code to make you a hospital's administrator. It looks like ABCD-EFGH-JKMN.",
+                    style = HType.body, color = Sage.InkSoft)
+                OutlinedTextField(code, { code = it.uppercase().take(20) }, singleLine = true, placeholder = { Text("ABCD-EFGH-JKMN") },
+                    modifier = Modifier.fillMaxWidth())
+                vm.inviteError?.let { Text(it, style = HType.small, color = Sage.Clay) }
+            }
+        },
+        confirmButton = {
+            TextButton({ vm.redeemInvite(code, onDismiss) }, enabled = !vm.inviteBusy && code.count { it.isLetterOrDigit() } == 12) {
+                Text(if (vm.inviteBusy) "Checking…" else "Use code", color = Sage.Accent)
+            }
+        },
+        dismissButton = { TextButton(onDismiss) { Text("Cancel", color = Sage.Muted) } },
+    )
 }
 
 @Composable

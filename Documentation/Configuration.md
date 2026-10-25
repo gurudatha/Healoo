@@ -45,6 +45,8 @@ Deployment settings (addresses, secrets, sign-in mode) stay in environment varia
 | `appointments.calendar_days` | 183 | How far ahead visits are prepared for the calendar |
 | `appointments.upcoming_visits` | 12 | Upcoming visits listed per appointment |
 | `realtime.max_sockets_per_user` | 5 | Live connections per user |
+| `administrators.max_platform_admins` | 3 | Most platform administrators (dashboard users) in total, 1–100 |
+| `administrators.max_admins_per_hospital` | 2 | Most hospital administrators per hospital, 1–100 |
 
 **The apps follow the upload limits without an update.** `GET /v1/config` returns
 `attachments_per_item`, `image_max_bytes`, `pdf_max_bytes` and `message_max_chars`; the apps

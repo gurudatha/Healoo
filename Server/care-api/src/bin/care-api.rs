@@ -27,6 +27,8 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(vitals = vitals.builtin().len(), yellow_margin_pct = vitals.colours.yellow_margin_pct, "vitals configuration ready");
 
     let db = Arc::new(Db::connect(&cfg.cassandra_nodes, &cfg.keyspace).await?);
+    // config/admins/admins.enc (ADMINS_FILE) decrypted with ADMINS_KEY: sets the administrators.
+    care_api::admins_file::apply_at_startup(&db).await;
     let bus = events::build(&cfg).await?;
     let exposure = net::build(&cfg).await?;
     let (file_store, disk) = files::build(&cfg, &exposure.public_base()).await?;

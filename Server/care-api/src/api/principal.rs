@@ -5,11 +5,13 @@
 
 use super::{ApiError, ApiResult, AppState, Inner};
 use crate::{
+    events::{topics, Envelope},
     model::Role,
     policy::Subject,
     store::users::{NewUser, UserRec},
 };
 use axum::{async_trait, extract::FromRequestParts, http::request::Parts};
+use serde_json::json;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -97,6 +99,8 @@ impl Inner {
             created_by: None,
         }).await?;
         tracing::info!(user_id = %u.user_id, public_id = %u.public_id, "provisioned new patient on first login");
+        let ev = Envelope::new("user.registered", u.user_id, u.user_id, vec![u.user_id.to_string()], json!({ "user_id": u.user_id }));
+        self.events.emit(topics::ACCESS_CHANGES, &u.user_id.to_string(), ev).await?;
         Ok(u.user_id)
     }
 

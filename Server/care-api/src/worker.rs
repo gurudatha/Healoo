@@ -2,6 +2,7 @@
 //! * `audit-writer` — persists `access.audit` decisions into Cassandra.
 //! * `media` — on `item.attachments_added`, makes image thumbnails, counts PDF pages and records
 //!   sha256 (doc 7.4), then emits `item.attachment` so open screens refresh.
+//! * `activity-log` — the platform administrator's activity log and daily counts (see activity.rs).
 //! * alert scheduler — fires due alerts every minute (DataItem v2).
 //! All are idempotent via `processed_events` (doc 6.3).
 
@@ -236,13 +237,19 @@ pub fn spawn(bus: Arc<dyn EventBus>, db: Arc<Db>, files: Arc<dyn ObjectStore>, p
     let audit: Arc<dyn EventHandler> = Arc::new(AuditWriter { db: db.clone() });
     let media: Arc<dyn EventHandler> = Arc::new(MediaProcessor { db: db.clone(), files, publisher: publisher.clone() });
     let (b1, s1) = (bus.clone(), stop.clone());
-    let (b2, s2) = (bus, stop.clone());
+    let activity: Arc<dyn EventHandler> = Arc::new(crate::activity::ActivityLog { db: db.clone() });
+    let (b2, s2) = (bus.clone(), stop.clone());
+    let (b3, s3) = (bus, stop.clone());
     vec![
         tokio::spawn(async move {
             if let Err(e) = b1.consume("audit-writer", &[topics::AUDIT], true, audit, s1).await { tracing::error!("audit-writer stopped: {e:#}"); }
         }),
         tokio::spawn(async move {
             if let Err(e) = b2.consume("media", &[topics::ITEMS], true, media, s2).await { tracing::error!("media worker stopped: {e:#}"); }
+        }),
+        tokio::spawn(async move {
+            use crate::activity::{CONSUMER, TOPICS};
+            if let Err(e) = b3.consume(CONSUMER, &TOPICS, true, activity, s3).await { tracing::error!("activity-log stopped: {e:#}"); }
         }),
         tokio::spawn(run_alert_scheduler(db, publisher, stop)),
     ]

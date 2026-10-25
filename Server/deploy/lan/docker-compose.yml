@@ -80,8 +80,11 @@ services:
       BIND: 0.0.0.0:8443
       MDNS: "false"          # multicast doesn't leave the Docker bridge; run natively for mDNS
       INSTANCE_ID: api-1
+      # Encrypted administrators file (Administration_Design.md section 10), read at start-up.
+      ADMINS_FILE: /config/admins/admins.enc
+      ADMINS_KEY: ${ADMINS_KEY:-}
     ports: ["8443:8443"]     # the only port phones need
-    volumes: [app_data:/data, ../../config:/config:ro]
+    volumes: [app_data:/data, ../../config:/config:ro, ../../config/admins:/config/admins]
     depends_on:
       cassandra-init: { condition: service_completed_successfully }
       kafka-init: { condition: service_completed_successfully }

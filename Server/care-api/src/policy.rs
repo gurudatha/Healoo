@@ -171,6 +171,24 @@ pub fn may_deactivate(admin_roles: &HashSet<Role>, admin_hospital: Option<Uuid>,
     }
 }
 
+/// Rule 11 (Administration_Design.md section 8): the dashboard, the account list, the activity
+/// log and creating hospitals are for platform administrators only.
+pub fn platform_admin(roles: &HashSet<Role>) -> Result<(), &'static str> {
+    if roles.contains(&Role::AppAdministrator) { Ok(()) } else { Err("only platform administrators can do this") }
+}
+
+/// Rule 11: who may become a hospital's administrator. Clinical accounts keep their own role and
+/// can't also administer a hospital, and a hospital account can't administer itself.
+pub fn may_appoint_admin(target_roles: &HashSet<Role>) -> Decision {
+    if target_roles.iter().any(|r| r.is_clinical()) {
+        return Decision::deny("doctors, assistants, labs and hospitals can't be made hospital administrators");
+    }
+    if target_roles.contains(&Role::AppAdministrator) {
+        return Decision::deny("a platform administrator already manages every hospital");
+    }
+    Decision::full("account may administer a hospital")
+}
+
 #[cfg(test)]
 mod tests {
     //! Mirrors acceptance tests 2–7 of design doc 10.4, and tests P1–P6 of
@@ -364,6 +382,33 @@ mod tests {
         let family = subject(&[Role::Patient], &[]);
         let item = ItemFacts { owner_id: owner, created_by: owner, has_report_files: false, grants: vec![(GranteeType::User, family.user_id)] };
         assert_eq!(decide(&item, &family, None).access, Access::Full);
+    }
+
+    #[test]
+    fn a7_hospital_profile_is_edited_by_its_own_administrator() {
+        let (own, other) = (Uuid::new_v4(), Uuid::new_v4());
+        let admin = roles(&[Role::Administrator]);
+        assert_eq!(admin_hospital(&admin, Some(own), None), Ok(own));
+        assert!(admin_hospital(&admin, Some(own), Some(other)).is_err());
+        assert!(admin_hospital(&roles(&[Role::Hospital]), None, Some(own)).is_err());
+        assert_eq!(admin_hospital(&roles(&[Role::AppAdministrator]), None, Some(other)), Ok(other));
+    }
+
+    #[test]
+    fn a8_dashboard_is_for_platform_administrators_only() {
+        assert!(platform_admin(&roles(&[Role::AppAdministrator])).is_ok());
+        for r in [Role::Administrator, Role::Hospital, Role::Doctor, Role::Patient] {
+            assert!(platform_admin(&roles(&[r])).is_err(), "{r:?}");
+        }
+    }
+
+    #[test]
+    fn a9_only_non_clinical_accounts_become_hospital_administrators() {
+        assert_eq!(may_appoint_admin(&roles(&[Role::Patient])).access, Access::Full);
+        assert_eq!(may_appoint_admin(&roles(&[Role::Administrator])).access, Access::Full);
+        for r in [Role::Doctor, Role::Assistant, Role::Lab, Role::Hospital, Role::AppAdministrator] {
+            assert_eq!(may_appoint_admin(&roles(&[r])).access, Access::Deny, "{r:?}");
+        }
     }
 
     #[test]

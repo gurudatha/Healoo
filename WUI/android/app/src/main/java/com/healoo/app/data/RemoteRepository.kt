@@ -66,6 +66,9 @@ interface HealooApi {
     @POST("v1/admin/doctors") suspend fun adminCreateDoctor(@Body body: NewAccount): AdminAccount
     @DELETE("v1/admin/doctors/{id}") suspend fun adminDeactivateDoctor(@Path("id") id: String)
     @POST("v1/admin/doctors/{id}/reactivate") suspend fun adminReactivateDoctor(@Path("id") id: String): AdminAccount
+    @GET("v1/admin/hospital") suspend fun adminHospital(): HospitalProfile
+    @PUT("v1/admin/hospital") suspend fun adminUpdateHospital(@Body body: HospitalUpdate): HospitalProfile
+    @POST("v1/invites/redeem") suspend fun redeemInvite(@Body body: RedeemInvite): InviteRedeemed
     @POST("v1/connections") suspend fun connect(@Body body: ConnectRequest): UserProfile
     @DELETE("v1/grants/{id}") suspend fun revoke(@Path("id") grantId: String)
     @POST("v1/grants") suspend fun grant(@Body body: GrantRequest)
@@ -226,6 +229,9 @@ class RemoteRepository(
     override suspend fun adminCreateDoctor(account: NewAccount) = api.adminCreateDoctor(account)
     override suspend fun adminDeactivateDoctor(doctorId: String) = api.adminDeactivateDoctor(doctorId)
     override suspend fun adminReactivateDoctor(doctorId: String) = api.adminReactivateDoctor(doctorId)
+    override suspend fun adminHospital() = api.adminHospital()
+    override suspend fun adminUpdateHospital(update: HospitalUpdate) = api.adminUpdateHospital(update)
+    override suspend fun redeemInvite(code: String) = api.redeemInvite(RedeemInvite(code.trim()))
 
     // ---- account ----
 

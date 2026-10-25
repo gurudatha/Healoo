@@ -1,4 +1,4 @@
-//! care-worker: audit-writer + media processor (doc 6.4, 7.4). Needs EVENT_BUS=kafka.
+//! care-worker: audit-writer, media processor, activity log (doc 6.4, 7.4). Needs EVENT_BUS=kafka.
 
 use care_api::{config::{BusKind, Config}, events::{self, Publisher}, files, store::Db, worker};
 use std::sync::Arc;
@@ -22,7 +22,7 @@ async fn main() -> anyhow::Result<()> {
     let stop = CancellationToken::new();
     tokio::spawn(publisher.clone().run_relay(stop.clone()));
     let tasks = worker::spawn(bus, db, store, publisher, stop.clone());
-    tracing::info!("care-worker running: audit-writer, media, alert scheduler");
+    tracing::info!("care-worker running: audit-writer, media, activity-log, alert scheduler");
     care_api::shutdown_signal().await;
     stop.cancel();
     for t in tasks { let _ = t.await; }
