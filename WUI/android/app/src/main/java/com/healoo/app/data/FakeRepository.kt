@@ -47,7 +47,7 @@ class FakeRepository : HealooRepository {
     fun signInAs(userId: String) { meId = userId }
 
     private val affiliation = mutableMapOf("u-rao" to "h-a", "u-menon" to "h-a")   // doctor -> current hospital
-    private val adminHospital = mapOf("a-admin" to "h-a")                              // administrator -> hospital
+    private val adminHospital = mutableMapOf("a-admin" to "h-a")                       // administrator -> hospital
     private val deactivated = mutableSetOf<String>()
     private val emails = mutableMapOf<String, String>()                                // user -> email (admin-created)
     private val homeHospital = mutableMapOf("u-rao" to "h-a", "u-menon" to "h-a")
@@ -435,6 +435,118 @@ class FakeRepository : HealooRepository {
         if (s.item.accessList.none { it.granteeId == granteeId }) s.item = s.item.copy(accessList = s.item.accessList + grantFor(raw(granteeId)))
     }
 
+    // ---- vitals (demo copy of the server's rule: green in range, yellow up to the margin, red beyond) ----
+    private fun vital(code: String, label: String, icon: String, unit: String, low: Double? = null, high: Double? = null, pos: Int) =
+        VitalType(code, label, icon, unit, listOf(VitalComponent("value", label, low, high)), 30, false, pos)
+    private val demoVitals = listOf(
+        vital("water", "Water", "water", "ml", pos = 0),
+        VitalType("bp", "BP", "bp", "mmHg", listOf(VitalComponent("sys", "Systolic", 90.0, 120.0), VitalComponent("dia", "Diastolic", 60.0, 80.0)), 30, false, 1),
+        vital("sugar", "Sugar", "sugar", "mg/dL", 80.0, 120.0, 2),
+        vital("heart_rate", "Heart rate", "heart", "bpm", 60.0, 100.0, 3),
+        VitalType("urine", "Urine", "urine", "ml", listOf(VitalComponent("intake", "Water intake"), VitalComponent("output", "Urine output")), 30, false, 4,
+            ratio = VitalRatio("output", "intake", greenMinPct = 85.0, yellowMinPct = 70.0)),
+        vital("weight", "Weight", "weight", "kg", pos = 5),
+        vital("temperature", "Temperature", "temperature", "°F", 97.0, 99.0, 6),
+        vital("spo2", "Oxygen", "oxygen", "%", 95.0, 100.0, 7),
+        vital("sleep", "Sleep", "sleep", "hours", 6.0, 9.0, 8),
+    )
+    private val customVitals = mutableMapOf<String, MutableList<VitalType>>()            // patient -> added by a doctor
+    private val vitalRanges = mutableMapOf<String, VitalType>()                          // "patient|code" -> with the doctor's range
+    private val vitalLog = mutableListOf<VitalReading>()                                 // newest first
+    private data class InboxEntry(val doctor: String, val alert: VitalAlert, var read: Boolean = false)
+    private val vitalInbox = mutableListOf<InboxEntry>()
+
+    private fun isMyPatient(userId: String) = raw(meId).primaryRole == Role.DOCTOR && connected(meId, userId)
+    private fun vitalOwner(userId: String?): String = (userId ?: meId).also { check(it == meId || isMyPatient(it)) { "Vitals are visible to the person and to doctors in their contacts" } }
+    private fun fullTypes(owner: String) = (demoVitals + customVitals[owner].orEmpty()).map { vitalRanges["$owner|${it.code}"] ?: it }.sortedBy { it.position }
+
+    private fun colour(t: VitalType, values: Map<String, Double>): Severity {
+        val margin = (t.marginPct ?: 30) + 1e-9
+        fun one(c: VitalComponent): Severity {
+            val v = values[c.key] ?: return Severity.GREEN
+            val pct = when {
+                c.low != null && v < c.low -> if (c.low == 0.0) Double.MAX_VALUE else (c.low - v) / c.low * 100
+                c.high != null && v > c.high -> if (c.high == 0.0) Double.MAX_VALUE else (v - c.high) / c.high * 100
+                else -> return Severity.GREEN
+            }
+            return if (pct <= margin) Severity.YELLOW else Severity.RED
+        }
+        // Urine: output as a percentage of intake (85% or more green, from 70% yellow, less red).
+        val byRatio = t.ratio?.let { r ->
+            val pct = r.percent(values) ?: return@let Severity.GREEN
+            when { pct + 1e-9 >= (r.greenMinPct ?: 0.0) -> Severity.GREEN; pct + 1e-9 >= (r.yellowMinPct ?: 0.0) -> Severity.YELLOW; else -> Severity.RED }
+        } ?: Severity.GREEN
+        return (t.components.map(::one) + byRatio).minBy { it.ordinal }   // RED comes first: the worst value wins
+    }
+
+    override suspend fun vitalSettings() = VitalSettings(
+        listOf("water", "bp", "sugar", "heart", "urine", "weight", "temperature", "oxygen", "sleep", "steps", "pain", "breath", "pill", "lab", "mood", "other"))
+
+    override suspend fun vitalTypes(userId: String?) = latency {
+        val owner = vitalOwner(userId)
+        fullTypes(owner).map { t ->
+            if (owner != meId) t                             // ranges and thresholds go to the doctor only
+            else t.copy(components = t.components.map { it.copy(low = null, high = null) }, marginPct = null,
+                ratio = t.ratio?.copy(greenMinPct = null, yellowMinPct = null))
+        }
+    }
+
+    override suspend fun vitalReadings(userId: String?, code: String?, limit: Int) = latency {
+        val owner = vitalOwner(userId)
+        vitalLog.filter { it.userId == owner && (code == null || it.code == code) }.take(limit)
+    }
+
+    override suspend fun vitalLatest(userId: String?) = latency {
+        val owner = vitalOwner(userId)
+        vitalLog.filter { it.userId == owner }.distinctBy { it.code }
+    }
+
+    override suspend fun recordVital(reading: NewVitalReading): VitalReading = latency {
+        val t = fullTypes(meId).firstOrNull { it.code == reading.code } ?: error("No such vital for you")
+        require(t.components.all { c -> reading.values[c.key]?.let { it.isFinite() && it in 0.0..100000.0 } == true }) { "Enter a number for each value" }
+        t.ratio?.let { r -> require(r.percent(reading.values) != null) { "${t.components.firstOrNull { it.key == r.denominator }?.label ?: r.denominator} must be more than 0" } }
+        // The time is chosen at entry (up to 12 hours back) and never changes afterwards.
+        val at = reading.takenAt?.let { OffsetDateTime.parse(it) } ?: OffsetDateTime.now(zone)
+        val now = OffsetDateTime.now(zone)
+        require(!at.isAfter(now.plusMinutes(5))) { "The time can't be in the future" }
+        require(!at.isBefore(now.minusHours(12))) { "The time can be at most 12 hours ago" }
+        val r = VitalReading(id(), meId, t.code, reading.values, at.toString(), reading.note?.trim()?.ifEmpty { null }, meId, colour(t, reading.values).name)
+        vitalLog.add(0, r)
+        users.filter { it.primaryRole == Role.DOCTOR && it.id !in deactivated && connected(meId, it.id) }.forEach { d ->
+            vitalInbox.add(0, InboxEntry(d.id, VitalAlert(id(), meId, raw(meId).displayName, t.code, t.label, t.icon, t.unit, r.values, r.severityText, r.takenAt)))
+        }
+        r
+    }
+
+    override suspend fun setVitalRange(userId: String, code: String, update: VitalRangeUpdate): VitalType = latency {
+        check(userId != meId && isMyPatient(userId)) { "Only a doctor in the patient's contacts can set their ranges" }
+        val t = fullTypes(userId).first { it.code == code }
+        require(update.components.values.all { b -> b.low == null || b.high == null || b.low <= b.high }) { "The low end of a range can't be above the high end" }
+        t.copy(components = t.components.map { c -> update.components[c.key]?.let { c.copy(low = it.low, high = it.high) } ?: c }, marginPct = update.marginPct ?: t.marginPct)
+            .also { vitalRanges["$userId|$code"] = it }
+    }
+
+    override suspend fun addVitalType(type: NewVitalType): VitalType = latency {
+        check(type.userId != meId && isMyPatient(type.userId)) { "Only a doctor in the patient's contacts can add vitals for them" }
+        val label = type.label.trim()
+        require(label.any { it.isLetterOrDigit() }) { "Give the vital a name" }
+        val all = fullTypes(type.userId)
+        require(all.none { it.label.equals(label, ignoreCase = true) }) { "This patient already has a vital with that name" }
+        VitalType("c_" + label.lowercase().filter { it.isLetterOrDigit() }, label, type.icon, type.unit.trim(),
+            listOf(VitalComponent("value", label, type.low, type.high)), type.marginPct ?: 30, true, (all.maxOfOrNull { it.position } ?: 0) + 1)
+            .also { customVitals.getOrPut(type.userId) { mutableListOf() } += it }
+    }
+
+    override suspend fun vitalAlerts(severity: Severity?, sort: AlertSort): VitalAlertPage = latency {
+        val unread = vitalInbox.filter { it.doctor == meId && !it.read && connected(meId, it.alert.patientId) }.map { it.alert }
+        val list = unread.filter { severity == null || it.severity == severity }.let { l ->
+            when (sort) { AlertSort.USER -> l.sortedBy { it.patientName.lowercase() }; AlertSort.VITAL -> l.sortedBy { it.label.lowercase() }; AlertSort.TIME -> l }
+        }
+        VitalAlertPage(VitalAlertCounts(unread.count { it.severity == Severity.RED }, unread.count { it.severity == Severity.YELLOW }, unread.count { it.severity == Severity.GREEN }), list)
+    }
+
+    override suspend fun readVitalAlert(alertId: String) = latency { vitalInbox.filter { it.doctor == meId && it.alert.id == alertId }.forEach { it.read = true } }
+
     // ---- administration (rule 10: create users and doctors, deactivate doctors only) ----
     private fun myHospital(): String = adminHospital[meId] ?: error("Only hospital administrators can manage accounts")
 
@@ -486,6 +598,35 @@ class FakeRepository : HealooRepository {
         deactivated -= doctorId
         affiliation[doctorId] = h
         adminView(raw(doctorId))
+    }
+
+    private val hospitalDetails = mutableMapOf(
+        "h-a" to HospitalProfile("h-a", "HL-1H0A1", "Test Hospital A", "12 MG Road, Bengaluru", "+91 80 4000 1234", "KA-HOSP-2024-0117", "Multi-speciality hospital"),
+    )
+
+    override suspend fun adminHospital(): HospitalProfile = latency {
+        val h = myHospital()
+        hospitalDetails[h] ?: raw(h).let { HospitalProfile(it.id, it.publicId, it.displayName) }
+    }
+
+    override suspend fun adminUpdateHospital(update: HospitalUpdate): HospitalProfile = latency {
+        val h = myHospital()
+        val name = update.displayName.trim()
+        require(name.length in 1..80) { "display_name must be 1–80 characters" }
+        require(update.phone.orEmpty().all { it.isDigit() || it in " +-()" }) { "phone may contain digits, spaces, + - ( ) only" }
+        val i = users.indexOfFirst { it.id == h }
+        users[i] = users[i].copy(displayName = name, headline = update.headline?.trim()?.ifEmpty { null } ?: "Hospital")
+        HospitalProfile(h, users[i].publicId, name, update.location?.trim()?.ifEmpty { null }, update.phone?.trim()?.ifEmpty { null },
+            update.officialNumber?.trim()?.ifEmpty { null }, update.headline?.trim()?.ifEmpty { null }).also { hospitalDetails[h] = it }
+    }
+
+    /** Demo mode: the code ABCD-EFGH-JKMN makes the signed-in person Test Hospital A's administrator. */
+    override suspend fun redeemInvite(code: String): InviteRedeemed = latency {
+        require(code.filter { it.isLetterOrDigit() }.uppercase() == "ABCDEFGHJKMN") { "That invite code is not valid. Check it, or ask for a new one." }
+        val i = users.indexOfFirst { it.id == meId }
+        users[i] = users[i].copy(roles = listOf(Role.ADMINISTRATOR) + users[i].roles, headline = "Hospital administrator", hospital = "Test Hospital A")
+        adminHospital[meId] = "h-a"
+        InviteRedeemed("h-a", "Test Hospital A")
     }
 
     // ---- account ----

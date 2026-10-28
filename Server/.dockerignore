@@ -1,0 +1,5 @@
+# Never copy the administrators file into an image; care-api reads it from a mounted folder.
+config/admins/
+care-api/target/
+**/data/
+**/.env

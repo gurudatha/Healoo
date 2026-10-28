@@ -179,6 +179,41 @@ CREATE TABLE IF NOT EXISTS notification_prefs (  -- v0.2: Settings screen
   user_id uuid PRIMARY KEY, push_messages boolean, push_reports boolean,
   quiet_hours boolean, quiet_start text, quiet_end text);
 
+-- ---------- vitals (v0.4, Documentation/Vitals_Design.md) ----------
+-- Not DataItems: small, frequent, per-person measurements. Every table carries schema_version
+-- and an `extra` map, so later app or server versions can add data without a migration; readers
+-- ignore keys they don't know. Add columns only with ALTER TABLE ... ADD IF NOT EXISTS.
+
+CREATE TABLE IF NOT EXISTS vital_readings (          -- one person's readings, newest entry first
+  user_id uuid, reading_id timeuuid, code text, vals map<text, double>, taken_at timestamp,
+  note text, entered_by uuid, severity text, schema_version int, extra map<text, text>,
+  PRIMARY KEY ((user_id), reading_id)) WITH CLUSTERING ORDER BY (reading_id DESC);
+
+CREATE TABLE IF NOT EXISTS vital_readings_by_type (  -- the same readings, per vital (history, latest value)
+  user_id uuid, code text, reading_id timeuuid, vals map<text, double>, taken_at timestamp,
+  note text, entered_by uuid, severity text, schema_version int, extra map<text, text>,
+  PRIMARY KEY ((user_id), code, reading_id)) WITH CLUSTERING ORDER BY (code ASC, reading_id DESC);
+
+CREATE TABLE IF NOT EXISTS vital_types_by_user (     -- vitals a doctor added for one patient
+  user_id uuid, code text, label text, icon text, unit text,
+  spec text,                                         -- JSON: [{key,label,low?,high?}]
+  margin_pct int, position int, created_by uuid, created_at timestamp, active boolean,
+  schema_version int, extra map<text, text>,
+  PRIMARY KEY ((user_id), code));
+
+CREATE TABLE IF NOT EXISTS vital_ranges (            -- a doctor's range for one patient and vital
+  user_id uuid, code text,
+  spec text,                                         -- JSON: {component key: {low?,high?}}
+  margin_pct int, set_by uuid, set_at timestamp, schema_version int, extra map<text, text>,
+  PRIMARY KEY ((user_id), code));
+
+CREATE TABLE IF NOT EXISTS vital_alerts_by_doctor (  -- each connected doctor's inbox (dashboard)
+  doctor_id uuid, alert_id timeuuid, patient_id uuid, patient_name text,
+  code text, label text, icon text, unit text, vals map<text, double>, severity text,
+  is_read boolean, reading_id timeuuid, taken_at timestamp, schema_version int, extra map<text, text>,
+  PRIMARY KEY ((doctor_id), alert_id)) WITH CLUSTERING ORDER BY (alert_id DESC)
+  AND default_time_to_live = 7776000;                -- 90 days
+
 -- ---------- events ----------
 CREATE TABLE IF NOT EXISTS outbox (
   shard int, event_id text, topic text, event_key text, payload text, created_at timestamp,
@@ -192,6 +227,43 @@ CREATE TABLE IF NOT EXISTS access_audit (      -- written by audit-writer (doc 6
   item_id timeuuid, decided_at timeuuid, user_id uuid, decision text, reason text, event_id text,
   PRIMARY KEY ((item_id), decided_at)) WITH CLUSTERING ORDER BY (decided_at DESC)
   AND default_time_to_live = 7776000;         -- 90 days
+
+-- ---------- v0.4: platform administrator dashboard (Administration_Design.md section 8) ----------
+-- Written by the activity-log consumer. Who did what and when; never titles or message text.
+CREATE TABLE IF NOT EXISTS activity_by_day (
+  day text,                                   -- 'YYYY-MM-DD' (UTC)
+  at timeuuid,
+  occurred_at timestamp,
+  category text,                              -- RECORDS | SHARING | ACCOUNTS
+  event_type text,
+  actor_id uuid, actor_name text,
+  subject_id text, subject_name text,
+  detail text,
+  PRIMARY KEY ((day), at)) WITH CLUSTERING ORDER BY (at DESC)
+  AND default_time_to_live = 7776000;         -- 90 days
+
+CREATE TABLE IF NOT EXISTS activity_counts (  -- per-day totals: trend chart and day/week/month/year usage (kept)
+  day text, metric text, n counter,
+  PRIMARY KEY ((day), metric));
+
+CREATE TABLE IF NOT EXISTS active_users_by_day (  -- who did something that day: active users/hospitals
+  day text, user_id uuid,
+  PRIMARY KEY ((day), user_id)) WITH default_time_to_live = 34560000;   -- 400 days (a year, with margin)
+
+-- ---------- v0.4: hospital administrator invite codes (Administration_Design.md section 11) ----------
+-- Only a SHA-256 of each code is stored; the code itself is shown once, to the platform admin.
+CREATE TABLE IF NOT EXISTS admin_invites (
+  invite_id uuid PRIMARY KEY,
+  code_hash text, hospital_id uuid, note text,
+  created_by uuid, created_at timestamp, expires_at timestamp,
+  used_by uuid, used_at timestamp, revoked boolean);
+
+CREATE TABLE IF NOT EXISTS admin_invites_by_code (
+  code_hash text PRIMARY KEY, invite_id uuid);
+
+CREATE TABLE IF NOT EXISTS admin_invites_by_hospital (
+  hospital_id uuid, invite_id uuid,
+  PRIMARY KEY ((hospital_id), invite_id));
 
 -- ---------- search (Storage-Attached Indexes) ----------
 CREATE INDEX IF NOT EXISTS users_name_tokens_sai ON users (name_tokens) USING 'sai';

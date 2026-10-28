@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Healoo Admin</title>
+  <link rel="stylesheet" href="/admin/style.css">
+</head>
+<body>
+  <!-- Sign-in: Auth0 (internet) or the trial server's test accounts (LAN, AUTH_MODE=dev). -->
+  <div id="signin" class="signin hidden">
+    <h1>Healoo Admin</h1>
+    <p class="muted">For platform administrators. Monitors accounts, activity and usage.</p>
+    <div class="card">
+      <div id="signin-message" class="notice hidden"></div>
+      <div id="signin-auth0" class="hidden">
+        <div class="filters">
+          <button id="btn-login" type="button">Sign in with Auth0</button>
+          <button id="btn-switch" type="button" class="secondary">Use a different account</button>
+        </div>
+        <p class="tiny muted mt">"Use a different account" signs you out of Auth0 first, so you can choose another login.</p>
+      </div>
+      <div id="signin-dev" class="hidden">
+        <p class="small muted">Trial server: choose a test account.</p>
+        <div id="dev-accounts" class="devlist"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="app" class="hidden">
+    <header class="top">
+      <div class="brand"><h1>Healoo</h1><span>Platform administration</span></div>
+      <div class="who"><span id="who"></span><button id="btn-logout" type="button">Sign out</button></div>
+    </header>
+    <nav class="tabs" role="tablist" aria-label="Dashboard sections">
+      <button role="tab" data-page="overview">Overview</button>
+      <button role="tab" data-page="usage">Usage</button>
+      <button role="tab" data-page="accounts">Accounts</button>
+      <button role="tab" data-page="activity">Activity</button>
+      <button role="tab" data-page="hospitals">Hospitals</button>
+    </nav>
+    <main>
+      <div id="error" class="notice error hidden"></div>
+
+      <section class="page" id="page-overview" hidden>
+        <div class="stats-row" id="ov-stats"></div>
+        <div class="card chart">
+          <div class="card-head">
+            <h2>Last 14 days</h2><span class="spacer"></span>
+            <select id="ov-metric" aria-label="What to chart"></select>
+          </div>
+          <div id="ov-chart"></div>
+          <div class="legend"><span><i></i><span id="ov-legend"></span></span><span><i class="alt"></i>Active users</span></div>
+        </div>
+        <div class="grid two">
+          <div class="card"><h2>Accounts by role</h2><div id="ov-roles"></div></div>
+          <div class="card"><h2>Latest activity</h2><ul class="activity" id="ov-recent"></ul></div>
+        </div>
+      </section>
+
+      <section class="page" id="page-usage" hidden>
+        <div class="card">
+          <div class="card-head">
+            <h2>Usage</h2><span class="spacer"></span>
+            <div class="segmented" id="us-period" role="group" aria-label="Period">
+              <button type="button" data-period="day">Day</button>
+              <button type="button" data-period="week">Week</button>
+              <button type="button" data-period="month">Month</button>
+              <button type="button" data-period="year">Year</button>
+            </div>
+          </div>
+          <p class="small muted" id="us-caption"></p>
+          <div class="grid stats" id="us-stats"></div>
+        </div>
+        <div class="card">
+          <h2>All periods</h2>
+          <div class="table-wrap"><table id="us-table"></table></div>
+        </div>
+        <div class="grid two">
+          <div class="card">
+            <h2>Data stored</h2>
+            <div class="grid stats" id="us-storage"></div>
+            <h3 class="mt">Database tables</h3>
+            <p class="tiny muted">On-disk size from Cassandra, rounded down to whole MiB. Recent writes still in memory are counted once Cassandra flushes them.</p>
+            <div class="table-wrap"><table id="us-tables"></table></div>
+          </div>
+          <div class="card">
+            <h2>Records in the database</h2>
+            <div class="table-wrap"><table id="us-records"></table></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="page" id="page-accounts" hidden>
+        <div class="card">
+          <div class="card-head"><h2>Accounts</h2><span class="spacer"></span><span class="small muted" id="ac-total"></span></div>
+          <div class="filters">
+            <input type="search" id="ac-q" placeholder="Name, Healoo ID or email" aria-label="Search accounts">
+            <select id="ac-role" aria-label="Role">
+              <option value="">All roles</option>
+              <option value="PATIENT">Patients</option>
+              <option value="DOCTOR">Doctors</option>
+              <option value="ASSISTANT">Assistants</option>
+              <option value="LAB">Labs</option>
+              <option value="HOSPITAL">Hospitals</option>
+              <option value="ADMINISTRATOR">Hospital administrators</option>
+              <option value="APP_ADMINISTRATOR">Platform administrators</option>
+            </select>
+            <select id="ac-status" aria-label="Status">
+              <option value="">Any status</option>
+              <option value="active">Active</option>
+              <option value="deactivated">Deactivated</option>
+              <option value="never_signed_in">Never signed in</option>
+            </select>
+          </div>
+          <div class="table-wrap mt"><table id="ac-table"></table></div>
+          <div class="pager"><span id="ac-page"></span><button class="secondary" id="ac-prev" type="button">Previous</button><button class="secondary" id="ac-next" type="button">Next</button></div>
+        </div>
+      </section>
+
+      <section class="page" id="page-activity" hidden>
+        <div class="card">
+          <div class="card-head"><h2>Activity</h2><span class="spacer"></span><span class="small muted" id="at-count"></span></div>
+          <div class="filters">
+            <input type="date" id="at-day" aria-label="Day (UTC)">
+            <select id="at-category" aria-label="Kind">
+              <option value="">Everything</option>
+              <option value="RECORDS">Records, messages, bookings, uploads</option>
+              <option value="SHARING">Sharing and access</option>
+              <option value="ACCOUNTS">Accounts and hospitals</option>
+            </select>
+            <span class="tiny muted">Days are in UTC. Kept for 90 days. Titles, messages and reports are never shown.</span>
+          </div>
+          <div class="table-wrap mt"><table id="at-table"></table></div>
+        </div>
+      </section>
+
+      <section class="page" id="page-hospitals" hidden>
+        <div class="card">
+          <div class="card-head"><h2>Add a hospital</h2></div>
+          <form class="stack" id="hs-form">
+            <label>Name<input name="display_name" required maxlength="80"></label>
+            <label>Address<input name="location" maxlength="120"></label>
+            <label>Phone<input name="phone" maxlength="30" inputmode="tel"></label>
+            <label>Registration number<input name="official_number" maxlength="40"></label>
+            <label>Headline<input name="headline" maxlength="80" placeholder="e.g. Multi-speciality hospital"></label>
+            <label>First administrator's name (optional)<input name="admin_name" maxlength="80"></label>
+            <label>Their email (optional)<input name="admin_email" type="email" maxlength="254"></label>
+            <div class="actions"><button type="submit">Add hospital</button><span id="hs-form-msg" class="small"></span></div>
+          </form>
+          <p class="tiny muted">The administrator's first sign-in with this email (verified by Auth0) is linked to the account. The easiest way to add an administrator is an <strong>invite code</strong> (on each hospital below): they enter it in the app after signing in. You can also appoint someone who already uses the app, by their Healoo ID.</p>
+        </div>
+        <div id="hs-list"></div>
+      </section>
+    </main>
+  </div>
+  <script src="/admin/app.js"></script>
+</body>
+</html>

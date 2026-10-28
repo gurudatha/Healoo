@@ -39,7 +39,7 @@ pub async fn upload(State(st): State<AppState>, Path(key): Path<String>, Query(q
     if !q.ct.is_empty() && !sent_ct.is_empty() && sent_ct.split(';').next().unwrap_or("").trim() != q.ct {
         return Err(ApiError::bad_request("Content-Type does not match the upload link"));
     }
-    let max = if q.ct == "application/pdf" { crate::api::items::PDF_MAX } else { crate::api::items::IMAGE_MAX };
+    let max = if q.ct == "application/pdf" { crate::api::items::pdf_max() } else { crate::api::items::image_max() };
     if body.len() as i64 > max { return Err(ApiError::bad_request("file is larger than allowed")); }
     use crate::files::ObjectStore;
     disk.put(&key, body, &q.ct).await?;

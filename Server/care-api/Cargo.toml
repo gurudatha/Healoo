@@ -5,6 +5,7 @@ edition = "2021"
 rust-version = "1.80"
 default-run = "care-api"
 description = "Healoo backend: REST + WebSocket (doc 4), Auth0 (5), Kafka (6), Cassandra (7)"
+license = "GPL-3.0-or-later"
 
 [dependencies]
 # Runtime + HTTP/WS (doc 4.1). axum's WebSocket is built on tokio-tungstenite.
@@ -37,11 +38,13 @@ scylla = "0.13"
 # Kafka (doc 6)
 rdkafka = { version = "0.36", features = ["cmake-build"] }
 
-# Files (doc 7.4): local disk (LAN) or S3/MinIO (internet)
+# Files (doc 7.4): local disk (LAN) or an S3-compatible store (internet; SeaweedFS in the compose file)
 aws-config = { version = "1", features = ["behavior-version-latest"] }
 aws-sdk-s3 = "1"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 lopdf = "0.33"
+# PDF thumbnails: renders page 1 in-process (pure Rust), so no external PDF tool is needed.
+hayro = "0.8"
 
 # Network profile: LAN certificates + discovery, client IPs behind proxies
 rcgen = { version = "0.13", features = ["x509-parser"] }
@@ -61,6 +64,10 @@ base64 = "0.22"
 hmac = "0.12"
 sha2 = "0.10"
 hex = "0.4"
+# Encrypted administrators file (config/admins/admins.enc): Argon2id turns the key phrase into a
+# key; ChaCha20-Poly1305 encrypts and authenticates the file.
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
 rand = "0.8"
 bytes = "1"
 
@@ -75,6 +82,10 @@ path = "src/bin/care-worker.rs"
 [[bin]]
 name = "care-seed"
 path = "src/bin/care-seed.rs"
+
+[[bin]]
+name = "care-admin"
+path = "src/bin/care-admin.rs"
 
 [[bin]]
 name = "devtoken"

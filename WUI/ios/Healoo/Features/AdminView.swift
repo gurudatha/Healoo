@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Designations offered as chips; any other can be typed. There is no department field yet.
-private let designations = ["Cardiologist", "Urologist", "Paediatrician", "General Medicine"]
+/// Designations offered as chips (`designations` in WUI/app-config.json); any other can be typed.
+private let designations = AppConfig.current.designations
 
 /// Hospital administrators: add users and doctors, delete (deactivate) doctors.
 /// Users can't be deleted (Documentation/Administration_Design.md).

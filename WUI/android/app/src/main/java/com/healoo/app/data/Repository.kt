@@ -58,6 +58,25 @@ interface HealooRepository {
     /** Upcoming visits across items (YYYY-MM-DD, up to 62 days). */
     suspend fun calendar(from: String, to: String): List<CalendarVisit>
 
+    // ---- vitals (Documentation/Vitals_Design.md); [userId] null = the caller ----
+    /** Vitals the person has; ranges are filled in only when the caller is their doctor. */
+    suspend fun vitalTypes(userId: String? = null): List<VitalType>
+    /** The newest reading of each vital (home tiles). */
+    suspend fun vitalLatest(userId: String? = null): List<VitalReading>
+    /** Readings, newest entry first; [code] narrows to one vital. */
+    suspend fun vitalReadings(userId: String? = null, code: String? = null, limit: Int = 50): List<VitalReading>
+    /** The caller records their own reading; the server colours it and tells their doctors. */
+    suspend fun recordVital(reading: NewVitalReading): VitalReading
+    suspend fun vitalSettings(): VitalSettings
+    /** Doctor only: this patient's range for one vital. */
+    suspend fun setVitalRange(userId: String, code: String, update: VitalRangeUpdate): VitalType
+    /** Doctor only: a new vital for this patient. */
+    suspend fun addVitalType(type: NewVitalType): VitalType
+    /** Doctor dashboard: unread alerts and the red / yellow / green counts. */
+    suspend fun vitalAlerts(severity: Severity? = null, sort: AlertSort = AlertSort.TIME): VitalAlertPage
+    /** Removes an alert from the caller's active list. */
+    suspend fun readVitalAlert(alertId: String)
+
     // ---- administration (hospital administrators; users can't be deleted) ----
     /** The administrator's hospital's doctors, deactivated ones included. */
     suspend fun adminDoctors(): List<AdminAccount>
@@ -66,6 +85,11 @@ interface HealooRepository {
     /** "Delete" a doctor: deactivates the account and ends the hospital affiliation. */
     suspend fun adminDeactivateDoctor(doctorId: String)
     suspend fun adminReactivateDoctor(doctorId: String): AdminAccount
+    /** The administrator's hospital: name, address, phone, registration number, headline. */
+    suspend fun adminHospital(): HospitalProfile
+    suspend fun adminUpdateHospital(update: HospitalUpdate): HospitalProfile
+    /** An invite code from a platform administrator makes this account a hospital's administrator. */
+    suspend fun redeemInvite(code: String): InviteRedeemed
 
     // ---- account ----
     suspend fun updateProfile(update: ProfileUpdate): UserProfile
@@ -85,6 +109,9 @@ interface HealooRepository {
     val events: kotlinx.coroutines.flow.SharedFlow<RealtimeEvent>
     fun startRealtime()
     fun stopRealtime()
+
+    /** Removes everything kept on the phone for offline reading (called on sign-out). */
+    fun clearOfflineCache() {}
 }
 
 /** Upload screen: a new report, or files added to an existing item ([addToItemId]). */
@@ -96,10 +123,33 @@ data class ReportDraft(
     val shareWith: List<String>,
 )
 
+/** The `limits` part of GET /v1/config (the server's Server/config/server.json). */
+@kotlinx.serialization.Serializable
+data class ServerLimits(
+    @kotlinx.serialization.SerialName("attachments_per_item") val attachmentsPerItem: Int? = null,
+    @kotlinx.serialization.SerialName("image_max_bytes") val imageMaxBytes: Long? = null,
+    @kotlinx.serialization.SerialName("pdf_max_bytes") val pdfMaxBytes: Long? = null,
+)
+
+@kotlinx.serialization.Serializable
+data class ServerConfig(val limits: ServerLimits? = null)
+
+/**
+ * Upload limits. The server decides them (uploads in Server/config/server.json) and the app
+ * takes them from GET /v1/config after sign-in, so they change without an app update. Until
+ * then, and in demo mode, these defaults apply; the server enforces its own limits either way.
+ */
 object Limits {
-    const val MAX_ATTACHMENTS = 20
-    const val IMAGE_MAX_BYTES = 10L * 1024 * 1024
-    const val PDF_MAX_BYTES = 25L * 1024 * 1024
+    @Volatile var MAX_ATTACHMENTS = 20; private set
+    @Volatile var IMAGE_MAX_BYTES = 10L * 1024 * 1024; private set
+    @Volatile var PDF_MAX_BYTES = 25L * 1024 * 1024; private set
+
+    /** Takes the server's values; anything missing or not positive keeps the current one. */
+    fun apply(server: ServerLimits?) {
+        server?.attachmentsPerItem?.takeIf { it > 0 }?.let { MAX_ATTACHMENTS = it }
+        server?.imageMaxBytes?.takeIf { it > 0 }?.let { IMAGE_MAX_BYTES = it }
+        server?.pdfMaxBytes?.takeIf { it > 0 }?.let { PDF_MAX_BYTES = it }
+    }
 }
 
 /** Tiny service locator — enough for the trial; swap for Hilt later if wanted. */
@@ -115,6 +165,7 @@ object ServiceLocator {
     fun init(context: Context) {
         appContext = context.applicationContext
         PageOperations.load(appContext)
+        AppConfig.load(appContext)
         auth = com.healoo.app.auth.AuthManager(appContext)
         repository = if (BuildConfig.USE_FAKE_DATA) FakeRepository()
         else RemoteRepository(appContext, BuildConfig.API_BASE_URL, auth)

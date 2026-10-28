@@ -2,11 +2,14 @@
 //! query methods for one area. Tables are query-shaped (doc 7.1) and denormalised writes that
 //! must stay together use logged batches (doc 7.3).
 
+pub mod admin;
+pub mod invites;
 pub mod items;
 pub mod misc;
 pub mod parts;
 pub mod social;
 pub mod users;
+pub mod vitals;
 
 use anyhow::{Context, Result};
 use dashmap::DashMap;
@@ -55,6 +58,15 @@ impl Db {
     pub async fn rows<T: scylla::cql_to_rust::FromRow>(&self, cql: &'static str, values: impl SerializeRow) -> Result<Vec<T>> {
         let res = self.exec(cql, values).await?;
         Ok(res.rows_typed::<T>()?.collect::<Result<Vec<T>, _>>()?)
+    }
+
+    /// Every row, page by page (`rows` returns the first page only). For full-table scans such as
+    /// the administrator's account list.
+    pub async fn rows_all<T: scylla::cql_to_rust::FromRow>(&self, cql: &'static str, values: impl SerializeRow) -> Result<Vec<T>> {
+        use futures::TryStreamExt;
+        let p = self.stmt(cql).await?;
+        let it = self.session.execute_iter(p, values).await.with_context(|| format!("executing: {cql}"))?;
+        Ok(it.into_typed::<T>().try_collect().await.with_context(|| format!("reading: {cql}"))?)
     }
 
     pub async fn one<T: scylla::cql_to_rust::FromRow>(&self, cql: &'static str, values: impl SerializeRow) -> Result<Option<T>> {

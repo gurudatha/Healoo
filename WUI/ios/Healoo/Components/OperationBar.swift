@@ -7,9 +7,9 @@ import SwiftUI
 enum OpId {
     static let home = "home", search = "search", upload = "upload", messages = "messages", settings = "settings"
     static let connect = "connect", message = "message", history = "history", shareDocument = "share_document"
-    static let uploadFor = "upload_for", bookAppointment = "book_appointment", searchDoctors = "search_doctors"
+    static let uploadFor = "upload_for", bookAppointment = "book_appointment", searchDoctors = "search_doctors", vitals = "vitals"
     static let known: Set<String> = [home, search, upload, messages, settings, connect, message, history,
-                                     shareDocument, uploadFor, bookAppointment, searchDoctors]
+                                     shareDocument, uploadFor, bookAppointment, searchDoctors, vitals]
 }
 
 /// Which operation list a page uses.
@@ -34,6 +34,8 @@ enum OpFact {
         var f = Set<String>()
         if let subject { f.insert(subject.connected ? "connected" : "not_connected") }
         if let viewer { f.insert(viewer.isClinical ? "viewer_clinical" : "viewer_patient") }
+        if viewer?.primaryRole == .doctor { f.insert("viewer_doctor") }
+        if subject?.primaryRole == .patient { f.insert("subject_patient") }
         return f
     }
 }
@@ -74,6 +76,7 @@ enum PageOperations {
         case "share": "arrowshape.turn.up.right"
         case "event": "calendar.badge.plus"
         case "doctor": "stethoscope"
+        case "vitals": "waveform.path.ecg"
         default: "circle"
         }
     }
@@ -103,18 +106,18 @@ struct OperationBar: View {
                     .accessibilityLabel("More")
                 }
             }
-            .frame(height: 56)
+            .frame(height: 46)   // as tall as an icon with its label
         }
         .background(Sage.surface.ignoresSafeArea(edges: .bottom))
     }
 
     private func label(_ text: String, _ symbol: String, on: Bool) -> some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 1) {
             Image(systemName: symbol).font(.system(size: 20))
             Text(text).font(HFont.tiny).lineLimit(1)
         }
         .foregroundStyle(on ? Sage.accent : Sage.muted)
-        .frame(maxWidth: .infinity, minHeight: 52)
+        .frame(maxWidth: .infinity, minHeight: 44)
         .contentShape(Rectangle())
     }
 }

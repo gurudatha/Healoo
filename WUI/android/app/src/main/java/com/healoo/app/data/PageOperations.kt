@@ -21,8 +21,9 @@ object OpId {
     const val UPLOAD_FOR = "upload_for"
     const val BOOK_APPOINTMENT = "book_appointment"
     const val SEARCH_DOCTORS = "search_doctors"
+    const val VITALS = "vitals"
 
-    val known = setOf(HOME, SEARCH, UPLOAD, MESSAGES, SETTINGS, CONNECT, MESSAGE, HISTORY, SHARE_DOCUMENT, UPLOAD_FOR, BOOK_APPOINTMENT, SEARCH_DOCTORS)
+    val known = setOf(HOME, SEARCH, UPLOAD, MESSAGES, SETTINGS, CONNECT, MESSAGE, HISTORY, SHARE_DOCUMENT, UPLOAD_FOR, BOOK_APPOINTMENT, SEARCH_DOCTORS, VITALS)
 }
 
 /** Which operation list a page uses. */
@@ -53,6 +54,8 @@ object OpFact {
     fun of(viewer: UserProfile?, subject: UserProfile?): Set<String> = buildSet {
         if (subject != null) add(if (subject.connected) CONNECTED else NOT_CONNECTED)
         if (viewer != null) add(if (viewer.isClinical) VIEWER_CLINICAL else VIEWER_PATIENT)
+        if (viewer?.primaryRole == Role.DOCTOR) add("viewer_doctor")
+        if (subject?.primaryRole == Role.PATIENT) add("subject_patient")
     }
 }
 

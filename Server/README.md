@@ -23,7 +23,7 @@ see the traits, and `NETWORK_MODE` picks the implementations and safe defaults.
 | --- | --- | --- | --- |
 | Network exposure | `Exposure` (`src/net/`) | `LanExposure`: listens on all interfaces, HTTPS with its own local CA (or behind local Caddy), mDNS `_healoo._tcp`, permissive CORS | `InternetExposure`: private port behind Caddy/Nginx, `X-Forwarded-For` trusted only from proxy ranges, strict CORS |
 | Identity | `TokenVerifier` (`src/auth/`) | `DevVerifier`: locally signed tokens, no internet needed (Auth0 optional) | `Auth0Verifier`: RS256 + JWKS cache (dev tokens refused) |
-| Files | `ObjectStore` (`src/files/`) | `DiskStore`: files on disk, served by the API at `/files` with signed, expiring URLs | `S3Store`: S3/MinIO presigned URLs on a files subdomain |
+| Files | `ObjectStore` (`src/files/`) | `DiskStore`: files on disk, served by the API at `/files` with signed, expiring URLs | `S3Store`: S3-compatible store (SeaweedFS) presigned URLs on a files subdomain |
 | Events | `EventBus` (`src/events/`) | `KafkaBus` (or `MemoryBus` for a Kafka-less quick run) | `KafkaBus` |
 
 | Setting | `NETWORK_MODE=lan` default | `NETWORK_MODE=internet` default |
@@ -104,6 +104,7 @@ admin (`HL-8A2D4`) and an assistant (`HL-8S5T7`):
 | HL-8N3V6 | Dr. Vikram Nair | Doctor at Test Hospital A · Urologist |
 | HL-5P9L4 | Sunrise Pathology | Lab |
 | HL-6G2L7 | Green Valley Labs | Lab |
+| HL-9A7D2 | Healoo Platform Admin | Platform administrator (dashboard at `/admin/`) |
 
 The last nine are added to an existing trial database too: the seed job creates any that are
 missing on the next `docker compose up -d --build`, without touching other data.
@@ -193,7 +194,7 @@ Compatibility notes:
 
 ```bash
 cd deploy/internet
-cp .env.internet.example .env     # domains, ACME email, Auth0, MinIO credentials
+cp .env.internet.example .env     # domains, ACME email, Auth0, storage keys
 docker compose up -d --build
 ```
 
@@ -201,7 +202,65 @@ Caddy gets Let's Encrypt certificates automatically; `proxy/nginx.conf` is the e
 you prefer Nginx. Only ports 80/443 are published. Point the apps at `https://api.example.com/`.
 To load test data there: `docker compose run --rm care-api care-seed` (test data only).
 
+**File storage** is SeaweedFS (Apache-2.0), reached through its S3 gateway. The server uses only
+the standard S3 protocol, so AWS S3 or another S3-compatible store works by setting
+`S3_ENDPOINT` and the two keys. The bucket is created on the first upload and nothing in it is
+public: files are reached only through signed, expiring links.
+
+- Use letters and digits only for `S3_ACCESS_KEY` and `S3_SECRET_KEY`.
+- A deployment that already stored files in the earlier MinIO service keeps them in its
+  `minio_data` volume. They are not moved automatically: copy them to the new store with any
+  S3 copy tool before removing that volume.
+- To check a store, run the round-trip test against it (see `src/files/mod.rs`):
+  `cargo test --lib s3_store -- --ignored`
+
+**Administrators.** The platform administrators (who can use the dashboard at
+`https://api.example.com/admin/`) and, optionally, hospital administrators are listed in an
+encrypted file, `config/admins/admins.enc`, which is never committed. It is read with the key
+phrase in `ADMINS_KEY` (`deploy/internet/.env`), and `care-api` applies it at every start:
+the platform administrators are exactly the people listed. Run these from `deploy/internet`
+(details: `Documentation/Administration_Design.md` section 10). Create the file once with
+`docker compose run --rm care-api care-admin config init`.
+
+List the administrators in the file:
+
+```bash
+docker compose run --rm care-api care-admin config show
+```
+
+Add a platform administrator (name, email, then a Healoo ID or `-` for none):
+
+```bash
+docker compose run --rm care-api care-admin config add-platform "Your Name" you@example.com -
+```
+
+Remove someone (by name, email or Healoo ID):
+
+```bash
+docker compose run --rm care-api care-admin config remove you@example.com
+```
+
+Apply the file now, without restarting care-api:
+
+```bash
+docker compose run --rm care-api care-admin config apply
+```
+
+Change the key phrase (then put the new phrase in `ADMINS_KEY` in `.env`):
+
+```bash
+docker compose run --rm -e ADMINS_NEW_KEY=newphrase care-api care-admin config rekey
+```
+
 ## 7. Configuration reference
+
+Limits and defaults (upload sizes, message length, rate limit, time zone, vitals ranges and
+colours) are in `config/server.json` and `config/vitals.json`, not in environment variables.
+`SERVER_CONFIG` and `VITALS_CONFIG` point the server at edited copies; the LAN compose file
+sets both, so edit the file and restart. See
+[`../Documentation/Configuration.md`](../Documentation/Configuration.md).
+
+Deployment settings are environment variables:
 
 | Variable | Meaning |
 | --- | --- |
@@ -219,7 +278,7 @@ To load test data there: `docker compose run --rm care-api care-seed` (test data
 | `CASSANDRA_NODES`, `CASSANDRA_KEYSPACE` | Cassandra contact points, keyspace `careconnect` |
 | `EVENT_BUS`, `KAFKA_BROKERS` | `kafka` or `memory`; broker list |
 | `FILE_STORE`, `FILES_DIR`, `FILES_SECRET` | `disk` or `s3`; disk folder; URL signing key |
-| `S3_BUCKET`, `S3_ENDPOINT`, `S3_PUBLIC_ENDPOINT`, `S3_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | S3/MinIO |
+| `S3_BUCKET`, `S3_ENDPOINT`, `S3_PUBLIC_ENDPOINT`, `S3_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | S3-compatible storage (SeaweedFS in the compose file) |
 | `INSTANCE_ID` | names this instance's ws-fanout consumer group |
 | `DEBUG_ROUTES` | expose `/v1/check/access` |
 | `RUST_LOG` | log filter |

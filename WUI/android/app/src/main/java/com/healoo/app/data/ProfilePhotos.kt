@@ -10,7 +10,8 @@ import java.io.File
 
 /** Profile pictures are resized on the phone before upload: at most [MAX_PX] on the long side, JPEG. */
 object ProfilePhotos {
-    const val MAX_PX = 512
+    /** `profile_photo.max_px` in WUI/app-config.json. */
+    val MAX_PX: Int get() = AppConfig.current.profilePhoto.maxPx
 
     /**
      * Decodes a picked or captured image (ImageDecoder also applies the camera's EXIF rotation),

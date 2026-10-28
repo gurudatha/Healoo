@@ -10,9 +10,9 @@ use scylla::frame::value::{CqlTimestamp, CqlTimeuuid};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-pub const DEFAULT_TZ: &str = "Asia/Kolkata";
+// The default time zone and calendar window come from Server/config/server.json (settings.rs).
+pub use crate::settings::default_tz;
 /// Calendar rows are kept for visits in the next 6 months.
-pub const CALENDAR_DAYS: i64 = 183;
 
 /// Local date + time in an IANA zone -> UTC milliseconds.
 pub fn local_millis(date: NaiveDate, time: NaiveTime, tz: &str) -> i64 {
@@ -78,7 +78,7 @@ pub struct AppointmentRow {
 }
 
 impl AppointmentRow {
-    pub fn tz(&self) -> &str { self.timezone.as_deref().unwrap_or(DEFAULT_TZ) }
+    pub fn tz(&self) -> &str { self.timezone.as_deref().unwrap_or(default_tz()) }
     pub fn date(&self) -> NaiveDate { recurrence::parse_date(&self.start_date).unwrap_or_default() }
     pub fn time(&self) -> NaiveTime { recurrence::parse_time(&self.start_time).unwrap_or_default() }
     pub fn recurrence(&self) -> Option<Recurrence> {
@@ -136,7 +136,7 @@ pub struct AlertRow {
 }
 
 impl AlertRow {
-    pub fn tz(&self) -> &str { self.timezone.as_deref().unwrap_or(DEFAULT_TZ) }
+    pub fn tz(&self) -> &str { self.timezone.as_deref().unwrap_or(default_tz()) }
     pub fn recurrence(&self) -> Option<Recurrence> {
         let f: Frequency = parse(self.frequency.as_deref()?)?;
         Some(Recurrence { frequency: f, period: self.period.as_deref().and_then(parse::<Period>) })
@@ -265,7 +265,7 @@ impl Db {
 
     fn calendar_window(a: &AppointmentRow) -> (NaiveDate, NaiveDate) {
         let today = today_in(a.tz());
-        (today - ChronoDuration::days(1), today + ChronoDuration::days(CALENDAR_DAYS))
+        (today - ChronoDuration::days(1), today + ChronoDuration::days(crate::settings::settings().appointments.calendar_days))
     }
 
     async fn delete_calendar(&self, a: &AppointmentRow) -> Result<()> {
@@ -318,7 +318,7 @@ impl Db {
             out.extend(rows.into_iter().map(|r| (r.0 .0, r.1, un(r.2), r.3, r.4.unwrap_or_default())));
             m = m.checked_add_months(chrono::Months::new(1)).unwrap_or(to + ChronoDuration::days(1));
         }
-        let (lo, hi) = (local_millis(from, NaiveTime::MIN, DEFAULT_TZ), local_millis(to + ChronoDuration::days(1), NaiveTime::MIN, DEFAULT_TZ));
+        let (lo, hi) = (local_millis(from, NaiveTime::MIN, default_tz()), local_millis(to + ChronoDuration::days(1), NaiveTime::MIN, default_tz()));
         out.retain(|v| v.0 >= lo && v.0 < hi);
         Ok(out)
     }

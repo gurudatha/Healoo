@@ -4,6 +4,10 @@ target/
 Server/**/data/
 **/.env
 *.key
+# Encrypted administrators file and any plain copy made while editing it (section 10)
+Server/config/admins/*
+!Server/config/admins/README.md
+*.admins.json
 
 # Trial-server certificates are generated per machine
 Server/deploy/**/*.crt
@@ -36,3 +40,6 @@ xcuserdata/
 !.vscode/tasks.json
 .DS_Store
 Thumbs.db
+
+# ---- Personal Claude Code / MCP setup ----
+.mcp.json

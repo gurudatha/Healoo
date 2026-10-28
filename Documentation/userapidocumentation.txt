@@ -262,6 +262,44 @@ AUTH_MODE. Check which one with GET /v1/config ("auth": {"mode": ...}).
         -H "authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' \
         -d '{"display_name":"Dr. Test","email":"drtest@example.com","designation":"Urologist"}'
 
+  Hospital profile (v0.4). A hospital administrator reads and edits their
+  hospital's name, headline, address, phone and registration number:
+
+      GET /v1/admin/hospital
+      PUT /v1/admin/hospital
+        {"display_name":"Test Hospital A","headline":"Multi-speciality hospital",
+         "location":"12 MG Road, Bengaluru","phone":"+91 80 4000 1234",
+         "official_number":"KA-HOSP-2024-0117"}
+
+  PUT replaces every field; empty ones are cleared. Phone: digits, spaces and
+  + - ( ) only. In the app: Settings -> Administration -> Hospital profile.
+
+  Platform administrators (v0.4) have a web dashboard at https://<server>/admin/
+  and these endpoints (anyone else -> 403); see
+  Documentation/Administration_Design.md section 8:
+
+      GET    /v1/admin/overview?days=14      totals, today, daily trend, latest activity
+      GET    /v1/admin/usage                 day/week/month/year usage, data stored
+      GET    /v1/admin/accounts?q=&role=&status=&offset=&limit=
+      GET    /v1/admin/activity?day=YYYY-MM-DD&category=RECORDS|SHARING|ACCOUNTS
+      GET    /v1/admin/hospitals             hospitals, doctor counts, administrators
+      POST   /v1/admin/hospitals             new hospital (+ optional admin_name, admin_email)
+      POST   /v1/admin/hospitals/{id}/administrators            {"public_id":"HL-..."}
+      DELETE /v1/admin/hospitals/{id}/administrators/{user_id}
+      POST   /v1/admin/hospitals/{id}/invites     {"note":"..."} -> one-time code, 7 days
+      GET    /v1/admin/hospitals/{id}/invites     invites and their status (no codes)
+      DELETE /v1/admin/hospitals/{id}/invites/{invite_id}   revoke an unused code
+
+  Invite codes (v0.4). Anyone signed in turns a code from a platform
+  administrator into hospital administration (the app: Settings -> I have
+  an invite code):
+
+      POST /v1/invites/redeem   {"code":"K7QM-4XTR-9HCW"}
+        -> {"hospital_id":"...","hospital_name":"..."}
+
+  Wrong, used, expired or revoked codes all answer 400; 5 wrong codes in
+  15 minutes -> 429. Doctors, assistants, labs and hospitals -> 403.
+
 
 4. QUERY USERS
 --------------
@@ -370,7 +408,7 @@ or PDFs attached. Uploading takes three steps:
 
   Keep each "uri"; you need it in step 3. Upload URLs expire after 10
   minutes. On the internet profile upload_url points at the files host
-  (S3/MinIO) instead.
+  (S3-compatible storage) instead.
 
 5.2 Step 2: upload each file
       PUT <upload_url>
@@ -786,9 +824,18 @@ Adding anything needs full access to the item, and the item must be OPEN
   GET/POST /v1/grants, DELETE /v1/grants/{id}               Sharing (owner: anyone; doctor, lab or
                                                             hospital with full access: doctors only)
   GET     /v1/hospitals/{hospital_id}/doctors               Doctors working at a hospital
+  GET     /v1/vitals/config  |  /types  |  /latest  |  /readings   Vitals: settings, catalogue, latest and history (?user= for a doctor)
+  POST    /v1/vitals/readings                               Record your own reading (code, values, taken_at?, note?)
+  POST    /v1/vitals/types, PUT /v1/vitals/ranges/{user}/{code}   Doctor: add a vital / set a range for a patient
+  GET     /v1/vitals/alerts, POST /v1/vitals/alerts/{id}/read     Doctor: unread alerts with counts / mark one read
   POST    /v1/admin/users  |  /v1/admin/doctors             Administrator: add a user / a doctor
   GET     /v1/admin/doctors                                Administrator: the hospital's doctors
   DELETE  /v1/admin/doctors/{id}, POST .../reactivate      Administrator: deactivate / reactivate
+  GET/PUT /v1/admin/hospital                               Administrator: the hospital's profile
+  GET     /v1/admin/overview | usage | accounts | activity Platform administrator: dashboard data
+  GET/POST /v1/admin/hospitals, POST/DELETE .../administrators   Platform administrator: hospitals
+  GET/POST/DELETE /v1/admin/hospitals/{id}/invites          Platform administrator: invite codes
+  POST    /v1/invites/redeem                               Anyone: use an invite code
   POST/DELETE /v1/devices                                   Push registration
   GET     /v1/ws                                            WebSocket
 
@@ -823,5 +870,6 @@ APPENDIX: TRIAL ACCOUNTS (care-seed)
              Urologist
   HL-5P9L4   Sunrise Pathology     LAB                 5eed0000-0000-4000-8000-000000000012
   HL-6G2L7   Green Valley Labs     LAB                 5eed0000-0000-4000-8000-000000000013
+  HL-9A7D2   Healoo Platform Admin APP_ADMINISTRATOR   5eed0000-0000-4000-8000-000000000014
 
   Test data only. Never put real patient information on the trial server.

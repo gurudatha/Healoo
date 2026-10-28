@@ -8,15 +8,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends cmake pkg-confi
 WORKDIR /src
 COPY care-api/Cargo.toml care-api/Cargo.lock* ./care-api/
 COPY care-api/src ./care-api/src
+# Compiled-in defaults (server.json, vitals.json); SERVER_CONFIG / VITALS_CONFIG can point at replacements at run time.
+COPY config ./config
 WORKDIR /src/care-api
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/care-api/target \
     cargo build --release --locked 2>/dev/null || cargo build --release; \
-    mkdir -p /out && cp target/release/care-api target/release/care-worker target/release/care-seed target/release/devtoken /out/
+    mkdir -p /out && cp target/release/care-api target/release/care-worker target/release/care-seed target/release/care-admin target/release/devtoken /out/
 
 FROM debian:trixie-slim AS runtime
-# poppler-utils: pdftoppm renders the first page of PDFs as a thumbnail (care-worker, care-seed).
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libsasl2-2 libcurl4 curl poppler-utils && rm -rf /var/lib/apt/lists/* \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libsasl2-2 libcurl4 curl && rm -rf /var/lib/apt/lists/* \
     && useradd -r -u 10001 healoo && mkdir -p /data && chown healoo /data
 COPY --from=build /out/ /usr/local/bin/
 USER healoo

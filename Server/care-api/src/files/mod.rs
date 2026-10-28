@@ -2,9 +2,9 @@
 //! `obj:<key>` URIs and the API hands out short-lived URLs only after the policy check.
 //!
 //! * [`DiskStore`] — files under FILES_DIR, served by this API at `/files/<key>` with
-//!   HMAC-signed, expiring URLs. Ideal for a LAN trial: no MinIO, no extra ports.
-//! * [`S3Store`] — S3 or MinIO with presigned URLs. For internet deployments; also works on
-//!   the LAN with the doc's MinIO container.
+//!   HMAC-signed, expiring URLs. Ideal for a LAN trial: no storage service, no extra ports.
+//! * [`S3Store`] — any S3-compatible store (SeaweedFS in the internet compose file, or AWS S3) with
+//!   presigned URLs. For internet deployments; also works on the LAN.
 
 use crate::config::{Config, StoreKind};
 use anyhow::{bail, Context, Result};
@@ -16,7 +16,8 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use url::Url;
 
 pub const URI_PREFIX: &str = "obj:";
-pub const URL_TTL: Duration = Duration::from_secs(600); // 10-minute URLs (doc 7.4)
+/// How long download and upload links stay valid (doc 7.4): uploads.download_link_minutes in server.json.
+pub fn url_ttl() -> Duration { crate::settings::settings().uploads.link_ttl() }
 
 pub fn object_uri(key: &str) -> String { format!("{URI_PREFIX}{key}") }
 pub fn key_of(uri: &str) -> Option<&str> { uri.strip_prefix(URI_PREFIX) }
@@ -28,6 +29,8 @@ pub trait ObjectStore: Send + Sync + 'static {
     async fn presign_get(&self, key: &str) -> Result<String>;
     async fn get(&self, key: &str) -> Result<Bytes>;
     async fn put(&self, key: &str, data: Bytes, mime: &str) -> Result<()>;
+    /// How much is stored: (files, bytes). For the administrator dashboard; walks every object.
+    async fn usage(&self) -> Result<(u64, u64)>;
 }
 
 /// Returns the store, plus the concrete disk store when the API itself must serve `/files`.
@@ -70,7 +73,7 @@ impl DiskStore {
     }
 
     fn url(&self, method: &str, key: &str, mime: &str) -> Result<String> {
-        let exp = chrono::Utc::now().timestamp() + URL_TTL.as_secs() as i64;
+        let exp = chrono::Utc::now().timestamp() + url_ttl().as_secs() as i64;
         let mut u = self.base.join("files/")?.join(key)?;
         u.query_pairs_mut()
             .append_pair("m", method)
@@ -107,9 +110,22 @@ impl ObjectStore for DiskStore {
         tokio::fs::write(p.with_extension("mime"), mime).await?;
         Ok(())
     }
+    async fn usage(&self) -> Result<(u64, u64)> {
+        fn walk(dir: &std::path::Path, acc: &mut (u64, u64)) {
+            let Ok(entries) = std::fs::read_dir(dir) else { return };
+            for e in entries.flatten() {
+                let Ok(meta) = e.metadata() else { continue };
+                if meta.is_dir() { walk(&e.path(), acc); }
+                // .mime files hold each object's content type; they are not uploads.
+                else if e.path().extension().is_none_or(|x| x != "mime") { acc.0 += 1; acc.1 += meta.len(); }
+            }
+        }
+        let root = self.root.clone();
+        Ok(tokio::task::spawn_blocking(move || { let mut acc = (0, 0); walk(&root, &mut acc); acc }).await?)
+    }
 }
 
-// ---------------- S3 / MinIO (internet) ----------------
+// ---------------- S3-compatible store (internet) ----------------
 
 pub struct S3Store {
     bucket: String,
@@ -135,7 +151,7 @@ impl S3Store {
     }
 
     fn presign_cfg() -> Result<aws_sdk_s3::presigning::PresigningConfig> {
-        Ok(aws_sdk_s3::presigning::PresigningConfig::expires_in(URL_TTL)?)
+        Ok(aws_sdk_s3::presigning::PresigningConfig::expires_in(url_ttl())?)
     }
 }
 
@@ -164,5 +180,72 @@ impl ObjectStore for S3Store {
         self.client.put_object().bucket(&self.bucket).key(key).content_type(mime)
             .body(aws_sdk_s3::primitives::ByteStream::from(data)).send().await?;
         Ok(())
+    }
+
+    async fn usage(&self) -> Result<(u64, u64)> {
+        let mut acc = (0u64, 0u64);
+        let mut pages = self.client.list_objects_v2().bucket(&self.bucket).into_paginator().send();
+        while let Some(page) = pages.next().await {
+            let page = match page {
+                Ok(p) => p,
+                // No upload yet: the bucket is created on the first one.
+                Err(e) if e.as_service_error().is_some_and(|s| s.is_no_such_bucket()) => return Ok(acc),
+                Err(e) => return Err(e.into()),
+            };
+            for o in page.contents() { acc.0 += 1; acc.1 += o.size().unwrap_or(0).max(0) as u64; }
+        }
+        Ok(acc)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Runs the S3 code against a real S3-compatible store (the internet profile uses SeaweedFS):
+    /// what the worker does (put / get) and what the apps do (presigned upload and download).
+    ///
+    /// Needs a store, so it is skipped by default. To run it, set FILE_STORE=s3, S3_ENDPOINT,
+    /// S3_BUCKET, AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, then:
+    ///     cargo test --lib s3_store -- --ignored
+    #[tokio::test]
+    #[ignore = "needs an S3-compatible store; see the comment"]
+    async fn s3_store_round_trip_with_presigned_links() {
+        let cfg = Config::from_env().expect("configuration");
+        assert_eq!(cfg.store, StoreKind::S3, "set FILE_STORE=s3");
+        let store = S3Store::new(&cfg).await.expect("S3 client");
+        let http = reqwest::Client::new();
+        let id = ulid::Ulid::new();
+
+        // Worker side: the bucket is created on the first upload; thumbnails are written and read.
+        let direct = format!("thumbs/uploads/test/{id}-report.pdf.jpg");
+        store.put(&direct, Bytes::from_static(b"thumbnail bytes"), "image/jpeg").await.expect("direct put");
+        assert_eq!(&store.get(&direct).await.expect("direct get")[..], b"thumbnail bytes");
+
+        // App side: upload through a presigned link (a file bigger than one internal chunk)...
+        let key = format!("uploads/test/{id}-scan 1.jpg");
+        let body: Vec<u8> = (0..6_000_000u32).map(|i| (i % 251) as u8).collect();
+        let put_url = store.presign_put(&key, "image/jpeg").await.expect("presign put");
+        let put = http.put(&put_url).header("content-type", "image/jpeg").body(body.clone()).send().await.expect("upload");
+        assert!(put.status().is_success(), "presigned upload: {} {}", put.status(), put.text().await.unwrap_or_default());
+
+        // ...then download through a presigned link, and read it back as the worker would.
+        let get_url = store.presign_get(&key).await.expect("presign get");
+        let got = http.get(&get_url).send().await.expect("download");
+        assert!(got.status().is_success(), "presigned download: {}", got.status());
+        assert_eq!(got.bytes().await.unwrap().len(), body.len());
+        assert_eq!(&store.get(&key).await.expect("get uploaded")[..], &body[..]);
+
+        // Links are the only way in: no signature, a changed signature or another object are refused.
+        let plain = get_url.split('?').next().unwrap().to_string();
+        assert_eq!(http.get(&plain).send().await.unwrap().status(), 403, "anonymous read must be refused");
+        let forged = get_url.replacen("X-Amz-Signature=", "X-Amz-Signature=0", 1);
+        assert_eq!(http.get(&forged).send().await.unwrap().status(), 403, "a changed signature must be refused");
+        let other = get_url.replacen("scan%201.jpg", "scan%202.jpg", 1);
+        assert_ne!(other, get_url, "test is out of date: the key is not in the link as expected");
+        assert_eq!(http.get(&other).send().await.unwrap().status(), 403, "a link is valid for its own object only");
+        // An upload link can't be used to send a different type than the one it was made for.
+        let wrong_type = http.put(&put_url).header("content-type", "application/pdf").body(vec![1u8; 10]).send().await.unwrap();
+        assert_eq!(wrong_type.status(), 403, "the content type is part of the signed upload");
     }
 }

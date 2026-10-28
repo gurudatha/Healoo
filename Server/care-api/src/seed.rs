@@ -8,7 +8,7 @@ use crate::{
     recurrence,
     store::{
         items::Item,
-        parts::{local_millis, today_in, AlertRow, AppointmentRow, AttachmentRow, DEFAULT_TZ},
+        parts::{local_millis, today_in, AlertRow, AppointmentRow, AttachmentRow, default_tz},
         users::NewUser,
         Db,
     },
@@ -39,10 +39,12 @@ pub const DR_MENON: Uuid = Uuid::from_u128(0x5eed_0000_0000_4000_8000_0000000000
 pub const DR_NAIR: Uuid = Uuid::from_u128(0x5eed_0000_0000_4000_8000_000000000011);
 pub const SUNRISE_LAB: Uuid = Uuid::from_u128(0x5eed_0000_0000_4000_8000_000000000012);
 pub const GREEN_VALLEY_LAB: Uuid = Uuid::from_u128(0x5eed_0000_0000_4000_8000_000000000013);
+/// Platform administrator for the dashboard at /admin/ (Administration_Design.md section 8).
+pub const APP_ADMIN: Uuid = Uuid::from_u128(0x5eed_0000_0000_4000_8000_000000000014);
 
-pub const SEED_PUBLIC_IDS: [&str; 19] = [
+pub const SEED_PUBLIC_IDS: [&str; 20] = [
     "HL-2M9P4", "HL-7R2C9", "HL-1H0A1", "HL-6L3D2", "HL-3K8M1", "HL-9P4T6", "HL-5W1Q3", "HL-4K7Q2", "HL-8A2D4", "HL-8S5T7",
-    "HL-3R7V2", "HL-6A4S9", "HL-9S2Y5", "HL-4M8D3", "HL-7F5K2", "HL-2D5M8", "HL-8N3V6", "HL-5P9L4", "HL-6G2L7",
+    "HL-3R7V2", "HL-6A4S9", "HL-9S2Y5", "HL-4M8D3", "HL-7F5K2", "HL-2D5M8", "HL-8N3V6", "HL-5P9L4", "HL-6G2L7", "HL-9A7D2",
 ];
 
 struct Person {
@@ -90,6 +92,7 @@ fn extra_people() -> Vec<Person> {
                  ..p(DR_NAIR, "HL-8N3V6", "Dr. Vikram Nair", Role::Doctor) },
         p(SUNRISE_LAB, "HL-5P9L4", "Sunrise Pathology", Role::Lab),
         p(GREEN_VALLEY_LAB, "HL-6G2L7", "Green Valley Labs", Role::Lab),
+        p(APP_ADMIN, "HL-9A7D2", "Healoo Platform Admin", Role::AppAdministrator),
     ]
 }
 
@@ -193,7 +196,7 @@ async fn appointment(db: &Db, it: &Item, doctor: Uuid, hospital: Option<Uuid>, d
         hospital_id: hospital,
         start_date: recurrence::fmt_date(date),
         start_time: time.into(),
-        timezone: Some(DEFAULT_TZ.into()),
+        timezone: Some(default_tz().into()),
         duration_min: Some(15),
         notes: Some(notes.into()),
         frequency: rec.map(|r| r.0.to_string()),
@@ -212,8 +215,8 @@ async fn alert(db: &Db, it: &Item, for_user: Uuid, kind: &str, text: &str, date:
         kind: Some(kind.into()),
         text: Some(text.into()),
         for_user,
-        fires_at: scylla::frame::value::CqlTimestamp(local_millis(date, t, DEFAULT_TZ)),
-        timezone: Some(DEFAULT_TZ.into()),
+        fires_at: scylla::frame::value::CqlTimestamp(local_millis(date, t, default_tz())),
+        timezone: Some(default_tz().into()),
         frequency: rec.map(|r| r.0.to_string()),
         period: rec.and_then(|r| r.1).map(str::to_string),
         appointment_id: None,
@@ -329,7 +332,7 @@ async fn seed_base(db: &Db, files: &dyn ObjectStore) -> Result<()> {
         db.connect_users(a, ra, na, b, rb, nb).await?;
     }
 
-    let today = today_in(DEFAULT_TZ);
+    let today = today_in(default_tz());
     let days = |n: i64| today + chrono::Duration::days(n);
     let rao = || grant(GranteeType::User, DR_RAO, "Dr. Anitha Rao", LAKSHMI);
     let mut count = 0;
@@ -431,9 +434,20 @@ mod tests {
     #[test]
     fn sample_pdf_first_page_becomes_a_320px_thumbnail() {
         let pdf = sample_pdf("Reference ranges", 2).unwrap();
-        // None = pdftoppm isn't installed here (the Docker image has it); nothing to check then.
-        let Some(jpeg) = crate::worker::pdf_thumbnail(&pdf).unwrap() else { return };
-        let img = image::load_from_memory(&jpeg).unwrap();
-        assert_eq!(img.width().max(img.height()), 320);
+        let jpeg = crate::worker::pdf_thumbnail(&pdf).unwrap().expect("a PDF with pages has a thumbnail");
+        let img = image::load_from_memory(&jpeg).unwrap().to_rgb8();
+        // A4 portrait: 320 on the long side (a pixel of rounding either way).
+        assert!((319..=320).contains(&img.height()) && img.width() < img.height(), "{}x{}", img.width(), img.height());
+        // The page is white with a line of dark text near the top: both must be in the picture.
+        let dark = img.pixels().filter(|p| p.0.iter().all(|c| *c < 110)).count();
+        let white = img.pixels().filter(|p| p.0.iter().all(|c| *c > 240)).count();
+        assert!(dark > 20, "the text was not drawn ({dark} dark pixels)");
+        assert!(white > (img.width() * img.height() / 2) as usize, "the page background is not white");
+    }
+
+    #[test]
+    fn a_file_that_is_not_a_pdf_is_an_error_not_a_crash() {
+        assert!(crate::worker::pdf_thumbnail(b"%PDF-1.5 this is not really a PDF").is_err());
+        assert!(crate::worker::pdf_thumbnail(&[]).is_err());
     }
 }

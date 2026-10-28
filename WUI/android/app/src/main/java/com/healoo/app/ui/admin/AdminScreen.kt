@@ -24,8 +24,7 @@ import com.healoo.app.ui.theme.*
 import com.healoo.app.ui.upload.SageTextField
 import kotlinx.coroutines.launch
 
-/** Designations offered as chips; any other can be typed. There is no department field yet. */
-private val DESIGNATIONS = listOf("Cardiologist", "Urologist", "Paediatrician", "General Medicine")
+// Designations offered as chips come from `designations` in WUI/app-config.json; any other can be typed.
 
 class AdminViewModel : ViewModel() {
     private val repo = ServiceLocator.repository
@@ -35,6 +34,9 @@ class AdminViewModel : ViewModel() {
     var notice by mutableStateOf<String?>(null)
     var busy by mutableStateOf(false); private set
     var formError by mutableStateOf<String?>(null)
+    /** The hospital's profile; hospital administrators only (platform administrators use the web dashboard). */
+    var hospital by mutableStateOf<HospitalProfile?>(null); private set
+    var hospitalError by mutableStateOf<String?>(null); private set
 
     init { load() }
 
@@ -42,6 +44,27 @@ class AdminViewModel : ViewModel() {
         error = null
         runCatching { me = repo.me(); doctors = repo.adminDoctors() }
             .onFailure { error = "Couldn't load your hospital's doctors: ${it.message}" }
+        if (me?.primaryRole == Role.ADMINISTRATOR) loadHospital()
+    }
+
+    fun loadHospital() = viewModelScope.launch {
+        hospitalError = null
+        runCatching { hospital = repo.adminHospital() }.onFailure { hospitalError = "Couldn't load the hospital profile: ${it.message}" }
+    }
+
+    fun saveHospital(update: HospitalUpdate, onDone: () -> Unit) {
+        busy = true; formError = null
+        viewModelScope.launch {
+            runCatching { repo.adminUpdateHospital(update) }
+                .onSuccess { h ->
+                    hospital = h
+                    notice = "Saved ${h.displayName}'s profile."
+                    me = runCatching { repo.me() }.getOrDefault(me)   // the header shows the hospital's name
+                    onDone()
+                }
+                .onFailure { formError = it.message ?: "That didn't work. Try again." }
+            busy = false
+        }
     }
 
     fun create(doctor: Boolean, account: NewAccount, onDone: () -> Unit) {
@@ -65,11 +88,12 @@ class AdminViewModel : ViewModel() {
     }
 }
 
-/** Hospital administrators: add users and doctors, delete (deactivate) doctors. Users can't be deleted. */
+/** Hospital administrators: the hospital's profile; add users and doctors, delete (deactivate) doctors. Users can't be deleted. */
 @Composable
 fun AdminScreen(onBack: () -> Unit, vm: AdminViewModel = viewModel()) {
     var form by remember { mutableStateOf<Boolean?>(null) }        // true = doctor, false = user
     var confirm by remember { mutableStateOf<AdminAccount?>(null) }
+    var editHospital by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = Sage.Background,
@@ -84,6 +108,9 @@ fun AdminScreen(onBack: () -> Unit, vm: AdminViewModel = viewModel()) {
                         TextButton({ vm.notice = null }) { Text("OK", color = Sage.Accent) }
                     }
                 }
+            }
+            if (vm.me?.primaryRole == Role.ADMINISTRATOR) {
+                item { HospitalCard(vm) { vm.formError = null; editHospital = true } }
             }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -123,6 +150,7 @@ fun AdminScreen(onBack: () -> Unit, vm: AdminViewModel = viewModel()) {
     }
 
     form?.let { doctor -> AccountSheet(doctor, vm, onDismiss = { form = null }) }
+    vm.hospital?.takeIf { editHospital }?.let { h -> HospitalSheet(h, vm, onDismiss = { editHospital = false }) }
     confirm?.let { d ->
         AlertDialog(
             onDismissRequest = { confirm = null }, containerColor = Sage.Surface,
@@ -175,7 +203,7 @@ private fun AccountSheet(doctor: Boolean, vm: AdminViewModel, onDismiss: () -> U
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     FieldLabel("Designation")
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        DESIGNATIONS.forEach { d -> SageChip(d, designation == d, { designation = if (designation == d) "" else d }) }
+                        AppConfig.current.designations.forEach { d -> SageChip(d, designation == d, { designation = if (designation == d) "" else d }) }
                     }
                     SageTextField("Or type one", designation, { designation = it }, placeholder = "e.g. Dermatologist")
                 }
@@ -195,3 +223,74 @@ private fun AccountSheet(doctor: Boolean, vm: AdminViewModel, onDismiss: () -> U
     }
 }
 
+/** Name, headline, address, phone and registration number, with Edit. */
+@Composable
+private fun HospitalCard(vm: AdminViewModel, onEdit: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SectionHeader("Hospital profile")
+        val h = vm.hospital
+        when {
+            vm.hospitalError != null -> ErrorBox(vm.hospitalError!!, vm::loadHospital)
+            h == null -> LoadingBox()
+            else -> OutlinedCard(shape = RoundedCornerShape(16.dp), colors = CardDefaults.outlinedCardColors(containerColor = Sage.Surface)) {
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(h.displayName, style = HType.section, color = Sage.Ink)
+                            h.headline?.let { Text(it, style = HType.caption, color = Sage.Muted) }
+                        }
+                        TextButton(onEdit) { Text("Edit", color = Sage.Accent) }
+                    }
+                    DetailLine("Address", h.location)
+                    DetailLine("Phone", h.phone)
+                    DetailLine("Registration", h.officialNumber)
+                    DetailLine("Healoo ID", h.publicId)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DetailLine(label: String, value: String?) {
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(label, style = HType.caption, color = Sage.Muted, modifier = Modifier.width(96.dp))
+        Text(value ?: "Not set", style = HType.caption, color = if (value == null) Sage.Muted else Sage.InkSoft)
+    }
+}
+
+private fun phoneOk(phone: String) = phone.all { it.isDigit() || it in " +-()" }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun HospitalSheet(h: HospitalProfile, vm: AdminViewModel, onDismiss: () -> Unit) {
+    var name by remember { mutableStateOf(h.displayName) }
+    var headline by remember { mutableStateOf(h.headline.orEmpty()) }
+    var location by remember { mutableStateOf(h.location.orEmpty()) }
+    var phone by remember { mutableStateOf(h.phone.orEmpty()) }
+    var reg by remember { mutableStateOf(h.officialNumber.orEmpty()) }
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Sage.Background, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(
+            Modifier.fillMaxWidth().verticalScrollWithBar(rememberScrollState()).imePadding().padding(start = 20.dp, end = 20.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Text("Edit hospital profile", style = HType.section, color = Sage.Ink)
+            Text("Patients and doctors see these details on the hospital's profile.", style = HType.caption, color = Sage.Muted)
+            SageTextField("Hospital name", name, { name = it.take(80) })
+            SageTextField("Headline (optional)", headline, { headline = it.take(80) }, placeholder = "e.g. Multi-speciality hospital")
+            SageTextField("Address (optional)", location, { location = it.take(120) }, placeholder = "Street, area, city")
+            SageTextField("Phone (optional)", phone, { phone = it.take(30) }, placeholder = "e.g. +91 80 4000 1234")
+            if (!phoneOk(phone)) Text("Use digits, spaces and + - ( ) only.", style = HType.small, color = Sage.Clay)
+            SageTextField("Registration number (optional)", reg, { reg = it.take(40) })
+            vm.formError?.let { Text(it, style = HType.small, color = Sage.Clay) }
+            PrimaryButton(
+                if (vm.busy) "Saving…" else "Save",
+                {
+                    vm.saveHospital(HospitalUpdate(name.trim(), location.trim().ifEmpty { null }, phone.trim().ifEmpty { null },
+                        reg.trim().ifEmpty { null }, headline.trim().ifEmpty { null }), onDismiss)
+                },
+                Modifier.fillMaxWidth(), enabled = !vm.busy && name.isNotBlank() && phoneOk(phone),
+            )
+        }
+    }
+}

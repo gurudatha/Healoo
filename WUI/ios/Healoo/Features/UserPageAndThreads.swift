@@ -105,6 +105,7 @@ struct UserPageView: View {
             if page == .hospital { sheet = .bookAtHospital }
             else { router.upload(UploadRequest(to: user.id, mode: .appointment, doctorId: user.id)) }
         case OpId.searchDoctors: doctorSearchFocused = true
+        case OpId.vitals: router.push(.vitals(user.id))
         default: break
         }
     }

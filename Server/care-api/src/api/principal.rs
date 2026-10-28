@@ -5,11 +5,13 @@
 
 use super::{ApiError, ApiResult, AppState, Inner};
 use crate::{
+    events::{topics, Envelope},
     model::Role,
     policy::Subject,
     store::users::{NewUser, UserRec},
 };
 use axum::{async_trait, extract::FromRequestParts, http::request::Parts};
+use serde_json::json;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -32,8 +34,6 @@ pub(crate) struct Cached {
 }
 
 const CACHE_TTL: Duration = Duration::from_secs(300);
-const RATE_PER_SEC: f64 = 20.0;
-const BURST: f64 = 40.0;
 
 pub fn bearer(headers: &axum::http::HeaderMap) -> Option<String> {
     headers.get(axum::http::header::AUTHORIZATION)?.to_str().ok()?
@@ -99,14 +99,18 @@ impl Inner {
             created_by: None,
         }).await?;
         tracing::info!(user_id = %u.user_id, public_id = %u.public_id, "provisioned new patient on first login");
+        let ev = Envelope::new("user.registered", u.user_id, u.user_id, vec![u.user_id.to_string()], json!({ "user_id": u.user_id }));
+        self.events.emit(topics::ACCESS_CHANGES, &u.user_id.to_string(), ev).await?;
         Ok(u.user_id)
     }
 
     fn rate_limit(&self, user: Uuid) -> ApiResult<()> {
         let now = Instant::now();
-        let mut e = self.limiter.entry(user).or_insert((now, BURST));
+        // rate_limit in Server/config/server.json
+        let limit = &crate::settings::settings().rate_limit;
+        let mut e = self.limiter.entry(user).or_insert((now, limit.burst));
         let (last, tokens) = *e;
-        let refill = (tokens + now.duration_since(last).as_secs_f64() * RATE_PER_SEC).min(BURST);
+        let refill = (tokens + now.duration_since(last).as_secs_f64() * limit.per_second).min(limit.burst);
         if refill < 1.0 {
             *e = (now, refill);
             return Err(ApiError::too_many());

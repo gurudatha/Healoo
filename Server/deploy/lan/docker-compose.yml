@@ -20,6 +20,9 @@ x-app-env: &app-env
   AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:-https://api.careconnect.local}
   PUBLIC_BASE_URL: https://${HOST_LAN_IP:?set HOST_LAN_IP in .env}:8443/
   RUST_LOG: ${RUST_LOG:-info,care_api=debug}
+  # Edit the files in Server/config, then: docker compose restart care-api care-worker   (no rebuild needed)
+  VITALS_CONFIG: /config/vitals.json
+  SERVER_CONFIG: /config/server.json
 
 services:
   cassandra:
@@ -77,8 +80,11 @@ services:
       BIND: 0.0.0.0:8443
       MDNS: "false"          # multicast doesn't leave the Docker bridge; run natively for mDNS
       INSTANCE_ID: api-1
+      # Encrypted administrators file (Administration_Design.md section 10), read at start-up.
+      ADMINS_FILE: /config/admins/admins.enc
+      ADMINS_KEY: ${ADMINS_KEY:-}
     ports: ["8443:8443"]     # the only port phones need
-    volumes: [app_data:/data]
+    volumes: [app_data:/data, ../../config:/config:ro, ../../config/admins:/config/admins]
     depends_on:
       cassandra-init: { condition: service_completed_successfully }
       kafka-init: { condition: service_completed_successfully }
@@ -87,7 +93,7 @@ services:
   care-worker:
     build: { context: ../.., target: worker }
     environment: *app-env
-    volumes: [app_data:/data]
+    volumes: [app_data:/data, ../../config:/config:ro]
     depends_on:
       cassandra-init: { condition: service_completed_successfully }
       kafka-init: { condition: service_completed_successfully }
@@ -97,7 +103,7 @@ services:
     build: { context: ../.., target: worker }
     command: ["care-seed"]
     environment: *app-env
-    volumes: [app_data:/data]
+    volumes: [app_data:/data, ../../config:/config:ro]
     depends_on:
       cassandra-init: { condition: service_completed_successfully }
     restart: "no"

@@ -94,7 +94,15 @@ async fn create(st: &AppState, p: &Principal, b: &NewAccount, role: Role, hospit
         st.db.connect_users(u.user_id, Role::Doctor, &u.display_name, h.user_id, h.primary_role(), &h.display_name).await?;
     }
     tracing::info!(admin = %p.id(), user_id = %u.user_id, public_id = %u.public_id, role = ?role, "administrator created account");
+    emit_created(st, p, &u, role).await?;
     Ok(u)
+}
+
+/// `user.created` for the activity log (Administration_Design.md section 8).
+pub(super) async fn emit_created(st: &AppState, p: &Principal, u: &UserRec, role: Role) -> ApiResult<()> {
+    let ev = Envelope::new("user.created", p.id(), u.user_id, vec![u.user_id.to_string()], json!({ "user_id": u.user_id, "role": role }));
+    st.events.emit(topics::ACCESS_CHANGES, &u.user_id.to_string(), ev).await?;
+    Ok(())
 }
 
 /// `POST /v1/admin/users` — a new user (patient) account.
@@ -158,6 +166,81 @@ pub async fn reactivate_doctor(State(st): State<AppState>, p: Principal, Path(id
     let ev = Envelope::new("user.reactivated", p.id(), id, vec![id.to_string()], json!({ "user_id": id, "hospital_id": hospital }));
     st.events.emit(topics::ACCESS_CHANGES, &id.to_string(), ev).await?;
     Ok(Json(admin_dto(&st, &load_user(&st, id).await?).await?))
+}
+
+// ---------- hospital profile (Administration_Design.md section 9) ----------
+
+/// A hospital's profile as its administrator edits it.
+#[derive(Serialize)]
+pub struct HospitalProfileDto {
+    pub hospital_id: Uuid,
+    pub public_id: String,
+    pub display_name: String,
+    pub location: Option<String>,
+    pub phone: Option<String>,
+    /// Registration or licence number.
+    pub official_number: Option<String>,
+    /// One line under the name, e.g. "Multi-speciality hospital".
+    pub headline: Option<String>,
+}
+
+pub(super) fn hospital_dto(h: &UserRec) -> HospitalProfileDto {
+    HospitalProfileDto {
+        hospital_id: h.user_id,
+        public_id: h.public_id.clone(),
+        display_name: h.display_name.clone(),
+        location: h.location.clone(),
+        phone: h.phone.clone(),
+        official_number: h.official_number.clone(),
+        headline: h.headline.clone(),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct HospitalUpdate {
+    pub display_name: String,
+    pub location: Option<String>,
+    pub phone: Option<String>,
+    pub official_number: Option<String>,
+    pub headline: Option<String>,
+    /// Platform administrators name the hospital; hospital administrators may omit it.
+    pub hospital_id: Option<Uuid>,
+}
+
+/// Checks a profile form; returns (name, location, phone, registration, headline).
+#[allow(clippy::type_complexity)]
+pub(super) fn validate_hospital(b: &HospitalUpdate) -> ApiResult<(String, Option<String>, Option<String>, Option<String>, Option<String>)> {
+    let name = b.display_name.trim();
+    if name.is_empty() || name.chars().count() > 80 { return Err(ApiError::bad_request("display_name must be 1–80 characters")); }
+    let phone = clean(&b.phone, 30);
+    if phone.as_deref().is_some_and(|p| !p.chars().all(|c| c.is_ascii_digit() || " +-()".contains(c))) {
+        return Err(ApiError::bad_request("phone may contain digits, spaces, + - ( ) only"));
+    }
+    Ok((name.to_string(), clean(&b.location, 120), phone, clean(&b.official_number, 40), clean(&b.headline, 80)))
+}
+
+async fn managed_hospital(st: &AppState, p: &Principal, requested: Option<Uuid>) -> ApiResult<UserRec> {
+    let id = hospital_for(p, requested)?;
+    let h = load_user(st, id).await?;
+    if !h.roles.contains(&Role::Hospital) { return Err(ApiError::not_found("no such hospital")); }
+    Ok(h)
+}
+
+/// `GET /v1/admin/hospital` — the administrator's hospital profile.
+pub async fn hospital_profile(State(st): State<AppState>, p: Principal, Query(q): Query<HospitalQ>) -> ApiResult<Json<HospitalProfileDto>> {
+    Ok(Json(hospital_dto(&managed_hospital(&st, &p, q.hospital_id).await?)))
+}
+
+/// `PUT /v1/admin/hospital` — replace the hospital's name, address, phone, registration number
+/// and headline. Empty fields are cleared.
+pub async fn update_hospital(State(st): State<AppState>, p: Principal, Json(b): Json<HospitalUpdate>) -> ApiResult<Json<HospitalProfileDto>> {
+    let h = managed_hospital(&st, &p, b.hospital_id).await?;
+    let (name, location, phone, reg, headline) = validate_hospital(&b)?;
+    st.db.update_hospital(&h, &name, location.as_deref(), phone.as_deref(), reg.as_deref(), headline.as_deref()).await?;
+    tracing::info!(admin = %p.id(), hospital = %h.user_id, "hospital profile updated");
+    let ev = Envelope::new("hospital.updated", p.id(), h.user_id, vec![format!("hospital:{}", h.user_id)], json!({ "hospital_id": h.user_id }));
+    st.events.emit(topics::ACCESS_CHANGES, &h.user_id.to_string(), ev).await?;
+    Ok(Json(hospital_dto(&load_user(&st, h.user_id).await?)))
 }
 
 /// `DELETE /v1/admin/users/{id}` — always refused: users own health records and can't be

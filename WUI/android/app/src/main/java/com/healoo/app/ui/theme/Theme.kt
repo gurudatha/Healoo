@@ -67,12 +67,12 @@ object Radius {
     val pill = 25.dp
 }
 
-/** Header heights as a fraction of screen height (design doc 3.2 / 3.3). */
+/** Header heights as a fraction of screen height (design doc 3.2 / 3.3): `layout` in WUI/app-config.json. */
 object HeaderRatio {
-    const val LANDING = 0.20f
-    const val USER_EXPANDED = 0.25f
-    const val USER_COLLAPSED = 0.10f
-    const val PINNED = 0.10f
+    val LANDING: Float get() = com.healoo.app.data.AppConfig.current.layout.homeHeader
+    val USER_EXPANDED: Float get() = com.healoo.app.data.AppConfig.current.layout.personHeaderExpanded
+    val USER_COLLAPSED: Float get() = com.healoo.app.data.AppConfig.current.layout.personHeaderCollapsed
+    val PINNED: Float get() = com.healoo.app.data.AppConfig.current.layout.pinnedHeader
 }
 
 val Fraunces = FontFamily(Font(R.font.fraunces_semibold, FontWeight.SemiBold))

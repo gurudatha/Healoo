@@ -20,8 +20,15 @@ async fn main() -> anyhow::Result<()> {
     care_api::init_tracing(json_logs);
     let cfg = Config::from_env()?;
     tracing::info!(mode = ?cfg.mode, auth = ?cfg.auth_mode, bus = ?cfg.bus, store = ?cfg.store, instance = %cfg.instance_id, "starting care-api");
+    // Fail at start-up, with the reason, if a file in Server/config (or SERVER_CONFIG / VITALS_CONFIG) is wrong.
+    let settings = care_api::settings::settings();
+    tracing::info!(image_max_mb = settings.uploads.image_max_mb, pdf_max_mb = settings.uploads.pdf_max_mb, timezone = %settings.appointments.default_timezone, "server settings ready");
+    let vitals = care_api::vitals::config();
+    tracing::info!(vitals = vitals.builtin().len(), yellow_margin_pct = vitals.colours.yellow_margin_pct, "vitals configuration ready");
 
     let db = Arc::new(Db::connect(&cfg.cassandra_nodes, &cfg.keyspace).await?);
+    // config/admins/admins.enc (ADMINS_FILE) decrypted with ADMINS_KEY: sets the administrators.
+    care_api::admins_file::apply_at_startup(&db).await;
     let bus = events::build(&cfg).await?;
     let exposure = net::build(&cfg).await?;
     let (file_store, disk) = files::build(&cfg, &exposure.public_base()).await?;

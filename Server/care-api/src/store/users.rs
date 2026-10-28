@@ -25,6 +25,8 @@ pub struct UserRec {
     pub email: Option<String>,
     /// False once an administrator deactivated the account: no sign-in, hidden from search.
     pub active: bool,
+    /// Hospitals: the reception number shown on their profile (v0.4).
+    pub phone: Option<String>,
 }
 
 impl UserRec {
@@ -38,7 +40,7 @@ impl UserRec {
 
 type UserRow = (
     Uuid, Option<String>, Option<String>, Option<HashSet<String>>, Option<String>, Option<String>,
-    Option<String>, Option<Uuid>, Option<Uuid>, Option<String>, Option<String>, Option<String>,
+    Option<String>, Option<Uuid>, Option<Uuid>, Option<String>, Option<String>, Option<String>, Option<String>,
 );
 
 pub const DEACTIVATED: &str = "DEACTIVATED";
@@ -57,6 +59,7 @@ fn to_rec(r: UserRow) -> UserRec {
         headline: r.9,
         email: r.10,
         active: r.11.as_deref() != Some(DEACTIVATED),
+        phone: r.12,
     }
 }
 
@@ -86,7 +89,7 @@ pub struct NewUser<'a> {
 
 impl Db {
     pub async fn user(&self, id: Uuid) -> Result<Option<UserRec>> {
-        const Q: &str = "SELECT user_id, public_id, display_name, roles, photo_uri, location, official_number, primary_hospital_id, employer_doctor_id, headline, email, status FROM users WHERE user_id = ?";
+        const Q: &str = "SELECT user_id, public_id, display_name, roles, photo_uri, location, official_number, primary_hospital_id, employer_doctor_id, headline, email, status, phone FROM users WHERE user_id = ?";
         Ok(self.one::<UserRow>(Q, (id,)).await?.map(to_rec))
     }
 
@@ -114,7 +117,7 @@ impl Db {
 
     /// Name search via the SAI index on `name_tokens` (doc 7.1). Profiles only.
     pub async fn search_by_name(&self, token: &str) -> Result<Vec<UserRec>> {
-        const Q: &str = "SELECT user_id, public_id, display_name, roles, photo_uri, location, official_number, primary_hospital_id, employer_doctor_id, headline, email, status FROM users WHERE name_tokens CONTAINS ? LIMIT 50";
+        const Q: &str = "SELECT user_id, public_id, display_name, roles, photo_uri, location, official_number, primary_hospital_id, employer_doctor_id, headline, email, status, phone FROM users WHERE name_tokens CONTAINS ? LIMIT 50";
         Ok(self.rows::<UserRow>(Q, (token.to_lowercase(),)).await?.into_iter().map(to_rec).collect())
     }
 

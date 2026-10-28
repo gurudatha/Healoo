@@ -87,7 +87,7 @@ pub async fn set_photo(State(st): State<AppState>, p: Principal, Json(b): Json<P
         return Err(ApiError::forbidden("the photo must be a file you uploaded"));
     }
     let bytes = st.files.get(key).await.map_err(|_| ApiError::bad_request("the photo hasn't been uploaded"))?;
-    if bytes.len() as i64 > super::items::IMAGE_MAX || image::guess_format(&bytes).is_err() {
+    if bytes.len() as i64 > super::items::image_max() || image::guess_format(&bytes).is_err() {
         return Err(ApiError::bad_request("the photo must be an image up to 10 MB"));
     }
     st.db.set_photo(&p.user, Some(&b.uri)).await?;

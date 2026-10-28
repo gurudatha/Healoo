@@ -1,4 +1,4 @@
-//! care-worker: audit-writer + media processor (doc 6.4, 7.4). Needs EVENT_BUS=kafka.
+//! care-worker: audit-writer, media processor, activity log (doc 6.4, 7.4). Needs EVENT_BUS=kafka.
 
 use care_api::{config::{BusKind, Config}, events::{self, Publisher}, files, store::Db, worker};
 use std::sync::Arc;
@@ -9,6 +9,7 @@ async fn main() -> anyhow::Result<()> {
     care_api::install_crypto_provider();
     care_api::init_tracing(std::env::var("NETWORK_MODE").map(|m| m.eq_ignore_ascii_case("internet")).unwrap_or(false));
     let cfg = Config::from_env()?;
+    care_api::settings::settings();   // fail at start-up if Server/config/server.json (or SERVER_CONFIG) is wrong
     if cfg.bus == BusKind::Memory {
         anyhow::bail!("care-worker needs EVENT_BUS=kafka; with the memory bus the worker runs inside care-api");
     }
@@ -21,7 +22,7 @@ async fn main() -> anyhow::Result<()> {
     let stop = CancellationToken::new();
     tokio::spawn(publisher.clone().run_relay(stop.clone()));
     let tasks = worker::spawn(bus, db, store, publisher, stop.clone());
-    tracing::info!("care-worker running: audit-writer, media, alert scheduler");
+    tracing::info!("care-worker running: audit-writer, media, activity-log, alert scheduler");
     care_api::shutdown_signal().await;
     stop.cancel();
     for t in tasks { let _ = t.await; }

@@ -9,7 +9,7 @@
 //! | Public URL     | https://<LAN IP>:8443/ (auto-detected)   | PUBLIC_BASE_URL (required, https)         |
 //! | Discovery      | mDNS `_healoo._tcp` on the LAN           | none                                      |
 //! | Auth           | dev tokens (offline) or Auth0            | Auth0 only                                |
-//! | Files          | local disk, served by this API           | S3 / MinIO presigned URLs                 |
+//! | Files          | local disk, served by this API           | S3-compatible store, presigned URLs       |
 //! | Client IP      | socket peer (or proxy on the same host)  | X-Forwarded-For from trusted proxies only |
 //! | Debug routes   | on                                       | off                                       |
 //!
@@ -70,6 +70,8 @@ pub struct Config {
     pub auth0_domain: String,
     pub auth0_audience: String,
     pub claims_namespace: String,
+    /// Auth0 client ID of the administrator dashboard (a Single Page Application), v0.4.
+    pub admin_client_id: String,
     pub dev_jwt_secret: String,
 
     pub cassandra_nodes: Vec<String>,
@@ -147,7 +149,7 @@ impl Config {
 
         let store = match var_or("FILE_STORE", if lan { "disk" } else { "s3" }).to_lowercase().as_str() {
             "disk" => StoreKind::Disk,
-            "s3" | "minio" => StoreKind::S3,
+            "s3" | "minio" => StoreKind::S3,   // "minio" is still accepted for older .env files
             other => bail!("FILE_STORE must be disk or s3, got '{other}'"),
         };
 
@@ -171,6 +173,7 @@ impl Config {
             auth0_domain: var_or("AUTH0_DOMAIN", ""),
             auth0_audience: var_or("AUTH0_AUDIENCE", "https://api.careconnect.local"),
             claims_namespace: var_or("CLAIMS_NAMESPACE", "https://careconnect.local/"),
+            admin_client_id: var_or("ADMIN_AUTH0_CLIENT_ID", ""),
             dev_jwt_secret: var_or("DEV_JWT_SECRET", DEFAULT_DEV_SECRET),
 
             cassandra_nodes: list("CASSANDRA_NODES", "127.0.0.1:9042"),

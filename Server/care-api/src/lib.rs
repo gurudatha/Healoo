@@ -11,6 +11,8 @@
 //!
 //! Handlers only see the traits, so the same code serves both profiles.
 
+pub mod activity;
+pub mod admins_file;
 pub mod api;
 pub mod auth;
 pub mod config;
@@ -21,6 +23,8 @@ pub mod net;
 pub mod policy;
 pub mod recurrence;
 pub mod seed;
+pub mod settings;
+pub mod vitals;
 pub mod store;
 pub mod worker;
 pub mod ws;

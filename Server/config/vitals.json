@@ -1,0 +1,82 @@
+{
+  "_comment": [
+    "Vitals configuration (Documentation/Vitals_Design.md section 6). The single place for the",
+    "colour rule, the vitals everyone has and their default ranges, the icon set and the limits.",
+    "",
+    "How it is used: the file is compiled into the server as its defaults. To change values without",
+    "rebuilding, set VITALS_CONFIG to a copy of this file (the LAN compose file already mounts this",
+    "folder) and restart care-api. A file that fails the checks stops the server at start-up with the",
+    "reason, so a typo can't silently change colours.",
+    "",
+    "Colours: inside the range = GREEN; outside by up to yellow_margin_pct percent of the bound that",
+    "was crossed = YELLOW; further out = RED. A doctor can change both the range and the margin for",
+    "one patient in the app; those per-patient values are stored in the database and win over this file.",
+    "",
+    "Ratio vitals: a vital may also have a \"ratio\" rule. Urine is coloured by urine output as a percentage of",
+    "water intake: green_min_pct or more = GREEN; from yellow_min_pct up to that = YELLOW; less = RED.",
+    "A reading with both a range and a ratio takes the worse colour of the two.",
+    "",
+    "Time: a reading may be entered for a time up to limits.backdate_hours ago; it can never be edited afterwards.",
+    "",
+    "The default ranges are general adult starting points for a trial, not clinical advice."
+  ],
+  "version": 1,
+
+  "colours": {
+    "yellow_margin_pct": 30,
+    "margin_pct_min": 0,
+    "margin_pct_max": 200
+  },
+
+  "home": {
+    "_comment": "The vitals block on the Home screen: tiles per row and rows. The last tile is always More.",
+    "columns": 5,
+    "rows": 2
+  },
+
+  "limits": {
+    "value_max": 100000,
+    "note_max_chars": 200,
+    "custom_label_max_chars": 30,
+    "custom_unit_max_chars": 12,
+    "readings_default_limit": 50,
+    "readings_max_limit": 200,
+    "doctor_inbox_window": 500,
+    "backdate_hours": 12
+  },
+
+  "icons": ["water", "bp", "sugar", "heart", "urine", "weight", "temperature", "oxygen", "sleep",
+            "steps", "pain", "breath", "pill", "lab", "mood", "other"],
+
+  "vitals": [
+    { "code": "water", "label": "Water", "icon": "water", "unit": "ml",
+      "components": [{ "key": "value", "label": "Water" }] },
+
+    { "code": "bp", "label": "BP", "icon": "bp", "unit": "mmHg",
+      "components": [{ "key": "sys", "label": "Systolic",  "low": 90, "high": 120 },
+                     { "key": "dia", "label": "Diastolic", "low": 60, "high": 80 }] },
+
+    { "code": "sugar", "label": "Sugar", "icon": "sugar", "unit": "mg/dL",
+      "components": [{ "key": "value", "label": "Sugar", "low": 80, "high": 120 }] },
+
+    { "code": "heart_rate", "label": "Heart rate", "icon": "heart", "unit": "bpm",
+      "components": [{ "key": "value", "label": "Heart rate", "low": 60, "high": 100 }] },
+
+    { "code": "urine", "label": "Urine", "icon": "urine", "unit": "ml",
+      "components": [{ "key": "intake", "label": "Water intake" },
+                     { "key": "output", "label": "Urine output" }],
+      "ratio": { "numerator": "output", "denominator": "intake", "green_min_pct": 85, "yellow_min_pct": 70 } },
+
+    { "code": "weight", "label": "Weight", "icon": "weight", "unit": "kg",
+      "components": [{ "key": "value", "label": "Weight" }] },
+
+    { "code": "temperature", "label": "Temperature", "icon": "temperature", "unit": "°F",
+      "components": [{ "key": "value", "label": "Temperature", "low": 97, "high": 99 }] },
+
+    { "code": "spo2", "label": "Oxygen", "icon": "oxygen", "unit": "%",
+      "components": [{ "key": "value", "label": "Oxygen", "low": 95, "high": 100 }] },
+
+    { "code": "sleep", "label": "Sleep", "icon": "sleep", "unit": "hours",
+      "components": [{ "key": "value", "label": "Sleep", "low": 6, "high": 9 }] }
+  ]
+}

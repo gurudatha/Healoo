@@ -2,6 +2,7 @@
 //! * `audit-writer` — persists `access.audit` decisions into Cassandra.
 //! * `media` — on `item.attachments_added`, makes image thumbnails, counts PDF pages and records
 //!   sha256 (doc 7.4), then emits `item.attachment` so open screens refresh.
+//! * `activity-log` — the platform administrator's activity log and daily counts (see activity.rs).
 //! * alert scheduler — fires due alerts every minute (DataItem v2).
 //! All are idempotent via `processed_events` (doc 6.3).
 
@@ -46,7 +47,6 @@ pub struct MediaProcessor {
     pub publisher: Publisher,
 }
 
-const THUMB_PX: u32 = 320;
 
 /// Result of processing one file.
 pub struct Media { pub sha256: String, pub size: i64, pub page_count: Option<i32>, pub thumb_uri: Option<String> }
@@ -91,40 +91,40 @@ pub async fn process_media(files: &dyn ObjectStore, a: &AttachmentRow) -> Result
 
 fn image_thumbnail(data: &[u8]) -> Result<Vec<u8>> {
     let img = image::load_from_memory(data)?;
-    let thumb = img.thumbnail(THUMB_PX, THUMB_PX).to_rgb8();
+    let px = crate::settings::settings().uploads.thumbnail_px;
+    let thumb = img.thumbnail(px, px).to_rgb8();
     let mut buf = Vec::new();
     thumb.write_to(&mut Cursor::new(&mut buf), image::ImageFormat::Jpeg)?;
     Ok(buf)
 }
 
-/// Renders page 1 with poppler's `pdftoppm` (package poppler-utils, installed in the Docker image).
-/// Returns None when the tool isn't installed (e.g. running natively without poppler): the apps
-/// then show a PDF icon.
+/// Renders page 1 as a JPEG, `uploads.thumbnail_px` on its longer side, with the `hayro` library
+/// (pure Rust, MIT / Apache-2.0), inside this process: no external program is needed.
+/// Returns None for a PDF without pages. A PDF that can't be rendered (encrypted, damaged) is an
+/// error; the caller logs it and the apps then show a PDF icon.
 pub(crate) fn pdf_thumbnail(data: &[u8]) -> Result<Option<Vec<u8>>> {
-    let dir = std::env::temp_dir().join(format!("healoo-pdf-{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&dir)?;
-    let result = (|| -> Result<Option<Vec<u8>>> {
-        let input = dir.join("in.pdf");
-        std::fs::write(&input, data)?;
-        let out = dir.join("page");
-        let status = match std::process::Command::new("pdftoppm")
-            .args(["-jpeg", "-f", "1", "-l", "1", "-singlefile", "-scale-to", &THUMB_PX.to_string()])
-            .arg(&input).arg(&out)
-            .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped())
-            .output()
-        {
-            Ok(o) => o,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                tracing::debug!("pdftoppm not installed; skipping PDF thumbnail");
-                return Ok(None);
-            }
-            Err(e) => return Err(e.into()),
-        };
-        anyhow::ensure!(status.status.success(), "pdftoppm failed: {}", String::from_utf8_lossy(&status.stderr).trim());
-        Ok(Some(std::fs::read(dir.join("page.jpg"))?))
-    })();
-    let _ = std::fs::remove_dir_all(&dir);
-    result
+    use hayro::{hayro_interpret::InterpreterSettings, hayro_syntax::Pdf, vello_cpu::color::palette::css::WHITE};
+    let px = crate::settings::settings().uploads.thumbnail_px;
+    let data = data.to_vec();
+    // The file comes from a user. Whatever it does to the renderer must not take the worker down.
+    let rendered = std::panic::catch_unwind(move || -> Result<Option<(u32, u32, Vec<u8>)>> {
+        let pdf = Pdf::new(data).map_err(|e| anyhow::anyhow!("not a readable PDF: {e:?}"))?;
+        let Some(page) = pdf.pages().iter().next() else { return Ok(None) };
+        let (w, h) = page.render_dimensions();
+        anyhow::ensure!(w.is_finite() && h.is_finite() && w >= 1.0 && h >= 1.0, "page has no size");
+        let scale = px as f32 / w.max(h);
+        let pixmap = hayro::render(
+            page, &hayro::RenderCache::new(), &InterpreterSettings::default(), &hayro::RenderSettings::default(),
+            &hayro::PixmapSettings { x_scale: scale, y_scale: scale, bg_color: WHITE },
+        );
+        // Opaque white background, so the premultiplied RGBA is plain RGBA.
+        Ok(Some((pixmap.width() as u32, pixmap.height() as u32, pixmap.data_as_u8_slice().to_vec())))
+    }).map_err(|_| anyhow::anyhow!("the PDF renderer failed on this file"))??;
+    let Some((w, h, rgba)) = rendered else { return Ok(None) };
+    let img = image::RgbaImage::from_raw(w, h, rgba).ok_or_else(|| anyhow::anyhow!("unexpected thumbnail size"))?;
+    let mut buf = Vec::new();
+    image::DynamicImage::ImageRgba8(img).to_rgb8().write_to(&mut Cursor::new(&mut buf), image::ImageFormat::Jpeg)?;
+    Ok(Some(buf))
 }
 
 /// Makes the missing thumbnails, page counts and hashes for every attachment of `items`
@@ -237,13 +237,19 @@ pub fn spawn(bus: Arc<dyn EventBus>, db: Arc<Db>, files: Arc<dyn ObjectStore>, p
     let audit: Arc<dyn EventHandler> = Arc::new(AuditWriter { db: db.clone() });
     let media: Arc<dyn EventHandler> = Arc::new(MediaProcessor { db: db.clone(), files, publisher: publisher.clone() });
     let (b1, s1) = (bus.clone(), stop.clone());
-    let (b2, s2) = (bus, stop.clone());
+    let activity: Arc<dyn EventHandler> = Arc::new(crate::activity::ActivityLog { db: db.clone() });
+    let (b2, s2) = (bus.clone(), stop.clone());
+    let (b3, s3) = (bus, stop.clone());
     vec![
         tokio::spawn(async move {
             if let Err(e) = b1.consume("audit-writer", &[topics::AUDIT], true, audit, s1).await { tracing::error!("audit-writer stopped: {e:#}"); }
         }),
         tokio::spawn(async move {
             if let Err(e) = b2.consume("media", &[topics::ITEMS], true, media, s2).await { tracing::error!("media worker stopped: {e:#}"); }
+        }),
+        tokio::spawn(async move {
+            use crate::activity::{CONSUMER, TOPICS};
+            if let Err(e) = b3.consume(CONSUMER, &TOPICS, true, activity, s3).await { tracing::error!("activity-log stopped: {e:#}"); }
         }),
         tokio::spawn(run_alert_scheduler(db, publisher, stop)),
     ]
