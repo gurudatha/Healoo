@@ -1,4 +1,4 @@
-# Healoo backend (`care-api`) — v0.2 (DataItem v2)
+# Healoo backend (`care-api`) — v0.4 (DataItem v2, administration)
 
 Rust backend for design doc sections **4** (REST + WebSocket on Tokio), **5** (Auth0),
 **6** (Kafka) and **7** (Cassandra + files). One codebase runs in two network profiles:
@@ -7,10 +7,9 @@ Rust backend for design doc sections **4** (REST + WebSocket on Tokio), **5** (A
   Works fully offline with dev tokens.
 - **Internet** — deployed behind Caddy or Nginx with public certificates and Auth0.
 
-> ⚠️ **Not compiled yet.** This was written without a Rust toolchain available. It has been
-> checked structurally, but expect a handful of compile fixes on the first `cargo build`
-> (most likely around exact `scylla 0.13` driver type paths). Run `cargo build` and
-> `cargo test` first; the policy unit tests cover acceptance tests 2–7.
+> **Built and tested.** `cargo test --lib` runs 60 unit tests (policy rules, administration,
+> activity log, encrypted administrators file, invite codes, settings, seed data). The Docker
+> images build from `Dockerfile`; the S3 round-trip test runs with `-- --ignored`.
 
 ---
 
@@ -64,6 +63,15 @@ is lost between the write and the publish, `processed_events` dedupe. Consumers:
 `ws-fanout` (in care-api, pushes to sockets and emits `notify.requests` for offline users),
 `audit-writer`, `media` and the alert scheduler (in care-worker; fires due alerts every 20 s
 as push + WebSocket `alert` frames).
+
+**Administration (v0.4, `Documentation/Administration_Design.md`).** Hospital administrators
+manage their hospital's users, doctors and profile (`/v1/admin/*`). Platform administrators get a
+web dashboard at `/admin/`, served by `care-api` itself (no extra service): overview, usage over a
+day / week / month / year, data stored, accounts, an activity log written by the `activity-log`
+consumer in care-worker, and hospitals with invite codes for their administrators. Who the
+administrators are can be kept in an encrypted file (`config/admins/admins.enc`, read with
+`ADMINS_KEY`), managed with the `care-admin` command; how many there may be is set in
+`config/server.json` (`administrators`).
 
 **Section 7 — Cassandra + files.** `db/schema.cql` (doc 7.2 extended; changes marked `v0.2`).
 Query-shaped tables, logged batches for grant/revoke/status moves (doc 7.3), SAI name search.
@@ -201,6 +209,13 @@ docker compose up -d --build
 Caddy gets Let's Encrypt certificates automatically; `proxy/nginx.conf` is the equivalent if
 you prefer Nginx. Only ports 80/443 are published. Point the apps at `https://api.example.com/`.
 To load test data there: `docker compose run --rm care-api care-seed` (test data only).
+
+**Administrator dashboard** at `https://api.example.com/admin/`: create an Auth0 *Single Page
+Application* (callback and logout URL `https://api.example.com/admin/`, web origin
+`https://api.example.com`), put its client ID in `ADMIN_AUTH0_CLIENT_ID` in `.env`, and make
+yourself a platform administrator with the administrators file below. Server settings such as
+the administrator limits are read from `config/server.json` (mounted): edit it and restart
+`care-api` and `care-worker`.
 
 **File storage** is SeaweedFS (Apache-2.0), reached through its S3 gateway. The server uses only
 the standard S3 protocol, so AWS S3 or another S3-compatible store works by setting

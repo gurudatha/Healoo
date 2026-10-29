@@ -245,3 +245,44 @@ so the project no longer applies the `org.jetbrains.kotlin.android` plugin.
 ## 9. Sample data
 
 `assets/sample/` (Android) and `Resources/Sample/` (iOS) hold two scan images and two PDFs, with 3 and 2 pages. Each file is marked **SAMPLE TEST DATA — not a real medical report**. They belong to the seeded "CBC – Complete blood count" item, so the viewer can be tested straight away (tests 13–14).
+
+## 10. Added with server v0.4: administration screens and iPhone builds
+
+Both apps (Android compiled and tested on the emulator; iOS compiled on GitHub's Macs):
+
+- **Hospital profile** — Settings → Administration → *Hospital profile* → Edit: a hospital
+  administrator changes the hospital's name, headline, address, phone and registration number
+  (`GET/PUT /v1/admin/hospital`).
+- **Invite codes** — Settings → *Hospital administration* → *I have an invite code*: a person
+  enters the code a platform administrator created in the web dashboard and becomes that
+  hospital's administrator (`POST /v1/invites/redeem`). Shown to people who aren't
+  administrators or clinical accounts. Demo mode: the code `ABCD-EFGH-JKMN`.
+- **Vitals for administrators** — the Home vitals tiles appear for every person, administrators
+  included, not only for patients (Android `LandingScreen.kt`, iOS `UserProfile.hasOwnVitals`).
+
+Details: `Documentation/Administration_Design.md` sections 9 and 11.
+
+### iPhone builds on GitHub (no Mac needed)
+
+The workflow `.github/workflows/build-macos.yml` ("Build macOS App") runs on GitHub's Macs;
+it is free for this public repository. Run it from the Actions tab or let a pull request run it.
+
+| Job | Artifact | Use |
+| --- | --- | --- |
+| `build-macos` | `macos-executable` | Simulator build; checks that the iOS app compiles |
+| `build-unsigned-ipa` | `ios-unsigned-ipa` | `Healoo-unsigned.ipa` for your own iPhone: install with Sideloadly or AltStore and a free Apple ID (works for 7 days, no push notifications). Keep the bundle ID `com.healoo.app` unchanged. |
+| `build-device` | `ios-ipa` | Signed build and TestFlight; needs the Apple Developer Program and the signing secrets at the top of the workflow. Skipped without them. |
+
+The iPhone builds use the repository **variables** (Settings → Secrets and variables → Actions →
+Variables) `HEALOO_API_BASE_URL`, `HEALOO_AUTH0_DOMAIN`, `HEALOO_AUTH0_CLIENT_ID` and
+`HEALOO_AUTH0_AUDIENCE`; without `HEALOO_API_BASE_URL` they run on demo data.
+
+**Auth0 for iOS** is its own *Native* application ("Healoo iOS"), separate from Android's,
+with the callback and logout URL
+`com.healoo.app://<AUTH0_DOMAIN>/ios/com.healoo.app/callback`. Its client ID goes in
+`HEALOO_AUTH0_CLIENT_ID`; the audience is the same API as Android's.
+
+To reach a server with a local certificate (the LAN trial, or the internet profile run
+locally), install and trust that certificate on the iPhone: open the `.crt`, install the
+profile (Settings → General → VPN & Device Management), then enable it under Settings →
+General → About → Certificate Trust Settings.

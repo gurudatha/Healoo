@@ -442,6 +442,8 @@ extension UserProfile {
     var isAdministrator: Bool { [.administrator, .appAdministrator].contains(primaryRole) }
     /// Can pass an item they don't own on to a doctor (referral).
     var canRefer: Bool { [.doctor, .lab, .hospital].contains(primaryRole) }
+    /// Has their own vitals: every person, administrators included; not doctors, assistants, labs or hospitals.
+    var hasOwnVitals: Bool { !isClinical }
     func matches(_ q: String) -> Bool { displayName.lowercased().contains(q) || publicId.lowercased().contains(q) }
 }
 
@@ -470,4 +472,35 @@ struct NewAccount: Codable {
     var location: String?
     var designation: String?
     var officialNumber: String?
+}
+
+/// GET/PUT /v1/admin/hospital: the hospital profile its administrator edits (Administration_Design.md 9).
+struct HospitalProfile: Codable, Hashable, Identifiable {
+    var hospitalId: String
+    var publicId: String
+    var displayName: String
+    var location: String?
+    var phone: String?
+    /// Registration or licence number.
+    var officialNumber: String?
+    /// One line under the name, e.g. "Multi-speciality hospital".
+    var headline: String?
+    var id: String { hospitalId }
+}
+
+/// PUT /v1/admin/hospital. Every field is replaced; empty ones are cleared.
+struct HospitalUpdate: Codable {
+    var displayName: String
+    var location: String?
+    var phone: String?
+    var officialNumber: String?
+    var headline: String?
+}
+
+/// POST /v1/invites/redeem (Administration_Design.md 11).
+struct RedeemInvite: Codable { var code: String }
+
+struct InviteRedeemed: Codable {
+    var hospitalId: String
+    var hospitalName: String
 }

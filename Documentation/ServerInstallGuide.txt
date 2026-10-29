@@ -316,6 +316,18 @@ Windows only: hardware virtualization must be enabled.
   Docker Desktop must be running on Windows/macOS. You can set it to start
   at login in its settings.
 
+  Administrators (Documentation/Administration_Design.md sections 8-12):
+    Dashboard for platform administrators:  https://<LAN IP>:8443/admin/
+    The administrators file (encrypted, key phrase ADMINS_KEY in .env):
+      docker compose run --rm care-api care-admin config init
+      docker compose run --rm care-api care-admin config show
+      docker compose run --rm care-api care-admin config add-platform "Name" email@example.com -
+      docker compose run --rm care-api care-admin config remove email@example.com
+      docker compose run --rm care-api care-admin config apply
+    Limits (at most 3 platform and 2 per hospital by default): the
+    "administrators" section of Server/config/server.json, then restart
+    care-api and care-worker.
+
 
 12. OPTIONAL: BUILD AND RUN THE SERVER WITHOUT DOCKER (FOR DEVELOPERS)
 ---------------------------------------------------------------------

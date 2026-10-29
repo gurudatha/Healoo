@@ -461,6 +461,8 @@ struct SettingsView: View {
     @State private var prefs: NotificationPrefs?
     @State private var saveError: String?
     @State private var confirmLogout = false
+    @State private var enteringInvite = false
+    @State private var notice: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -495,11 +497,24 @@ struct SettingsView: View {
                         }
                     } else { LoadingView() }
                     if let saveError { Text(saveError).font(HFont.small).foregroundStyle(Sage.clay) }
+                    if let notice {
+                        HStack {
+                            Text(notice).font(HFont.caption).foregroundStyle(Sage.accent)
+                            Spacer()
+                            Button("OK") { self.notice = nil }.font(HFont.captionStrong).foregroundStyle(Sage.accent)
+                        }
+                        .padding(12).background(Sage.sageTint, in: RoundedRectangle(cornerRadius: 12))
+                    }
                     if me?.isAdministrator == true {
                         FieldLabel("Administration")
                         GroupCard {
                             NavigationLink(value: Route.administration) { linkLabel("person.badge.key", "Users and doctors", me?.hospital) }.buttonStyle(.plain)
                         }
+                    }
+                    // Invite codes (Administration_Design.md 11): for people who aren't administrators or clinicians yet.
+                    if let me, !me.isAdministrator, me.primaryRole == .patient {
+                        FieldLabel("Hospital administration")
+                        GroupCard { linkRow("key", "I have an invite code", nil) { enteringInvite = true } }
                     }
                     FieldLabel("Privacy & sharing")
                     GroupCard {
@@ -520,6 +535,17 @@ struct SettingsView: View {
             }
         }
         .background(Sage.background)
+        .sheet(isPresented: $enteringInvite) {
+            NavigationStack {
+                InviteCodeForm { redeemed in
+                    enteringInvite = false
+                    notice = "You're now an administrator of \(redeemed.hospitalName). Open Administration below."
+                    Task { me = try? await env.repo.me() }
+                }
+            }
+            .environment(env)
+            .presentationDetents([.medium])
+        }
         .confirmationDialog("Log out of Healoo on this phone?", isPresented: $confirmLogout, titleVisibility: .visible) {
             Button("Log out", role: .destructive) { Task { await env.signOut() } }
             Button("Cancel", role: .cancel) {}
@@ -567,5 +593,46 @@ struct SettingsView: View {
             }
             .padding(.horizontal, 14).frame(minHeight: 52)
             .contentShape(Rectangle())
+    }
+}
+
+/// Enter the code a platform administrator sent; becomes that hospital's administrator.
+private struct InviteCodeForm: View {
+    let onRedeemed: (InviteRedeemed) -> Void
+    @Environment(AppEnvironment.self) private var env
+    @Environment(\.dismiss) private var dismiss
+    @State private var code = ""
+    @State private var busy = false
+    @State private var error: String?
+
+    private var complete: Bool { code.filter { $0.isLetter || $0.isNumber }.count == 12 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("A platform administrator sends this code to make you a hospital's administrator. It looks like ABCD-EFGH-JKMN.")
+                .font(HFont.body).foregroundStyle(Sage.inkSoft)
+            TextField("ABCD-EFGH-JKMN", text: Binding(get: { code }, set: { code = String($0.uppercased().prefix(20)) }),
+                      prompt: Text("ABCD-EFGH-JKMN").foregroundStyle(Sage.placeholder))
+                .font(HFont.body).foregroundStyle(Sage.ink).textInputAutocapitalization(.characters).autocorrectionDisabled()
+                .padding(.horizontal, 14).frame(minHeight: 48)
+                .background(Sage.surface, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Sage.border))
+            if let error { Text(error).font(HFont.small).foregroundStyle(Sage.clay) }
+            Button(busy ? "Checking…" : "Use code", action: redeem).buttonStyle(PrimaryButtonStyle()).disabled(busy || !complete)
+            Spacer()
+        }
+        .padding(20)
+        .background(Sage.background)
+        .navigationTitle("Invite code").navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+    }
+
+    private func redeem() {
+        busy = true; error = nil
+        Task {
+            do { onRedeemed(try await env.repo.redeemInvite(code)) }
+            catch { self.error = error.localizedDescription }
+            busy = false
+        }
     }
 }
