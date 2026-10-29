@@ -2,6 +2,8 @@
 #
 # build-macos   Debug and Release for the iOS Simulator, on every change to the iOS app.
 #               No Apple account needed. Artifact: "macos-executable".
+# build-unsigned-ipa  Release build for real iPhones without signing: "ios-unsigned-ipa" holds
+#               Healoo-unsigned.ipa to install with Sideloadly or AltStore and a free Apple ID.
 # build-device  Signed Release build for real iPhones (.ipa), optionally uploaded to TestFlight.
 #               Runs from the Actions tab ("Run workflow") or when a tag like ios-v0.5.0 is pushed.
 #               Needs the signing secrets listed below; without them it is skipped (not failed).
@@ -92,6 +94,95 @@ jobs:
         with:
           name: macos-executable
           path: build/
+          if-no-files-found: error
+          retention-days: 14
+
+  # A real-iPhone build with no signing, packaged as Healoo-unsigned.ipa. Sideloadly or AltStore (on
+  # Windows or a Mac) sign it with a free Apple ID while installing it over USB; such an install
+  # works for 7 days and has no push notifications. Runs with every Simulator build.
+  build-unsigned-ipa:
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Select Xcode Version
+        run: |
+          if [ -d "/Applications/Xcode_${XCODE_VERSION}.app" ]; then
+            sudo xcode-select -s "/Applications/Xcode_${XCODE_VERSION}.app"
+          else
+            echo "Xcode ${XCODE_VERSION} is not on this runner; using the default: $(xcode-select -p)"
+          fi
+          xcodebuild -version
+
+      - name: Generate Xcode Project
+        working-directory: WUI/ios
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Point the App at the Server
+        working-directory: WUI/ios
+        env:
+          HEALOO_API_BASE_URL: ${{ vars.HEALOO_API_BASE_URL }}
+          HEALOO_AUTH0_DOMAIN: ${{ vars.HEALOO_AUTH0_DOMAIN }}
+          HEALOO_AUTH0_CLIENT_ID: ${{ vars.HEALOO_AUTH0_CLIENT_ID }}
+          HEALOO_AUTH0_AUDIENCE: ${{ vars.HEALOO_AUTH0_AUDIENCE }}
+        run: |
+          plist=Healoo/Info.plist
+          if [ -z "$HEALOO_API_BASE_URL" ]; then
+            echo "::notice title=Demo build::HEALOO_API_BASE_URL is not set (Settings → Secrets and variables → Actions → Variables), so this .ipa runs on demo data"
+            exit 0
+          fi
+          /usr/libexec/PlistBuddy -c "Set :HealooUseFakeData false" "$plist"
+          /usr/libexec/PlistBuddy -c "Set :HealooAPIBaseURL $HEALOO_API_BASE_URL" "$plist"
+          [ -z "$HEALOO_AUTH0_DOMAIN" ] || /usr/libexec/PlistBuddy -c "Set :HealooAuth0Domain $HEALOO_AUTH0_DOMAIN" "$plist"
+          [ -z "$HEALOO_AUTH0_CLIENT_ID" ] || /usr/libexec/PlistBuddy -c "Set :HealooAuth0ClientId $HEALOO_AUTH0_CLIENT_ID" "$plist"
+          [ -z "$HEALOO_AUTH0_AUDIENCE" ] || /usr/libexec/PlistBuddy -c "Set :HealooAuth0Audience $HEALOO_AUTH0_AUDIENCE" "$plist"
+          echo "Server: $HEALOO_API_BASE_URL"
+
+      - name: Build for iPhone without Signing
+        working-directory: WUI/ios
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project Healoo.xcodeproj \
+            -scheme "Healoo" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            SYMROOT="$GITHUB_WORKSPACE/build-unsigned" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" CODE_SIGN_ENTITLEMENTS=""
+
+      - name: Package Healoo-unsigned.ipa
+        run: |
+          cd "$GITHUB_WORKSPACE/build-unsigned"
+          mkdir -p ipa/Payload
+          cp -R Release-iphoneos/Healoo.app ipa/Payload/
+          (cd ipa && zip -qry ../Healoo-unsigned.ipa Payload)
+          cat > HOW-TO-INSTALL.txt <<'EOF'
+          Healoo-unsigned.ipa: install on your own iPhone with a free Apple ID (no Mac needed)
+
+          1. On Windows install iTunes and iCloud from apple.com (not the Microsoft Store), then Sideloadly.
+          2. Connect the iPhone by USB and tap "Trust This Computer".
+          3. In Sideloadly drag in Healoo-unsigned.ipa, enter your Apple ID and press Start.
+          4. On the iPhone: Settings > General > VPN & Device Management > trust your Apple ID.
+             iOS 16 or later: Settings > Privacy & Security > Developer Mode > On (the phone restarts).
+
+          A free Apple ID install stops opening after 7 days: install it again (or use AltStore,
+          which refreshes it). Push notifications don't work with a free Apple ID.
+          EOF
+          ls -la Healoo-unsigned.ipa
+
+      - name: Upload Unsigned .ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-unsigned-ipa
+          path: |
+            build-unsigned/Healoo-unsigned.ipa
+            build-unsigned/HOW-TO-INSTALL.txt
           if-no-files-found: error
           retention-days: 14
 
