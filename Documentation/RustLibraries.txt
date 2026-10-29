@@ -192,6 +192,16 @@ hex (0.4.3)
   Formats SHA-256 hashes and URL signatures as text.
   Direct dependency.
 
+argon2 (0.5)
+  Argon2id password hashing and key derivation (RustCrypto; MIT / Apache-2.0).
+  Turns the ADMINS_KEY phrase into the key of the encrypted administrators file.
+  Direct dependency (v0.4).
+
+chacha20poly1305 (0.10)
+  ChaCha20-Poly1305 authenticated encryption (RustCrypto; MIT / Apache-2.0).
+  Encrypts config/admins/admins.enc and detects any change to it.
+  Direct dependency (v0.4).
+
 rand (0.8.8, 0.9.5)
   Random number generation.
   Random Healoo IDs (HL-xxxxx) and the v1 UUID node id.

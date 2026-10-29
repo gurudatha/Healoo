@@ -11,7 +11,7 @@ each one. Doctors, labs and hospitals see only what has been shared with them.
 
 | Folder | What it contains |
 | --- | --- |
-| [`Server/`](Server/) | Rust backend `care-api`: REST + WebSocket API, Auth0 / developer sign-in, Kafka events, Cassandra storage, file storage. Runs on a local network for trials or on the internet behind Caddy/Nginx. |
+| [`Server/`](Server/) | Rust backend `care-api`: REST + WebSocket API, Auth0 / developer sign-in, Kafka events, Cassandra storage, file storage, and the platform administrators' web dashboard at `/admin/`. Runs on a local network for trials or on the internet behind Caddy/Nginx. |
 | [`WUI/`](WUI/) | Mobile apps: Android (Kotlin, Jetpack Compose) and iOS (SwiftUI), "Sage Clinic" design, demo mode with sample data, app icon and branding files. |
 | [`Documentation/`](Documentation/) | Design document, install and testing guides, API documentation, library list, app icon. Start with its [README](Documentation/README.md). |
 
@@ -21,7 +21,8 @@ each one. Doctors, labs and hospitals see only what has been shared with them.
    (Docker Desktop, then `docker compose up -d --build` in `Server/deploy/lan`).
 2. **Run the Android app** on Windows: [`Documentation/WUI_Windows_Guide.txt`](Documentation/WUI_Windows_Guide.txt)
    (JDK 17, Android SDK, emulator, `.\gradlew.bat installDebug` in `WUI/android`).
-3. **Test**: [`Documentation/TestingReadMe.txt`](Documentation/TestingReadMe.txt) and the API calls in
+3. **Certificates, keys and settings** at a glance: [`Documentation/ThirdParty_Configuration.md`](Documentation/ThirdParty_Configuration.md).
+4. **Test**: [`Documentation/TestingReadMe.txt`](Documentation/TestingReadMe.txt) and the API calls in
    [`Documentation/userapidocumentation.txt`](Documentation/userapidocumentation.txt).
 
 The guides were written when the two parts were separate downloads. Where they mention

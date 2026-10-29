@@ -28,7 +28,7 @@ not committed there.
 
 ## 2. Server (`Server/care-api`) — Rust libraries
 
-From package metadata. 461 libraries, all under permissive licences (MIT, Apache-2.0, BSD,
+From package metadata. 475 libraries, all under permissive licences (MIT, Apache-2.0, BSD,
 ISC, Zlib, Unicode-3.0, Unlicense, 0BSD, CC0, BSL-1.0, CDLA-Permissive-2.0). Where a library
 offers a choice, Healoo uses it under the MIT licence or the first permissive one listed.
 

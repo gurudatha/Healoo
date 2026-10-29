@@ -29,7 +29,9 @@ own data structures, tables and API.
 
 ## 3. Screens
 
-- **Home, user:** the search section is gone (Search is in the bottom bar). In its place is a
+- **Home, user** (every person: patients and also hospital and platform administrators, who are
+  people with their own health too; not doctors, assistants, labs or hospital accounts): the
+  search section is gone (Search is in the bottom bar). In its place is a
   block of two rows of five tiles: Water, BP, Sugar, Heart rate, Urine, Weight, Temperature,
   Oxygen, Sleep and **More**.
   - Each tile shows the vital's icon in the colour of the latest reading (grey if none) and

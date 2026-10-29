@@ -19,6 +19,8 @@ Deployment settings (addresses, secrets, sign-in mode) stay in environment varia
   `SERVER_CONFIG` and `VITALS_CONFIG` name files that replace them at start-up.
   - The LAN compose file already mounts `Server/config` and sets both variables, so on the
     trial server editing a file and restarting is enough.
+  - The internet compose file (v0.4) mounts `Server/config/server.json` and sets
+    `SERVER_CONFIG` the same way; `vitals.json` there still uses the compiled-in copy.
   - Other deployments use the compiled-in values unless they set the variables.
 - **A server file with a mistake stops the server at start-up** and prints the reason, so a
   typo can't silently change a limit.

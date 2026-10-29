@@ -323,6 +323,22 @@ This uses the Rust backend (healoo-backend.zip) on your computer, with no Auth0.
     Healoo IDs. Delete (deactivate) the new doctor: it moves to the Deleted
     filter and can't sign in; Reactivate it. There is no way to delete a
     user, and DELETE /v1/admin/users/{id} answers 403.
+ 8. Hospital profile: still as Hospital A Admin, Settings -> Administration ->
+    Hospital profile -> Edit. Change the address and phone and save; the
+    hospital's profile (search for Test Hospital A) shows the new address.
+    A phone with letters is refused. Vitals tiles appear on Home for
+    administrators too.
+ 9. Platform dashboard: open https://<address>:8443/admin/ in a browser (on
+    the LAN trial it lists the test accounts) and choose Healoo Platform Admin
+    (HL-9A7D2). Check Overview, Usage (Day / Week / Month / Year), Accounts,
+    Activity and Hospitals. Patients, doctors and hospital administrators
+    are refused.
+10. Invite code: in the dashboard, Hospitals -> Rao Heart Clinic -> Create
+    invite code. In the app, sign in as a patient (e.g. Ravi Kumar,
+    HL-3R7V2), Settings -> Hospital administration -> I have an invite code,
+    enter it: Ravi becomes Rao Heart Clinic's administrator and Settings
+    shows Administration. The same code again is refused. In demo mode (no
+    server) the code ABCD-EFGH-JKMN works.
 
 If the account list shows "Can't reach the trial server", check the address,
 that the certificate is installed, and that the backend is running
