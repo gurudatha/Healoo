@@ -4,7 +4,8 @@
 #               No Apple account needed. Artifact: "macos-executable".
 # build-device  Signed Release build for real iPhones (.ipa), optionally uploaded to TestFlight.
 #               Runs from the Actions tab ("Run workflow") or when a tag like ios-v0.5.0 is pushed.
-#               Needs the signing secrets listed below. Artifact: "ios-ipa".
+#               Needs the signing secrets listed below; without them it is skipped (not failed).
+#               Artifact: "ios-ipa".
 #
 # Secrets (Settings → Secrets and variables → Actions → Secrets):
 #   IOS_CERTIFICATE_P12_BASE64     Apple Distribution (or Development) certificate + private key,
@@ -94,8 +95,30 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  build-device:
+  # Secrets can't be read in a job's "if", so this small Linux job checks whether the signing
+  # secrets exist. Without them the signed build is skipped (with a note) instead of failing.
+  signing-check:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/ios-v')
+    runs-on: ubuntu-latest
+    outputs:
+      available: ${{ steps.check.outputs.available }}
+    steps:
+      - id: check
+        env:
+          CERTIFICATE_P12_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          if [ -n "$CERTIFICATE_P12_BASE64" ] && [ -n "$CERTIFICATE_PASSWORD" ] && [ -n "$PROFILE_BASE64" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Signed iPhone build skipped::No Apple signing secrets are set, so only the Simulator build (build-macos) ran. To build for real iPhones, add the secrets listed at the top of .github/workflows/build-macos.yml (needs the Apple Developer Program)."
+          fi
+
+  build-device:
+    needs: signing-check
+    if: needs.signing-check.outputs.available == 'true'
     runs-on: macos-15
     timeout-minutes: 60
 

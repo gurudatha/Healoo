@@ -76,6 +76,11 @@ protocol HealooRepository: AnyObject {
     /// "Delete" a doctor: deactivates the account and ends the hospital affiliation.
     func adminDeactivateDoctor(_ doctorId: String) async throws
     func adminReactivateDoctor(_ doctorId: String) async throws -> AdminAccount
+    /// The administrator's hospital: name, address, phone, registration number, headline.
+    func adminHospital() async throws -> HospitalProfile
+    func adminUpdateHospital(_ update: HospitalUpdate) async throws -> HospitalProfile
+    /// An invite code from a platform administrator makes this account a hospital's administrator.
+    func redeemInvite(_ code: String) async throws -> InviteRedeemed
 
     // Account
     func updateProfile(_ update: ProfileUpdate) async throws -> UserProfile
@@ -174,7 +179,11 @@ final class MockRepository: HealooRepository {
     func signIn(as userId: String) { meId = userId }
 
     private var affiliation = ["u-rao": "h-a", "u-menon": "h-a"]   // doctor -> current hospital
-    private let adminHospital = ["a-admin": "h-a"]                  // administrator -> hospital
+    private var administeredHospital = ["a-admin": "h-a"]               // administrator -> hospital
+    private var hospitalDetails: [String: HospitalProfile] = [
+        "h-a": HospitalProfile(hospitalId: "h-a", publicId: "HL-1H0A1", displayName: "Test Hospital A", location: "12 MG Road, Bengaluru",
+                               phone: "+91 80 4000 1234", officialNumber: "KA-HOSP-2024-0117", headline: "Multi-speciality hospital"),
+    ]
     private var homeHospital = ["u-rao": "h-a", "u-menon": "h-a"]
     private var deactivated = Set<String>()
     private var emails: [String: String] = [:]                      // user -> email (admin-created)
@@ -770,7 +779,7 @@ final class MockRepository: HealooRepository {
 
     // MARK: Administration (rule 10: create users and doctors, deactivate doctors only)
     private func myHospital() throws -> String {
-        guard let h = adminHospital[meId] else { throw RepoError("Only hospital administrators can manage accounts") }
+        guard let h = administeredHospital[meId] else { throw RepoError("Only hospital administrators can manage accounts") }
         return h
     }
 
@@ -828,6 +837,45 @@ final class MockRepository: HealooRepository {
         deactivated.remove(doctorId)
         affiliation[doctorId] = h
         return adminView(raw(doctorId))
+    }
+
+    func adminHospital() async throws -> HospitalProfile {
+        await latency()
+        let h = try myHospital()
+        if let d = hospitalDetails[h] { return d }
+        let u = raw(h)
+        return HospitalProfile(hospitalId: u.id, publicId: u.publicId, displayName: u.displayName)
+    }
+
+    func adminUpdateHospital(_ update: HospitalUpdate) async throws -> HospitalProfile {
+        await latency()
+        let h = try myHospital()
+        func opt(_ s: String?) -> String? { let t = (s ?? "").trimmingCharacters(in: .whitespaces); return t.isEmpty ? nil : t }
+        let name = update.displayName.trimmingCharacters(in: .whitespaces)
+        guard (1...80).contains(name.count) else { throw RepoError("display_name must be 1–80 characters") }
+        guard (update.phone ?? "").allSatisfy({ $0.isNumber || " +-()".contains($0) }) else { throw RepoError("phone may contain digits, spaces, + - ( ) only") }
+        if let i = users.firstIndex(where: { $0.id == h }) {
+            users[i].displayName = name
+            users[i].headline = opt(update.headline) ?? "Hospital"
+        }
+        let p = HospitalProfile(hospitalId: h, publicId: raw(h).publicId, displayName: name, location: opt(update.location),
+                                phone: opt(update.phone), officialNumber: opt(update.officialNumber), headline: opt(update.headline))
+        hospitalDetails[h] = p
+        return p
+    }
+
+    /// Demo mode: the code ABCD-EFGH-JKMN makes the signed-in person Test Hospital A's administrator.
+    func redeemInvite(_ code: String) async throws -> InviteRedeemed {
+        await latency()
+        let typed = code.filter { $0.isLetter || $0.isNumber }.uppercased()
+        guard typed == "ABCDEFGHJKMN" else { throw RepoError("That invite code is not valid. Check it, or ask for a new one.") }
+        if let i = users.firstIndex(where: { $0.id == meId }) {
+            users[i].roles = [.administrator] + users[i].roles.filter { $0 != .administrator }
+            users[i].headline = "Hospital administrator"
+            users[i].hospital = "Test Hospital A"
+        }
+        administeredHospital[meId] = "h-a"
+        return InviteRedeemed(hospitalId: "h-a", hospitalName: "Test Hospital A")
     }
 
     // MARK: Account
@@ -1080,6 +1128,11 @@ final class RemoteRepository: HealooRepository {
     func adminCreateDoctor(_ account: NewAccount) async throws -> AdminAccount { try await request("POST", "v1/admin/doctors", body: account) }
     func adminDeactivateDoctor(_ doctorId: String) async throws { let _: Empty = try await request("DELETE", "v1/admin/doctors/\(doctorId)") }
     func adminReactivateDoctor(_ doctorId: String) async throws -> AdminAccount { try await request("POST", "v1/admin/doctors/\(doctorId)/reactivate") }
+    func adminHospital() async throws -> HospitalProfile { try await request("GET", "v1/admin/hospital") }
+    func adminUpdateHospital(_ update: HospitalUpdate) async throws -> HospitalProfile { try await request("PUT", "v1/admin/hospital", body: update) }
+    func redeemInvite(_ code: String) async throws -> InviteRedeemed {
+        try await request("POST", "v1/invites/redeem", body: RedeemInvite(code: code.trimmingCharacters(in: .whitespaces)))
+    }
 
     func updateProfile(_ update: ProfileUpdate) async throws -> UserProfile { try await request("PATCH", "v1/me", body: update) }
     func setProfilePhoto(_ photo: PendingAttachment) async throws -> UserProfile {

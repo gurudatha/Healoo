@@ -215,7 +215,7 @@ counters. That is fine for one hospital group; a very large deployment would add
 The page sends a strict Content-Security-Policy: scripts and styles from the server only, and
 connections only to the server and the Auth0 tenant.
 
-## 9. Hospital profile (server v0.4, Android app)
+## 9. Hospital profile (server v0.4, Android and iOS apps)
 
 A hospital administrator edits their hospital's **name, headline, address, phone and
 registration number** in the app: **Settings → Administration → Hospital profile → Edit**.
@@ -242,7 +242,7 @@ up to 40, `phone` up to 30 (digits, spaces, `+ - ( )`). A hospital administrator
 their own hospital (`hospital_id` is ignored); a platform administrator names it. 403 for anyone
 else or another hospital; 404 when the id is not a hospital. Saving emits `hospital.updated`.
 
-The iOS app does not have this screen yet.
+The iOS app has the same screen (`Features/AdminView.swift`); it is written but not yet compiled.
 
 ### 9.1 Tests
 
@@ -344,7 +344,7 @@ docker compose run --rm -e ADMINS_NEW_KEY=newphrase care-api care-admin config r
 `cargo test`: the file decrypts only with the right phrase and its contents are not readable;
 each encryption differs and a changed byte is detected; entries need a name and an email or ID.
 
-## 11. Invite codes for hospital administrators (server v0.4, Android app)
+## 11. Invite codes for hospital administrators (server v0.4, Android and iOS apps)
 
 The usual way to add a hospital administrator. It needs no email matching and no Auth0
 configuration beyond normal sign-in.

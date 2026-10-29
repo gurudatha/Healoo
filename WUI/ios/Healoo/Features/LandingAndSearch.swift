@@ -29,7 +29,7 @@ struct LandingView: View {
                 LazyVStack(spacing: 8) {
                     // Search lives in the bottom bar; this space is for vitals.
                     VStack(alignment: .leading, spacing: 6) {
-                        if me?.primaryRole == .patient, !vitalTypes.isEmpty {
+                        if me?.hasOwnVitals == true, !vitalTypes.isEmpty {
                             FieldLabel("Vitals · tap to enter today's value")
                             VitalTileGrid(types: vitalTypes, latest: vitalLatest, settings: vitalSettings,
                                           onTile: { entering = $0 }, onMore: { router.push(.vitals(nil)) })
@@ -168,7 +168,7 @@ struct LandingView: View {
     private func loadVitals() async {
         if me?.primaryRole == .doctor {
             alertCounts = (try? await env.repo.vitalAlerts(severity: nil, sort: .time))?.counts ?? alertCounts
-        } else if me?.primaryRole == .patient {
+        } else if me?.hasOwnVitals == true {
             vitalSettings = (try? await env.repo.vitalSettings()) ?? vitalSettings
             guard let types = try? await env.repo.vitalTypes(nil), let latest = try? await env.repo.vitalLatest(nil) else { return }
             vitalTypes = types
