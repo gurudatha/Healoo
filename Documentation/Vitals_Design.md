@@ -192,5 +192,5 @@ in `OfflineCache_Design.md`, and the existing 15). The app compiles.
 
 ### 8.4 iOS
 
-Written to mirror Android (`Models/Vitals.swift`, `Features/Vitals.swift`, Home, repository,
+Written to mirror Android (`Models/VitalModels.swift`, `Features/Vitals.swift`, Home, repository,
 routes). **Not compiled**: no Mac was available. Build it and repeat 8.3 before relying on it.
